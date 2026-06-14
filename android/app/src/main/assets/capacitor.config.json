@@ -1,0 +1,8 @@
+{
+	"appId": "com.chatapp.dev",
+	"appName": "ChatApp",
+	"webDir": "out",
+	"server": {
+		"androidScheme": "https"
+	}
+}

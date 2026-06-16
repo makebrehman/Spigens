@@ -1,4 +1,4 @@
-package com.chatapp.dev;
+package com.spigens.app;
 
 import android.view.KeyEvent;
 import com.getcapacitor.BridgeActivity;

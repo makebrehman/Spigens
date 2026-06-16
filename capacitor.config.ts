@@ -1,7 +1,7 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.chatapp.dev',
+  appId: 'com.spigens.app',
   appName: 'ChatApp',
   webDir: 'out',
   server: {

@@ -1,5 +1,6 @@
 import Together from 'together-ai'
 import type { UIOverrideState } from '@/types'
+import { COMPONENT_DESCRIPTIONS } from '@/lib/componentDescriptions'
 
 export type StoreMutation = Partial<UIOverrideState> & {
   clearPerContact?: boolean
@@ -68,6 +69,11 @@ function buildSystemPrompt(
   storeState: UIOverrideState,
   contactNames: string[]
 ): string {
+  const sourcesText = Object.entries(storeState.componentSources || {}).map(([key, source]) => {
+    const description = COMPONENT_DESCRIPTIONS[key] || '(no description)'
+    return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${source}`
+  }).join('\n\n')
+
   const homeSlots = `
 HOME SCREEN — AVAILABLE STYLE SLOTS:
 
@@ -613,23 +619,7 @@ contact names (use exact spelling): ${contactNames.join(', ')}
 current store state: ${JSON.stringify(storeState, null, 2)}
 
 CURRENT EDITABLE COMPONENT SOURCES:
-topAppBar source code (you can rewrite this entirely):
-${storeState.componentSources?.topAppBar ?? '(default)'}
-
-searchBar source code (you can rewrite this entirely):
-${storeState.componentSources?.searchBar ?? '(default)'}
-
-contactList source code (you can rewrite this entirely — handles container, tiles, filtering, tabs, grouping):
-${storeState.componentSources?.contactList ?? '(default)'}
-
-bottomSheet source code (you can rewrite this entirely):
-${storeState.componentSources?.bottomSheet ?? '(default)'}
-
-chatScreen source code (you can rewrite this entirely):
-${storeState.componentSources?.chatScreen ?? '(default)'}
-
-messageBubble source code (you can rewrite this entirely):
-${storeState.componentSources?.messageBubble ?? '(default)'}
+${sourcesText}
 
 ${screen === 'home' ? homeSlots : chatSlots}
 
@@ -718,7 +708,7 @@ export async function callGenUIForUpdate(params: {
 
   const apiKey = process.env.NEXT_PUBLIC_TOGETHER_API_KEY
   if (!apiKey) {
-    throw new Error('NEXT_PUBLIC_TOGETHER_API_KEY is not set in .env.local')
+    throw new Error('NEXT_PUBLIC_TOGETHER_API_KEY is not set in AI Studio Secrets')
   }
 
   const together = new Together({ apiKey })

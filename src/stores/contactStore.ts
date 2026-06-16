@@ -1,19 +1,25 @@
 import { create } from 'zustand'
 import type { Contact } from '@/types'
-import { MOCK_CONTACTS } from '@/data/mockData'
 
 interface ContactStoreState {
   contacts: Contact[]
+  setContacts: (contacts: Contact[]) => void
   selectedContactId: string | null
   setSelectedContactId: (id: string | null) => void
   getSelectedContact: () => Contact | null
   clearUnread: (contactId: string) => void
   updateLastMessage: (contactId: string, lastMessage: string, lastMessageTime: string) => void
+  onlineUserIds: Set<string>
+  setOnlineUserIds: (ids: Set<string>) => void
 }
 
 export const useContactStore = create<ContactStoreState>()((set, get) => ({
-  contacts: MOCK_CONTACTS,
+  contacts: [],
+  setContacts: (contacts) => set({ contacts }),
   selectedContactId: null,
+
+  onlineUserIds: new Set<string>(),
+  setOnlineUserIds: (ids) => set({ onlineUserIds: ids }),
 
   setSelectedContactId: (id) => set({ selectedContactId: id }),
 

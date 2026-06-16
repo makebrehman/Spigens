@@ -18,7 +18,9 @@
     "@capacitor/preferences": "^8.0.1",
     "@google/genai": "^2.4.0",
     "@hookform/resolvers": "^5.2.1",
+    "@supabase/supabase-js": "^2.108.1",
     "autoprefixer": "^10.4.21",
+    "browser-image-compression": "^2.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.553.0",
@@ -29,6 +31,8 @@
     "react-dom": "^19.2.1",
     "tailwind-merge": "^3.3.1",
     "together-ai": "^0.40.0",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

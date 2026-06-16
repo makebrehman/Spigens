@@ -7,10 +7,12 @@ export interface Contact {
   name: string
   avatarInitials: string
   avatarColor: string
+  avatarUrl?: string
   lastMessage: string
   lastMessageTime: string
   unreadCount: number
   isOnline: boolean
+  rawProfile?: any
 }
 
 // --- message ---

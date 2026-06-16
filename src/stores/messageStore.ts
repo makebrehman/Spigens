@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import type { Message } from '@/types'
-import { MOCK_MESSAGES_BY_CONTACT } from '@/data/mockData'
 import { useContactStore } from '@/stores/contactStore'
 
 interface MessageStoreState {
@@ -11,7 +10,7 @@ interface MessageStoreState {
 }
 
 export const useMessageStore = create<MessageStoreState>()((set, get) => ({
-  messagesByContact: MOCK_MESSAGES_BY_CONTACT,
+  messagesByContact: {},
 
   getMessagesForContact: (contactId) => {
     return get().messagesByContact[contactId] ?? []

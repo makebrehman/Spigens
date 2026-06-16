@@ -40,7 +40,8 @@ export function SearchBar(props: SearchBarProps) {
   } = props
 
   const [mounted, setMounted] = useState(false)
-  const [value, setValue] = useState('')
+  const value = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
+  const setValue = (v: string) => useUIStore.getState().setComponentState('searchQuery', v)
   const [isExpanded, setIsExpanded] = useState(false)
 
   const s = useUIStore(state => state.searchBarStyle)

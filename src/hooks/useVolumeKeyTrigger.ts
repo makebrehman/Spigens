@@ -10,7 +10,7 @@ export function useVolumeKeyTrigger(onTrigger: () => void) {
 
     // listener 2 — keyboard shortcut fallback for browser testing
     const handleKeydown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyG') {
         e.preventDefault()
         onTrigger()
       }

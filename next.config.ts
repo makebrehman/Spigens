@@ -1,7 +1,19 @@
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ['*.run.app'],
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+    NEXT_PUBLIC_TOGETHER_API_KEY: process.env.NEXT_PUBLIC_TOGETHER_API_KEY || '',
+  },
+  allowedDevOrigins: [
+    '*.run.app',
+    '*.us-west2.run.app',
+    '*.asia-east1.run.app',
+    '*.asia-east2.run.app',
+    '*.us-central1.run.app',
+    '*.europe-west1.run.app',
+  ],
   reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true,

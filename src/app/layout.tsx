@@ -1,6 +1,11 @@
 import type {Metadata} from 'next';
 import './globals.css'; // Global styles
-import { Inter, Poppins, Sora, Space_Grotesk, Outfit, DM_Serif_Display, Bricolage_Grotesque } from 'next/font/google'
+import { Unbounded, Inter, Poppins, Sora, Space_Grotesk, Outfit, DM_Serif_Display, Bricolage_Grotesque } from 'next/font/google'
+
+const unbounded = Unbounded({
+  subsets: ['latin'],
+  weight: ['300', '400', '600', '700'],
+})
 
 const poppins = Poppins({ subsets: ['latin'], weight: ['400','500','600','700','800'], variable: '--font-poppins' })
 const sora = Sora({ subsets: ['latin'], weight: ['400','600','700','800'], variable: '--font-sora' })
@@ -24,7 +29,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="theme-color" content="#0a0a0a" />
       </head>
-      <body className={`${poppins.variable} ${sora.variable} ${spaceGrotesk.variable} ${outfit.variable} ${dmSerif.variable} ${bricolage.variable} bg-[#0a0a0a] text-white overscroll-none overflow-hidden`} suppressHydrationWarning>
+      <body className={`${unbounded.className} ${poppins.variable} ${sora.variable} ${spaceGrotesk.variable} ${outfit.variable} ${dmSerif.variable} ${bricolage.variable} bg-[#0a0a0a] text-white overscroll-none overflow-hidden`} suppressHydrationWarning>
         {children}
       </body>
     </html>

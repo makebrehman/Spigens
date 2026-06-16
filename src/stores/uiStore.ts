@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { capacitorStorage } from '@/lib/persistStorage'
 import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources } from '@/types'
-import { DEFAULT_TOPAPPBAR_SOURCE, DEFAULT_SEARCHBAR_SOURCE, DEFAULT_CHATTILE_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE } from '@/lib/defaultComponents'
+import { DEFAULT_TOPAPPBAR_SOURCE, DEFAULT_SEARCHBAR_SOURCE, DEFAULT_CHATTILE_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE } from '@/lib/defaultComponents'
 
 // set false for web dev/testing (fresh state every refresh)
 // set true for mobile builds (state persists via capacitor preferences)
@@ -83,6 +83,15 @@ const defaultState = {
     chatScreen: DEFAULT_CHATSCREEN_SOURCE,
     messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE,
     contactList: DEFAULT_CONTACTLIST_SOURCE,
+    dateSeparator: DEFAULT_DATESEPARATOR_SOURCE,
+    composerBar: DEFAULT_COMPOSERBAR_SOURCE,
+    backButton: DEFAULT_BACKBUTTON_SOURCE,
+    profileImage: DEFAULT_PROFILEIMAGE_SOURCE,
+    chatName: DEFAULT_CHATNAME_SOURCE,
+    onlineStatus: DEFAULT_ONLINESTATUS_SOURCE,
+    attachButton: DEFAULT_ATTACHBUTTON_SOURCE,
+    sendButton: DEFAULT_SENDBUTTON_SOURCE,
+    emptyState: DEFAULT_EMPTYSTATE_SOURCE,
   },
   layoutConfig: {
     searchBar: {
@@ -245,6 +254,15 @@ export const useUIStore = create<UIStoreState>()(
           else if (name === 'chatScreen') next[name] = DEFAULT_CHATSCREEN_SOURCE
           else if (name === 'messageBubble') next[name] = DEFAULT_MESSAGEBUBBLE_SOURCE
           else if (name === 'contactList') next[name] = DEFAULT_CONTACTLIST_SOURCE
+          else if (name === 'dateSeparator') next[name] = DEFAULT_DATESEPARATOR_SOURCE
+          else if (name === 'composerBar') next[name] = DEFAULT_COMPOSERBAR_SOURCE
+          else if (name === 'backButton') next[name] = DEFAULT_BACKBUTTON_SOURCE
+          else if (name === 'profileImage') next[name] = DEFAULT_PROFILEIMAGE_SOURCE
+          else if (name === 'chatName') next[name] = DEFAULT_CHATNAME_SOURCE
+          else if (name === 'onlineStatus') next[name] = DEFAULT_ONLINESTATUS_SOURCE
+          else if (name === 'attachButton') next[name] = DEFAULT_ATTACHBUTTON_SOURCE
+          else if (name === 'sendButton') next[name] = DEFAULT_SENDBUTTON_SOURCE
+          else if (name === 'emptyState') next[name] = DEFAULT_EMPTYSTATE_SOURCE
           else delete next[name]
           return { componentSources: next }
         }),
@@ -303,7 +321,7 @@ export const useUIStore = create<UIStoreState>()(
           backTap: 'navigate-back',
         },
         customComponents: {},
-        componentSources: { topAppBar: DEFAULT_TOPAPPBAR_SOURCE, searchBar: DEFAULT_SEARCHBAR_SOURCE, chatTile: DEFAULT_CHATTILE_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE },
+        componentSources: { topAppBar: DEFAULT_TOPAPPBAR_SOURCE, searchBar: DEFAULT_SEARCHBAR_SOURCE, chatTile: DEFAULT_CHATTILE_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE, dateSeparator: DEFAULT_DATESEPARATOR_SOURCE, composerBar: DEFAULT_COMPOSERBAR_SOURCE, backButton: DEFAULT_BACKBUTTON_SOURCE, profileImage: DEFAULT_PROFILEIMAGE_SOURCE, chatName: DEFAULT_CHATNAME_SOURCE, onlineStatus: DEFAULT_ONLINESTATUS_SOURCE, attachButton: DEFAULT_ATTACHBUTTON_SOURCE, sendButton: DEFAULT_SENDBUTTON_SOURCE, emptyState: DEFAULT_EMPTYSTATE_SOURCE },
         history: [],
         componentState: {},
       })),

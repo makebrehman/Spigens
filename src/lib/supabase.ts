@@ -50,7 +50,8 @@ export type Database = {
           id: string
           conversation_id: string
           sender_id: string
-          encrypted_content: string
+          content: string | null
+          encrypted_content: string | null
           status: 'sending' | 'sent' | 'delivered' | 'read'
           reply_to: string | null
           created_at: string
@@ -61,7 +62,8 @@ export type Database = {
           id?: string
           conversation_id: string
           sender_id: string
-          encrypted_content: string
+          content?: string
+          encrypted_content?: string
           status?: string
           reply_to?: string
           created_at?: string

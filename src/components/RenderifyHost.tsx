@@ -43,16 +43,16 @@ export function RenderifyHost({ code, storeActions = {} }: RenderifyHostProps) {
 
   // reset error when code changes
   React.useEffect(() => {
-    setRenderError(null)
+    setTimeout(() => setRenderError(null), 0)
   }, [code])
 
   // memoize compilation — only recompile when code actually changes.
   // storeActions is intentionally excluded from deps because it is stable from the caller.
   // this prevents the compiled component from remounting on every parent re-render,
   // which would wipe its internal useState values.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const compiled = React.useMemo(
     () => code ? compileJSX(code, storeActions) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [code]
   )
 

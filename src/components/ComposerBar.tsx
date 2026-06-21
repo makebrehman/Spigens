@@ -5,10 +5,14 @@ import { useUIStore } from '@/stores/uiStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { AttachButton } from './AttachButton'
 import { SendButton } from './SendButton'
+import { ReplyPreview } from './ReplyPreview'
 
 export interface ComposerBarProps {
   sendMessage: (content: string) => void
   onAttach: () => void
+  onTyping?: () => void
+  replyingTo?: { content: string; senderLabel: string } | null
+  onCancelReply?: () => void
 }
 
 export function ComposerBar(props: ComposerBarProps) {
@@ -44,7 +48,7 @@ export function ComposerBar(props: ComposerBarProps) {
   return (
     <RenderifyHost
       code={composerBarSource}
-      storeActions={{ ...props, useComponentState, AttachButton, SendButton }}
+      storeActions={{ ...props, useComponentState, AttachButton, SendButton, ReplyPreview }}
     />
   )
 }

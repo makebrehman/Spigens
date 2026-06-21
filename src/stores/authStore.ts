@@ -169,10 +169,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const profile = get().profile
 
       const privateKey = loadPrivateKey()
-      if (!privateKey && profile?.public_key) {
-        // Private key missing from this device — security warning
-        return { error: 'Private key not found on this device. Use the original device or restore from backup.' }
-      }
 
       // Mark online
       if (profile?.public_key) {
@@ -203,7 +199,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
     }
     await supabase.auth.signOut()
-    clearPrivateKey()
     set({ user: null, profile: null, isAuthenticated: false, privateKey: null })
   },
 

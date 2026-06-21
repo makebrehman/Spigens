@@ -1,0 +1,10 @@
+import fs from 'fs';
+console.log('--- START ContactList.tsx ---');
+console.log(fs.readFileSync('src/components/ContactList.tsx', 'utf8'));
+console.log('--- END ContactList.tsx ---');
+console.log('--- START page.tsx ---');
+const page = fs.readFileSync('src/app/page.tsx', 'utf8');
+const lines = page.split('\n');
+const idx = lines.findIndex(l => l.includes('<ContactList'));
+console.log(lines.slice(idx - 2, idx + 6).join('\n'));
+console.log('--- END page.tsx ---');

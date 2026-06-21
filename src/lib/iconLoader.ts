@@ -61,7 +61,7 @@ export function useLucideIcon(name: string | undefined): string | null {
 
   useEffect(() => {
     if (!name) {
-      setSvg(null)
+      setTimeout(() => setSvg(null), 0)
       return
     }
     let active = true

@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { capacitorStorage } from '@/lib/persistStorage'
 import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources } from '@/types'
-import { DEFAULT_TOPAPPBAR_SOURCE, DEFAULT_SEARCHBAR_SOURCE, DEFAULT_CHATTILE_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE } from '@/lib/defaultComponents'
+import { DEFAULT_TOPAPPBAR_SOURCE, DEFAULT_SEARCHBAR_SOURCE, DEFAULT_CHATTILE_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE, DEFAULT_MESSAGESTATUS_SOURCE, DEFAULT_TYPINGINDICATOR_SOURCE, DEFAULT_REPLYPREVIEW_SOURCE, DEFAULT_REPLYQUOTE_SOURCE, DEFAULT_MESSAGEREACTIONS_SOURCE, DEFAULT_REACTIONPICKER_SOURCE, DEFAULT_PROFILESCREEN_SOURCE, DEFAULT_CONTACTPROFILESCREEN_SOURCE, DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, DEFAULT_COMMUNITYLISTSCREEN_SOURCE, DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, DEFAULT_COMMUNITYCHATSCREEN_SOURCE, DEFAULT_COMMUNITYPROFILESCREEN_SOURCE } from '@/lib/defaultComponents'
 
 // set false for web dev/testing (fresh state every refresh)
 // set true for mobile builds (state persists via capacitor preferences)
@@ -92,6 +92,19 @@ const defaultState = {
     attachButton: DEFAULT_ATTACHBUTTON_SOURCE,
     sendButton: DEFAULT_SENDBUTTON_SOURCE,
     emptyState: DEFAULT_EMPTYSTATE_SOURCE,
+    messageStatus: DEFAULT_MESSAGESTATUS_SOURCE,
+    typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE,
+    replyPreview: DEFAULT_REPLYPREVIEW_SOURCE,
+    replyQuote: DEFAULT_REPLYQUOTE_SOURCE,
+    messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE,
+    reactionPicker: DEFAULT_REACTIONPICKER_SOURCE,
+    profileScreen: DEFAULT_PROFILESCREEN_SOURCE,
+    contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE,
+    communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE,
+    communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE,
+    createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE,
+    communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE,
+    communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE,
   },
   layoutConfig: {
     searchBar: {
@@ -263,6 +276,19 @@ export const useUIStore = create<UIStoreState>()(
           else if (name === 'attachButton') next[name] = DEFAULT_ATTACHBUTTON_SOURCE
           else if (name === 'sendButton') next[name] = DEFAULT_SENDBUTTON_SOURCE
           else if (name === 'emptyState') next[name] = DEFAULT_EMPTYSTATE_SOURCE
+          else if (name === 'messageStatus') next[name] = DEFAULT_MESSAGESTATUS_SOURCE
+          else if (name === 'typingIndicator') next[name] = DEFAULT_TYPINGINDICATOR_SOURCE
+          else if (name === 'replyPreview') next[name] = DEFAULT_REPLYPREVIEW_SOURCE
+          else if (name === 'replyQuote') next[name] = DEFAULT_REPLYQUOTE_SOURCE
+          else if (name === 'messageReactions') next[name] = DEFAULT_MESSAGEREACTIONS_SOURCE
+          else if (name === 'reactionPicker') next[name] = DEFAULT_REACTIONPICKER_SOURCE
+          else if (name === 'profileScreen') next[name] = DEFAULT_PROFILESCREEN_SOURCE
+          else if (name === 'contactProfileScreen') next[name] = DEFAULT_CONTACTPROFILESCREEN_SOURCE
+          else if (name === 'communityMessageBubble') next[name] = DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE
+          else if (name === 'communityListScreen') next[name] = DEFAULT_COMMUNITYLISTSCREEN_SOURCE
+          else if (name === 'createCommunityScreen') next[name] = DEFAULT_CREATECOMMUNITYSCREEN_SOURCE
+          else if (name === 'communityChatScreen') next[name] = DEFAULT_COMMUNITYCHATSCREEN_SOURCE
+          else if (name === 'communityProfileScreen') next[name] = DEFAULT_COMMUNITYPROFILESCREEN_SOURCE
           else delete next[name]
           return { componentSources: next }
         }),
@@ -321,7 +347,7 @@ export const useUIStore = create<UIStoreState>()(
           backTap: 'navigate-back',
         },
         customComponents: {},
-        componentSources: { topAppBar: DEFAULT_TOPAPPBAR_SOURCE, searchBar: DEFAULT_SEARCHBAR_SOURCE, chatTile: DEFAULT_CHATTILE_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE, dateSeparator: DEFAULT_DATESEPARATOR_SOURCE, composerBar: DEFAULT_COMPOSERBAR_SOURCE, backButton: DEFAULT_BACKBUTTON_SOURCE, profileImage: DEFAULT_PROFILEIMAGE_SOURCE, chatName: DEFAULT_CHATNAME_SOURCE, onlineStatus: DEFAULT_ONLINESTATUS_SOURCE, attachButton: DEFAULT_ATTACHBUTTON_SOURCE, sendButton: DEFAULT_SENDBUTTON_SOURCE, emptyState: DEFAULT_EMPTYSTATE_SOURCE },
+        componentSources: { topAppBar: DEFAULT_TOPAPPBAR_SOURCE, searchBar: DEFAULT_SEARCHBAR_SOURCE, chatTile: DEFAULT_CHATTILE_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE, dateSeparator: DEFAULT_DATESEPARATOR_SOURCE, composerBar: DEFAULT_COMPOSERBAR_SOURCE, backButton: DEFAULT_BACKBUTTON_SOURCE, profileImage: DEFAULT_PROFILEIMAGE_SOURCE, chatName: DEFAULT_CHATNAME_SOURCE, onlineStatus: DEFAULT_ONLINESTATUS_SOURCE, attachButton: DEFAULT_ATTACHBUTTON_SOURCE, sendButton: DEFAULT_SENDBUTTON_SOURCE, emptyState: DEFAULT_EMPTYSTATE_SOURCE, messageStatus: DEFAULT_MESSAGESTATUS_SOURCE, typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE, replyPreview: DEFAULT_REPLYPREVIEW_SOURCE, replyQuote: DEFAULT_REPLYQUOTE_SOURCE, messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE, reactionPicker: DEFAULT_REACTIONPICKER_SOURCE, profileScreen: DEFAULT_PROFILESCREEN_SOURCE, contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE, communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE, createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE, communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE },
         history: [],
         componentState: {},
       })),

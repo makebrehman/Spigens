@@ -413,7 +413,7 @@ export function AuthScreen() {
   const [uStatus, setUStatus] = useState<'idle'|'checking'|'available'|'taken'>('idle')
 
   const [codeSentAt, setCodeSentAt] = useState<number | null>(null)
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(Date.now)
 
   useEffect(() => {
     if (!codeSentAt) return
@@ -437,7 +437,7 @@ export function AuthScreen() {
   // debounced username check
   useEffect(() => {
     if (mode !== 'profile' || !username || username.length < 3) {
-      setUStatus('idle'); sRef.current?.setCheckState('idle'); return
+      setTimeout(() => setUStatus('idle'), 0); sRef.current?.setCheckState('idle'); return
     }
     setUStatus('checking'); sRef.current?.setCheckState('checking')
     const t = setTimeout(async () => {

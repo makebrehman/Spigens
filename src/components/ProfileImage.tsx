@@ -8,6 +8,7 @@ export interface ProfileImageProps {
   avatarUrl: string | null
   contactInitials: string
   contactAvatarColor: string
+  size?: number
 }
 
 export function ProfileImage(props: ProfileImageProps) {

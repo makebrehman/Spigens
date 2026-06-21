@@ -3,32 +3,17 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
-import { MessageStatus } from './MessageStatus'
-import { ReplyQuote } from './ReplyQuote'
-import { MessageReactions } from './MessageReactions'
-import { ReactionPicker } from './ReactionPicker'
 
-export interface MessageBubbleProps {
-  id: string
-  contactId?: string
-  content: string
-  timestamp: string
-  isSent: boolean
-  isRead: boolean
-  status?: string
+export interface ReplyQuoteProps {
   replyTo?: { id?: string; content: string; senderLabel: string } | null
-  onReplyTo?: (target: { id: string; content: string; isSent: boolean }) => void
+  isSent: boolean
   onJumpToReply?: (id: string) => void
-  currentUserId?: string
-  onToggleReaction?: (messageId: string, emoji: string) => void
-  onShowReactors?: (messageId: string) => void
-  isDeleted?: boolean
 }
 
-export function MessageBubble(props: MessageBubbleProps) {
-  const { id, content, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, isDeleted } = props
+export function ReplyQuote(props: ReplyQuoteProps) {
+  const { replyTo, isSent, onJumpToReply } = props
   const componentSources = useUIStore(state => state.componentSources)
-  const messageBubbleSource = componentSources?.messageBubble ?? null
+  const source = componentSources?.replyQuote ?? null
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -58,8 +43,8 @@ export function MessageBubble(props: MessageBubbleProps) {
 
   return (
     <RenderifyHost
-      code={messageBubbleSource}
-      storeActions={{ id, content, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors: onShowReactors ?? null, isDeleted: isDeleted ?? false, MessageStatus, ReplyQuote, MessageReactions, ReactionPicker, useComponentState }}
+      code={source}
+      storeActions={{ replyTo, isSent, onJumpToReply, useComponentState }}
     />
   )
 }

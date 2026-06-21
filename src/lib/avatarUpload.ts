@@ -33,6 +33,41 @@ export function clearPendingAvatar(): void {
   localStorage.removeItem(PENDING_AVATAR_KEY);
 }
 
+export async function updateAvatar(userId: string, file: File): Promise<string | null> {
+  try {
+    const compressedBlob = await compressAvatar(file)
+    const path = `${userId}/${Date.now()}.webp`
+
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(path, compressedBlob, { cacheControl: '3600', upsert: false, contentType: 'image/webp' })
+
+    if (uploadError) {
+      console.error('Failed to upload avatar:', uploadError)
+      return null
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(path)
+
+    const { error: dbError } = await supabase
+      .from('profiles')
+      .update({ avatar_url: publicUrl })
+      .eq('id', userId)
+
+    if (dbError) {
+      console.error('Failed to update profile with avatar url:', dbError)
+      return null
+    }
+
+    return publicUrl
+  } catch (err) {
+    console.error('Error in updateAvatar:', err)
+    return null
+  }
+}
+
 // Helper to convert base64 back to Blob
 function dataURLtoBlob(dataurl: string): Blob {
   const arr = dataurl.split(',');
@@ -87,4 +122,17 @@ export async function uploadPendingAvatar(userId: string): Promise<string | null
     console.error('Error in uploadPendingAvatar:', err);
     return null; // Return null on failure instead of throwing
   }
+}
+
+export async function uploadCommunityImage(communityId: string, file: File): Promise<string | null> {
+  try {
+    const compressedBlob = await compressAvatar(file)
+    const path = `communities/${communityId}/${Date.now()}.webp`
+    const { error: uploadError } = await supabase.storage.from('avatars').upload(path, compressedBlob, { cacheControl: '3600', upsert: false, contentType: 'image/webp' })
+    if (uploadError) { console.error('Failed to upload community image:', uploadError); return null }
+    const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path)
+    const { error: dbError } = await supabase.from('communities').update({ avatar_url: publicUrl }).eq('id', communityId)
+    if (dbError) { console.error('Failed to update community image:', dbError); return null }
+    return publicUrl
+  } catch (err) { console.error('Error in uploadCommunityImage:', err); return null }
 }

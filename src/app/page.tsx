@@ -20,8 +20,16 @@ import { useNavStore } from '@/stores/navStore'
 import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
+import { ProfileScreen } from '@/components/ProfileScreen'
+import { ContactProfileScreen } from '@/components/ContactProfileScreen'
+import { CommunityListScreen } from '@/components/CommunityListScreen'
+import { CreateCommunityScreen } from '@/components/CreateCommunityScreen'
+import { CommunityChatScreen } from '@/components/CommunityChatScreen'
+import { CommunityProfileScreen } from '@/components/CommunityProfileScreen'
+import { ProfileImage } from '@/components/ProfileImage'
+import { SettingsScreen } from '@/components/SettingsScreen'
 
-function UserSearchResults({ searchQuery, onSelectUser }: { searchQuery: string, onSelectUser?: (user: any) => void }) {
+function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQuery: string, onSelectUser?: (user: any) => void, onAvatarTap?: (user: any) => void }) {
   const [results, setResults] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const currentUserId = useAuthStore(state => state.user?.id)
@@ -60,17 +68,15 @@ function UserSearchResults({ searchQuery, onSelectUser }: { searchQuery: string,
                onClick={() => {
                  onSelectUser?.(u)
                }}>
-            {u.avatar_url ? (
-              <img src={u.avatar_url} alt="" className="w-[48px] h-[48px] rounded-full object-cover shrink-0" />
-            ) : (
-              <div className="w-[48px] h-[48px] rounded-full shrink-0 flex items-center justify-center font-bold text-[18px]" style={{
-                background: 'linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)',
-                color: '#fff',
-                textTransform: 'uppercase'
-              }}>
-                {(u.display_name || u.username || '?')[0]}
-              </div>
-            )}
+            <div onClick={(e) => { e.stopPropagation(); onAvatarTap?.(u); }} style={{ flexShrink: 0, cursor: 'pointer' }}>
+              {u.avatar_url ? (
+                <img src={u.avatar_url} alt="" className="w-[48px] h-[48px] rounded-full object-cover" />
+              ) : (
+                <div className="w-[48px] h-[48px] rounded-full flex items-center justify-center font-bold text-[18px]" style={{ background: 'linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)', color: '#fff', textTransform: 'uppercase' }}>
+                  {(u.display_name || u.username || '?')[0]}
+                </div>
+              )}
+            </div>
             <div className="flex flex-col min-w-0 flex-1">
               <span className="text-[#E8E8E8] text-[16px] font-semibold truncate leading-tight mb-[2px]">{u.display_name}</span>
               <span className="text-[#8A8A8A] text-[13px] truncate leading-tight">@{u.username}</span>
@@ -87,6 +93,16 @@ export default function Home() {
   const [mounted, setMounted] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   const [activeChatUser, setActiveChatUser] = useState<any>(null)
+  const [showProfile, setShowProfile] = useState(false)
+  const [contactProfileUser, setContactProfileUser] = useState<any>(null)
+  const [showCommunityList, setShowCommunityList] = useState(false)
+  const [showCreateCommunity, setShowCreateCommunity] = useState(false)
+  const [activeCommunity, setActiveCommunity] = useState<any>(null)
+  const [activeCommunityProfile, setActiveCommunityProfile] = useState<any>(null)
+  const [returnToProfile, setReturnToProfile] = useState<any | null>(null)
+  const [returnToCommunity, setReturnToCommunity] = useState<any | null>(null)
+  const [activeTab, setActiveTab] = useState<'chats' | 'communities' | 'profile'>('chats')
+  const [showSettings, setShowSettings] = useState(false)
 
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
 
@@ -147,8 +163,15 @@ export default function Home() {
   // load conversations on mount and when returning from chat
   const fetchConversations = useCallback(() => {
     if (isAuthenticated && user?.id && profile?.public_key && !activeChatUser) {
-      loadConversations(user.id, profile.public_key).then((conversations) => {
-        const mappedContacts: Contact[] = conversations.map(c => {
+      Promise.all([
+        loadConversations(user.id, profile.public_key),
+        supabase.rpc('get_dm_unread_counts'),
+        supabase.from('blocks').select('blocked_id')
+      ]).then(([conversations, unreadRes, blocksRes]) => {
+        const unreadMap: Record<string, number> = {}
+        ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
+        const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
+        const mappedContacts: Contact[] = conversations.filter(c => !blockedSet.has(c.otherProfile.id)).map(c => {
           const dt = new Date(c.lastMessageTime)
           const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           return {
@@ -159,7 +182,7 @@ export default function Home() {
             avatarUrl: c.otherProfile.avatar_url,
             lastMessage: c.lastMessage,
             lastMessageTime: timeStr,
-            unreadCount: 0,
+            unreadCount: unreadMap[c.otherProfile.id] || 0,
             isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
             rawProfile: c.otherProfile
           }
@@ -168,7 +191,7 @@ export default function Home() {
         useUIStore.getState().setComponentState('feedContacts', mappedContacts)
       })
     }
-  }, [isAuthenticated, user?.id, profile?.public_key, activeChatUser])
+  }, [isAuthenticated, user, profile, activeChatUser])
 
   useEffect(() => {
     fetchConversations()
@@ -231,6 +254,40 @@ export default function Home() {
       handleOffline()
       presenceChannel.untrack()
       supabase.removeChannel(presenceChannel)
+    }
+  }, [isAuthenticated, user?.id])
+
+  // Mark incoming messages as 'delivered' whenever the app is open (any screen).
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return
+
+    const markDelivered = () => {
+      supabase.rpc('mark_messages_delivered', { p_user_id: user.id }).then()
+    }
+
+    // Catch-up: anything that arrived while we were away.
+    markDelivered()
+
+    // Re-run when the app returns to the foreground.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') markDelivered()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    // Live: mark each new incoming message delivered while the app is open.
+    const deliveredChannel = supabase
+      .channel('delivered-' + user.id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        const row = payload.new as any
+        if (row.sender_id !== user.id && row.status === 'sent') {
+          supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
+        }
+      })
+      .subscribe()
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      supabase.removeChannel(deliveredChannel)
     }
   }, [isAuthenticated, user?.id])
 
@@ -474,9 +531,15 @@ export default function Home() {
       openLongPressSheet: () => { const first = useContactStore.getState().contacts[0]; if (first) setLongPressedContact(first) },
       setSearchBarConfig: (cfg: any) => useUIStore.getState().setSearchBarConfig(cfg),
       setContactListStyle: (s: any) => useUIStore.getState().setContactListStyle(s),
+      onCommunityTap: () => setShowCommunityList(true),
+      myAvatarUrl: profile?.avatar_url ?? null,
+      myAvatarInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(),
+      myAvatarColor: '#2563EB',
+      onOpenProfile: () => setShowProfile(true),
+      ProfileImage: ProfileImage,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // created once — all functions read from store at call time, all setters are stable refs
+  }, [profile]) // created once — all functions read from store at call time, all setters are stable refs
 
   const searchBarScope = useMemo(() => {
     function useComponentState(key: string, defaultValue: any) {
@@ -528,6 +591,90 @@ export default function Home() {
     return <div className="h-screen w-full bg-[#0a0a0a]" />
   }
 
+  if (showSettings) {
+    return <SettingsScreen onBack={() => setShowSettings(false)} />
+  }
+
+  if (activeCommunityProfile) {
+    return (
+      <CommunityProfileScreen
+        communityId={activeCommunityProfile.id}
+        communityName={activeCommunityProfile.name}
+        communityType={activeCommunityProfile.type}
+        communityDescription={activeCommunityProfile.description}
+        communityAvatarUrl={activeCommunityProfile.avatar_url}
+        memberCount={activeCommunityProfile.member_count}
+        inviteMessageId={activeCommunityProfile._inviteMessageId || undefined}
+        userRole={activeCommunityProfile.userRole}
+        isMember={activeCommunityProfile.isMember ?? false}
+        onBack={() => setActiveCommunityProfile(null)}
+        onLeaveAndExit={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
+        onCommunityDeleted={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
+        onStartDMWithUser={(userId, displayName, username, avatarUrl) => {
+          setReturnToProfile(activeCommunityProfile)
+          setActiveCommunityProfile(null)
+          setActiveCommunity(null)
+          setShowCommunityList(false)
+          setActiveChatUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
+        }}
+        onViewMemberProfile={(userId, displayName, username, avatarUrl) => {
+          setContactProfileUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
+        }}
+      />
+    )
+  }
+
+  if (activeCommunity) {
+    return (
+      <CommunityChatScreen
+        communityId={activeCommunity.id}
+        communityName={activeCommunity.name}
+        communityType={activeCommunity.type}
+        isMember={activeCommunity.isMember ?? false}
+        userRole={activeCommunity.userRole}
+        memberCount={activeCommunity.member_count || 0}
+        onBack={() => setActiveCommunity(null)}
+        onViewCommunityProfile={() => setActiveCommunityProfile(activeCommunity)}
+        onSenderTap={(userId: string, name: string, avatarUrl: string | null) => {
+          setReturnToCommunity(activeCommunity)
+          setActiveCommunity(null)
+          setActiveChatUser({ id: userId, display_name: name, avatar_url: avatarUrl })
+        }}
+        communityAvatarUrl={activeCommunity.avatar_url ?? null}
+      />
+    )
+  }
+
+  if (showCreateCommunity) {
+    return (
+      <CreateCommunityScreen
+        onBack={() => setShowCreateCommunity(false)}
+        onCreated={(community) => { setShowCreateCommunity(false); setActiveCommunity(community) }}
+      />
+    )
+  }
+
+  if (contactProfileUser) {
+    return (
+      <ContactProfileScreen
+        userId={contactProfileUser.id}
+        displayName={contactProfileUser.display_name || contactProfileUser.username}
+        username={contactProfileUser.username}
+        avatarUrl={contactProfileUser.avatar_url}
+        onBack={() => setContactProfileUser(null)}
+        onBlocked={() => { setContactProfileUser(null); fetchConversations() }}
+        onStartChat={() => { const u = contactProfileUser; setContactProfileUser(null); setActiveChatUser(u) }}
+        onOpenCommunity={(communityId: string, name: string, type: string, memberCount: number, avatarUrl: string | null) => {
+          setContactProfileUser(null)
+          setActiveCommunityProfile(null)
+          setReturnToProfile(null)
+          setActiveCommunity({ id: communityId, name, type, member_count: memberCount, avatar_url: avatarUrl, isMember: true, userRole: 'member' })
+          setShowCommunityList(false)
+        }}
+      />
+    )
+  }
+
   // --- chat screen ---
   if (activeChatUser) {
     return (
@@ -540,7 +687,9 @@ export default function Home() {
           contactInitials={(activeChatUser.display_name || activeChatUser.username || '?')[0].toUpperCase()}
           isOnline={onlineUserIds.has(activeChatUser.id)}
           lastSeen={activeChatUser.last_seen}
-          onBack={() => setActiveChatUser(null)}
+          onBack={() => { setActiveChatUser(null); if (returnToProfile) { setActiveCommunityProfile(returnToProfile); setReturnToProfile(null); } else if (returnToCommunity) { setActiveCommunity(returnToCommunity); setReturnToCommunity(null); } }}
+          onViewContactProfile={() => setContactProfileUser(activeChatUser)}
+          onOpenCommunityInvite={(meta: any, msgId: string) => { setActiveCommunityProfile({ id: meta.communityId, name: meta.communityName, type: meta.communityType || 'public', avatar_url: meta.avatarUrl || null, description: meta.description || null, member_count: meta.memberCount || 0, isMember: false, userRole: null, _inviteMessageId: msgId }) }}
         />
         <GenUIPanel
           isOpen={showGenUI}
@@ -623,98 +772,107 @@ export default function Home() {
   })
 
   return (
-    <div className="h-screen w-full bg-[#0a0a0a] flex flex-col overflow-hidden">
-      {/* temporary testing logout button */}
-      <button 
-        onClick={() => useAuthStore.getState().signOut()}
-        style={{
-          position: 'fixed',
-          top: '16px',
-          right: '110px',
-          zIndex: 9999,
-          background: 'rgba(255,255,255,0.1)',
-          border: '1px solid rgba(255,255,255,0.2)',
-          borderRadius: '6px',
-          color: '#fff',
-          padding: '6px 12px',
-          fontSize: '12px',
-          cursor: 'pointer',
-        }}
-      >
-        logout
-      </button>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
+      {/* Top header */}
+      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', padding: '0 16px', minHeight: '60px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0, gap: '12px' }}>
+        <img src="/spigens_logo.png" alt="Spigen" style={{ width: '34px', height: '34px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+        <div style={{ flex: 1, fontSize: '20px', fontWeight: '700', color: '#F3F4F6' }}>
+          {activeTab === 'chats' ? 'Chats' : activeTab === 'communities' ? 'Communities' : 'Profile'}
+        </div>
+        {activeTab !== 'profile' && (
+          <button
+            onClick={() => setShowSearch(s => !s)}
+            style={{ background: 'none', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: showSearch ? '#2563EB' : 'rgba(255,255,255,0.6)', flexShrink: 0 }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+            </svg>
+          </button>
+        )}
+        {activeTab === 'communities' && (
+          <button
+            onClick={() => setShowCreateCommunity(true)}
+            style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#2563EB', border: 'none', color: '#FFF', fontSize: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >+</button>
+        )}
+      </div>
 
-      {/* orderable home sections */}
-      {(homeLayoutOrder ?? ['appBar', 'searchBar', 'homeTop', 'contactList', 'homeBottom']).map(key => {
-        const sections: Record<string, React.ReactNode> = {
-          appBar: <RenderifyHost code={topAppBarSource ?? null} storeActions={topBarScope} />,
-          searchBar: showSearch && barPosition === 'top-bar'
-            ? <RenderifyHost code={searchBarSource ?? null} storeActions={searchBarScope} />
-            : null,
-          homeTop: <RenderifyHost code={customComponents?.['home-top'] ?? null} storeActions={renderifyActions} />,
-          contactList: (
-            <div className="flex-1 overflow-hidden flex flex-col">
-              {searchQuery.trim().length >= 2 ? (
-                <UserSearchResults 
-                  searchQuery={searchQuery} 
-                  onSelectUser={(u) => {
-                    setActiveChatUser(u)
-                    useUIStore.getState().setComponentState('searchQuery', '')
-                    setShowSearch(false)
-                  }}
-                />
-              ) : contacts.length === 0 ? (
-                <EmptyState />
-              ) : (
-                <ContactList
-                  onContactSelect={(contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id))}
-                  onTileLongPress={(contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id))}
-                />
-              )}
-            </div>
-          ),
-          homeBottom: <RenderifyHost code={customComponents?.['home-bottom'] ?? null} storeActions={renderifyActions} />,
-        }
-        const node = sections[key]
-        return node ? <Fragment key={key}>{node}</Fragment> : null
-      })}
-
-      {/* portal search bar — bottom-overlay and floating containers */}
-      {showPortalSearch && (
-        <SearchBar
-          mode="overlay"
-          overlayPosition={overlayPosition}
-          placeholder="search conversations..."
-          onClose={() => setShowSearch(false)}
-        />
+      {/* Search bar */}
+      {showSearch && (
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 }}>
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={(e) => useUIStore.getState().setComponentState('searchQuery', e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') } }}
+            placeholder={activeTab === 'communities' ? 'Search communities...' : 'Search chats...'}
+            style={{ width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: '999px', padding: '9px 16px', fontSize: '14px', color: '#E8E8E8', border: '1px solid rgba(255,255,255,0.08)', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
+          />
+        </div>
       )}
 
-      {mounted && iconPosition === 'bottom' && (
-        <button
-          onClick={() => setShowSearch(prev => !prev)}
-          style={{
-            position: 'fixed',
-            bottom: 'calc(var(--sab) + 24px)',
-            right: '16px',
-            width: '52px',
-            height: '52px',
-            borderRadius: '50%',
-            background: '#2563EB',
-            border: 'none',
-            color: '#ffffff',
-            fontSize: '20px',
-            zIndex: 101,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          }}
-        >
-          🔍
-        </button>
-      )}
+      {/* Tab content */}
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {activeTab === 'chats' && (
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {searchQuery.trim().length >= 2 ? (
+              <UserSearchResults
+                searchQuery={searchQuery}
+                onSelectUser={(u: any) => { setActiveChatUser(u); useUIStore.getState().setComponentState('searchQuery', ''); setShowSearch(false) }}
+                onAvatarTap={(u: any) => setContactProfileUser({ id: u.id, display_name: u.display_name, username: u.username, avatar_url: u.avatar_url })}
+              />
+            ) : contacts.length === 0 ? (
+              <EmptyState />
+            ) : (
+              <ContactList
+                onContactSelect={(contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id))}
+                onTileLongPress={(contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id))}
+                onContactAvatarTap={(contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null })}
+              />
+            )}
+          </div>
+        )}
 
+        {activeTab === 'communities' && (
+          <CommunityListScreen
+            onBack={() => setActiveTab('chats')}
+            onOpenCommunity={(community: any) => setActiveCommunity(community)}
+            onCreateCommunity={() => setShowCreateCommunity(true)}
+            onOpenCommunityProfile={(c: any) => setActiveCommunityProfile(c)}
+            onCommunityAvatarTap={(c: any) => setActiveCommunityProfile(c)}
+            hideHeader={true}
+          />
+        )}
+
+        {activeTab === 'profile' && (
+          <ProfileScreen onBack={() => setActiveTab('chats')} isTab={true} onOpenSettings={() => setShowSettings(true)} />
+        )}
+      </div>
+
+      {/* Bottom navbar */}
+      <div style={{ flexShrink: 0, background: '#141414', borderTop: '1px solid #1F1F1F', display: 'flex', flexDirection: 'row', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }}>
+        {([
+          { id: 'chats' as const, label: 'Chats', path: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z' },
+          { id: 'communities' as const, label: 'Communities', path: 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z' },
+          { id: 'profile' as const, label: 'Profile', path: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
+        ]).map((tab) => {
+          const isActive = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              onClick={() => { setActiveTab(tab.id); setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') }}
+              style={{ flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', WebkitTapHighlightColor: 'transparent' as any, userSelect: 'none' as any }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill={isActive ? '#2563EB' : 'rgba(255,255,255,0.4)'}>
+                <path d={tab.path} />
+              </svg>
+              <span style={{ fontSize: '10px', fontWeight: isActive ? '700' : '500', color: isActive ? '#2563EB' : 'rgba(255,255,255,0.4)', letterSpacing: '0.1px' }}>{tab.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Portals + GenUI */}
       {longPressConfig && longPressedContact !== null && mounted && createPortal(
         <RenderifyHost
           code={bottomSheetSource ?? null}
@@ -723,16 +881,12 @@ export default function Home() {
             title: longPressConfig.popup.title,
             options: longPressConfig.popup.options,
             onClose: () => setLongPressedContact(null),
-            onOptionSelect: (option: any) => {
-              console.log(`${option.label} on ${longPressedContact?.name}`)
-              setLongPressedContact(null)
-            },
+            onOptionSelect: (option: any) => { console.log(`${option.label} on ${longPressedContact?.name}`); setLongPressedContact(null) },
             contactName: longPressedContact?.name,
           }}
         />,
         document.body
       )}
-
       <GenUIPanel
         isOpen={showGenUI}
         isGenerating={isGenerating}
@@ -743,9 +897,6 @@ export default function Home() {
         onReset={() => useUIStore.getState().resetAllCustomizations()}
         canUndo={canUndoUI}
       />
-
-      {/* floating zone */}
-      <RenderifyHost code={customComponents?.['floating'] ?? null} storeActions={renderifyActions} />
     </div>
   )
 }

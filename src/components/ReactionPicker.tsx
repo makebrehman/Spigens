@@ -1,21 +1,18 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useContactStore } from '@/stores/contactStore'
 import { useUIStore } from '@/stores/uiStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
-import type { Contact } from '@/types'
 
-interface ContactListProps {
-  onContactSelect?: (contact: Contact) => void
-  onTileLongPress?: (contact: Contact) => void
-  onContactAvatarTap?: (contact: any) => void
+export interface ReactionPickerProps {
+  messageId: string
+  onToggleReaction?: (messageId: string, emoji: string) => void
 }
 
-export function ContactList({ onContactSelect, onTileLongPress, onContactAvatarTap }: ContactListProps) {
-  const contacts = useContactStore(state => state.contacts)
+export function ReactionPicker(props: ReactionPickerProps) {
+  const { messageId, onToggleReaction } = props
   const componentSources = useUIStore(state => state.componentSources)
-  const contactListSource = componentSources?.contactList ?? null
+  const source = componentSources?.reactionPicker ?? null
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -45,14 +42,8 @@ export function ContactList({ onContactSelect, onTileLongPress, onContactAvatarT
 
   return (
     <RenderifyHost
-      code={contactListSource}
-      storeActions={{
-        contacts,
-        onContactSelect: (contact: Contact) => onContactSelect?.(contact),
-        onTileLongPress: (contact: Contact) => onTileLongPress?.(contact),
-        onAvatarTap: (contact: any) => onContactAvatarTap?.(contact),
-        useComponentState,
-      }}
+      code={source}
+      storeActions={{ messageId, onToggleReaction, useComponentState }}
     />
   )
 }

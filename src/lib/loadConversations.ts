@@ -1,9 +1,7 @@
 import { supabase } from '@/lib/supabase'
-import { loadPrivateKey, decryptMessage } from '@/lib/encryption'
 import type { Contact } from '@/types'
 
 export async function loadConversations(currentUserId: string, myPublicKey: string) {
-  const privateKey = loadPrivateKey()
   
   // 1. Get all conversation ids the user is in
   const { data: myParticipants, error: myError } = await supabase
@@ -66,13 +64,7 @@ export async function loadConversations(currentUserId: string, myPublicKey: stri
     let decryptedContent = ''
 
     try {
-      if (lastMsg.sender_id === currentUserId) {
-         const dec = await decryptMessage(lastMsg.encrypted_content_sender, myPublicKey, privateKey)
-         decryptedContent = dec ?? '🔒 unable to decrypt'
-      } else {
-         const dec = await decryptMessage(lastMsg.encrypted_content, profile.public_key || '', privateKey)
-         decryptedContent = dec ?? '🔒 unable to decrypt'
-      }
+      decryptedContent = lastMsg.content ?? ''
     } catch(e) {
       decryptedContent = '🔒 message'
     }

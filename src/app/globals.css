@@ -42,3 +42,12 @@ body {
   --font-dmserif: 'DM Serif Display', serif;
   --font-bricolage: 'Bricolage Grotesque', sans-serif;
 }
+
+/* Hide scrollbars globally — scroll still works, visual bar is hidden */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}

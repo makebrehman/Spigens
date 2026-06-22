@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
-import { cacheCommunityMessages, getCachedCommunityMessages } from '@/lib/offlineCache'
+import { cacheCommunityMessages, getCachedCommunityMessages, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
@@ -184,14 +184,32 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   }, [communityId, networkIsOnline])
 
   if (typeof window !== 'undefined' && currentUserId) { useUIStore.getState().setComponentState('currentUserId', currentUserId) }
+
+  useEffect(() => {
+    if (!networkIsOnline || !currentUserId) return
+    const pending = getPendingCommunityMessages(currentUserId).filter(m => m.communityId === communityId)
+    if (!pending.length) return
+    pending.forEach(async pm => {
+      const { error } = await supabase.from('community_messages').insert({ id: pm.id, community_id: pm.communityId, sender_id: currentUserId, content: pm.content, reply_to: pm.replyToId, created_at: pm.createdAt })
+      if (!error) {
+        removePendingCommunityMessage(currentUserId, pm.id)
+      }
+    })
+  }, [networkIsOnline, communityId, currentUserId])
+
   const sendMessage = async (content: string) => {
     if (!content.trim() || !currentUserId) return
     const replyingTo = (useUIStore.getState().componentState?.['communityReplyingTo'] ?? null) as any
     const newId = crypto.randomUUID()
-    const optimistic = { id: newId, content: content.trim(), senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt: new Date().toISOString(), isMine: true, replyTo: replyingTo?.id || null }
+    const createdAt = new Date().toISOString()
+    const optimistic = { id: newId, content: content.trim(), senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt, isMine: true, replyTo: replyingTo?.id || null }
     const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityMessages', [...current, optimistic])
     useUIStore.getState().setComponentState('communityReplyingTo', null)
+    if (!networkIsOnline) {
+      savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: content.trim(), replyToId: replyingTo?.id || null, createdAt })
+      return
+    }
     const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })
     if (error) {
       const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]

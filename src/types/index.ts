@@ -13,6 +13,7 @@ export interface Contact {
   unreadCount: number
   isOnline: boolean
   isPinned?: boolean
+  isMuted?: boolean
   rawProfile?: any
 }
 

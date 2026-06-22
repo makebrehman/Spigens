@@ -67,10 +67,15 @@ export function ChatScreen(props: ChatScreenProps) {
   const [realMessages, setRealMessages] = useState<any[]>([])
   const [replyingTo, setReplyingTo] = useState<any>(null)
   const [encWarning, setEncWarning] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [attachToast, setAttachToast] = useState<string | null>(null)
 
   const typingChannelRef = useRef<any>(null)
   const lastTypingSentRef = useRef<number>(0)
   const typingExpireRef = useRef<any>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const docInputRef = useRef<HTMLInputElement>(null)
+  const sendMsgRef = useRef<((content: string) => Promise<void>) | null>(null)
 
   const currentUserId = useAuthStore(state => state.user?.id)
   const myPublicKey = useAuthStore(state => state.profile?.public_key)
@@ -371,6 +376,58 @@ export function ChatScreen(props: ChatScreenProps) {
     }] as [any, (v: any) => void]
   }
 
+  const uploadChatMedia = async (file: File): Promise<string | null> => {
+    if (!currentUserId) return null
+    const ext = file.name.split('.').pop() || 'bin'
+    const path = `chat_media/${currentUserId}/${Date.now()}.${ext}`
+    setUploading(true)
+    const { error } = await supabase.storage.from('avatars').upload(path, file, { upsert: false })
+    setUploading(false)
+    if (error) {
+      setAttachToast('Upload failed. Please try again.')
+      setTimeout(() => setAttachToast(null), 2600)
+      return null
+    }
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+    return data.publicUrl
+  }
+
+  const handleAttachOption = async (option: any) => {
+    setShowAttachSheet(false)
+    if (option.id === 'photo') {
+      photoInputRef.current?.click()
+    } else if (option.id === 'document') {
+      docInputRef.current?.click()
+    } else if (option.id === 'location') {
+      if (!navigator.geolocation) {
+        setAttachToast('Location not available on this device')
+        setTimeout(() => setAttachToast(null), 2600)
+        return
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords
+          sendMsgRef.current?.(`📍 https://maps.google.com/?q=${latitude},${longitude}`)
+        },
+        () => { setAttachToast('Could not get location'); setTimeout(() => setAttachToast(null), 2600) }
+      )
+    } else if (option.id === 'contact-share') {
+      if (typeof (navigator as any).contacts?.select === 'function') {
+        try {
+          const picked = await (navigator as any).contacts.select(['name', 'tel'], { multiple: false })
+          if (picked?.length) {
+            const c = picked[0]
+            const label = `👤 ${c.name?.[0] || 'Contact'}${c.tel?.[0] ? ' · ' + c.tel[0] : ''}`
+            sendMsgRef.current?.(label)
+          }
+        } catch { /* user cancelled */ }
+      } else {
+        setAttachToast('Contact sharing not supported on this device')
+        setTimeout(() => setAttachToast(null), 2600)
+      }
+    }
+  }
+
   const chatScreenScope = {
     contactId,
     otherUserId,
@@ -545,12 +602,34 @@ export function ChatScreen(props: ChatScreenProps) {
     useComponentState,
   }
 
+  sendMsgRef.current = chatScreenScope.sendMessage as any
+
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
       {encWarning && (
         <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#92400e', color: '#fef3c7', padding: '10px 18px', borderRadius: 999, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
           ⚠️ Message sent without encryption
+        </div>
+      )}
+      <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={async e => {
+        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+        const url = await uploadChatMedia(file)
+        if (url) sendMsgRef.current?.(url)
+      }} />
+      <input ref={docInputRef} type="file" style={{ display: 'none' }} onChange={async e => {
+        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+        const url = await uploadChatMedia(file)
+        if (url) sendMsgRef.current?.(url)
+      }} />
+      {uploading && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none' }}>
+          Uploading…
+        </div>
+      )}
+      {attachToast && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none' }}>
+          {attachToast}
         </div>
       )}
       {attachConfig?.popup && showAttachSheet && createPortal(
@@ -561,7 +640,7 @@ export function ChatScreen(props: ChatScreenProps) {
             title: attachConfig.popup.title,
             options: attachConfig.popup.options,
             onClose: () => setShowAttachSheet(false),
-            onOptionSelect: (option: any) => { console.log('attach option selected:', option.label); setShowAttachSheet(false) },
+            onOptionSelect: (option: any) => handleAttachOption(option),
           }}
         />,
         document.body

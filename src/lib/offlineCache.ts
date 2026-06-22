@@ -70,3 +70,35 @@ export function removePendingMessage(userId: string, msgId: string): void {
     localStorage.setItem(pendingKey(userId), JSON.stringify(existing.filter(m => m.id !== msgId)))
   } catch { /* ignore */ }
 }
+
+interface PendingCommunityMsg {
+  id: string
+  communityId: string
+  content: string
+  replyToId: string | null
+  createdAt: string
+}
+
+function commPendingKey(userId: string) { return P + `comm_pending_${userId}` }
+
+export function savePendingCommunityMessage(userId: string, msg: PendingCommunityMsg): void {
+  if (typeof window === 'undefined') return
+  try {
+    const existing: PendingCommunityMsg[] = JSON.parse(localStorage.getItem(commPendingKey(userId)) || '[]')
+    existing.push(msg)
+    localStorage.setItem(commPendingKey(userId), JSON.stringify(existing))
+  } catch { /* ignore */ }
+}
+
+export function getPendingCommunityMessages(userId: string): PendingCommunityMsg[] {
+  if (typeof window === 'undefined') return []
+  try { return JSON.parse(localStorage.getItem(commPendingKey(userId)) || '[]') } catch { return [] }
+}
+
+export function removePendingCommunityMessage(userId: string, msgId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const existing: PendingCommunityMsg[] = JSON.parse(localStorage.getItem(commPendingKey(userId)) || '[]')
+    localStorage.setItem(commPendingKey(userId), JSON.stringify(existing.filter(m => m.id !== msgId)))
+  } catch { /* ignore */ }
+}

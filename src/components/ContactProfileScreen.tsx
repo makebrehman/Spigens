@@ -36,7 +36,13 @@ export function ContactProfileScreen(props: ContactProfileScreenProps) {
   const doBlock = async () => {
     if (!currentUserId || !userId || busy) return
     setBusy(true)
-    await supabase.from('blocks').insert({ blocker_id: currentUserId, blocked_id: userId })
+    const { error } = await supabase.from('blocks').insert({ blocker_id: currentUserId, blocked_id: userId })
+    if (error) {
+      setBusy(false)
+      setToast('Failed to block. Please try again.')
+      setTimeout(() => setToast(null), 2600)
+      return
+    }
     if (alsoReport) {
       await supabase.from('reports').insert({ reporter_id: currentUserId, reported_id: userId, reason: 'Blocked user' })
     }
@@ -49,10 +55,10 @@ export function ContactProfileScreen(props: ContactProfileScreenProps) {
   const doReport = async (reason: string) => {
     if (!currentUserId || !userId || busy) return
     setBusy(true)
-    await supabase.from('reports').insert({ reporter_id: currentUserId, reported_id: userId, reason })
+    const { error } = await supabase.from('reports').insert({ reporter_id: currentUserId, reported_id: userId, reason })
     setBusy(false)
     setReportSheet(false)
-    setToast('Thanks — our team will review this.')
+    setToast(error ? 'Failed to submit report. Please try again.' : 'Thanks — our team will review this.')
     setTimeout(() => setToast(null), 2600)
   }
 

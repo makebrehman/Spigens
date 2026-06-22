@@ -45,18 +45,23 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
   }
   const loadPendingRequests = async () => {
     if ((userRole !== 'owner' && userRole !== 'admin') || communityType !== 'protected') return
-    const { data } = await supabase
-      .from('community_members')
-      .select('user_id, joined_at, profiles!community_members_user_id_fkey(display_name, username, avatar_url)')
-      .eq('community_id', communityId)
-      .eq('status', 'pending')
-      .order('joined_at', { ascending: true })
-    useUIStore.getState().setComponentState('pendingRequests', (data || []).map((r: any) => ({
-      user_id: r.user_id,
-      display_name: r.profiles?.display_name,
-      username: r.profiles?.username,
-      avatar_url: r.profiles?.avatar_url,
-    })))
+    try {
+      const { data, error } = await supabase
+        .from('community_members')
+        .select('user_id, joined_at, profiles!community_members_user_id_fkey(display_name, username, avatar_url)')
+        .eq('community_id', communityId)
+        .eq('status', 'pending')
+        .order('joined_at', { ascending: true })
+      if (error) throw error
+      useUIStore.getState().setComponentState('pendingRequests', (data || []).map((r: any) => ({
+        user_id: r.user_id,
+        display_name: r.profiles?.display_name,
+        username: r.profiles?.username,
+        avatar_url: r.profiles?.avatar_url,
+      })))
+    } catch {
+      // non-critical, silently skip
+    }
   }
   useEffect(() => {
     supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (data) useUIStore.getState().setComponentState('communityProfileData', data) })
@@ -74,8 +79,11 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
   }
   const onJoin = async () => {
     if (!currentUserId) return
-    const { error } = await supabase.from('community_members').insert({ community_id: communityId, user_id: currentUserId, role: 'member', status: 'active' })
-    if (error) { console.error('Failed to join community:', error); return }
+    const { error } = await supabase.from('community_members').upsert(
+      { community_id: communityId, user_id: currentUserId, role: 'member', status: 'active' },
+      { onConflict: 'community_id,user_id' }
+    )
+    if (error) { useUIStore.getState().setComponentState('communityProfileError', 'Failed to join. Please try again.'); return }
     const joinName = profile?.display_name || profile?.username || 'Someone'
     await supabase.from('community_messages').insert({ community_id: communityId, sender_id: currentUserId, content: joinName + ' joined', message_type: 'system' })
     setIsMember(true)
@@ -91,7 +99,11 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
   }
   const onRequest = async () => {
     if (!currentUserId) return
-    await supabase.from('community_members').insert({ community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' })
+    const { error } = await supabase.from('community_members').upsert(
+      { community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' },
+      { onConflict: 'community_id,user_id' }
+    )
+    if (error) useUIStore.getState().setComponentState('communityProfileError', 'Failed to send request. Please try again.')
   }
   const onApproveRequest = async (userId: string, displayName: string) => {
     const { error } = await supabase.from('community_members').update({ status: 'active' }).eq('community_id', communityId).eq('user_id', userId)
@@ -112,7 +124,8 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
     if (!currentUserId) return
     const leaveName = profile?.display_name || profile?.username || 'Someone'
     await supabase.from('community_messages').insert({ community_id: communityId, sender_id: currentUserId, content: leaveName + ' left', message_type: 'system' })
-    await supabase.from('community_members').delete().eq('community_id', communityId).eq('user_id', currentUserId)
+    const { error } = await supabase.from('community_members').delete().eq('community_id', communityId).eq('user_id', currentUserId)
+    if (error) { useUIStore.getState().setComponentState('communityProfileError', 'Failed to leave. Please try again.'); return }
     setIsMember(false)
     setMemberCount((prev: number) => Math.max(0, prev - 1))
     useUIStore.getState().setComponentState('communityProfileIsMember', false)
@@ -144,7 +157,7 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
   }
   const onDeleteCommunity = async () => {
     const { error } = await supabase.from('communities').delete().eq('id', communityId)
-    if (error) { console.error('Failed to delete community:', error); return }
+    if (error) { useUIStore.getState().setComponentState('communityProfileError', 'Failed to delete community. Please try again.'); return }
     if (onCommunityDeleted) onCommunityDeleted()
   }
   const onTransferOwnership = async (newOwnerId: string, newOwnerName: string) => {
@@ -190,7 +203,7 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
       }
     }
     const { error } = await supabase.from('communities').update({ name: name.trim(), description: description.trim() || null }).eq('id', communityId)
-    if (error) { console.error('Failed to save community info:', error); return }
+    if (error) { useUIStore.getState().setComponentState('communityProfileError', 'Failed to save changes. Please try again.'); return }
     const data = useUIStore.getState().componentState?.communityProfileData as any
     if (data) useUIStore.getState().setComponentState('communityProfileData', { ...data, name: name.trim(), description: description.trim() || null })
   }

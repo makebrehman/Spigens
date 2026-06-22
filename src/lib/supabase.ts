@@ -27,6 +27,7 @@ export type Database = {
           bio: string | null
           avatar_url: string | null
           public_key: string
+          encrypted_private_key: string | null
           is_online: boolean
           last_seen: string
           created_at: string

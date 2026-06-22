@@ -1,8 +1,15 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import { generateKeyPair, storePrivateKey, loadPrivateKey, clearPrivateKey } from '@/lib/encryption'
+import {
+  generateKeyPair,
+  storePrivateKey,
+  loadPrivateKey,
+  deriveWrappingKey,
+  wrapPrivateKey,
+  unwrapPrivateKey,
+} from '@/lib/encryption'
 import type { Database } from '@/lib/supabase'
-import { uploadPendingAvatar, compressAvatar } from '@/lib/avatarUpload'
+import { uploadPendingAvatar } from '@/lib/avatarUpload'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -12,16 +19,44 @@ interface AuthState {
   isLoading: boolean
   isAuthenticated: boolean
   privateKey: string | null
+  _tempPassword: string | null
 
   initialize: () => Promise<void>
-  signUp: (email: string, password: string) => Promise<{ error: string | null, needsConfirmation?: boolean }>
+  signUp: (email: string, password: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>
   completeProfile: (username: string, displayName: string) => Promise<{ error: string | null }>
-  verifyEmailCode: (email: string, code: string) => Promise<{ error: string | null, userId?: string }>
+  verifyEmailCode: (email: string, code: string) => Promise<{ error: string | null; userId?: string }>
   sendPasswordResetCode: (email: string) => Promise<{ error: string | null }>
   verifyPasswordResetCode: (email: string, code: string, newPassword: string) => Promise<{ error: string | null }>
-  signIn: (email: string, password: string) => Promise<{ error: string | null, needsVerification?: boolean }>
+  signIn: (email: string, password: string) => Promise<{ error: string | null; needsVerification?: boolean }>
   signOut: () => Promise<void>
   loadProfile: (userId: string) => Promise<void>
+}
+
+async function restorePrivateKey(
+  userId: string,
+  password: string,
+  encryptedBlob: string | null,
+): Promise<string | null> {
+  if (encryptedBlob) {
+    const wk = await deriveWrappingKey(password, userId)
+    const pk = await unwrapPrivateKey(encryptedBlob, wk)
+    if (pk) {
+      storePrivateKey(pk, userId)
+      return pk
+    }
+  }
+
+  const local = loadPrivateKey(userId)
+  if (local) {
+    try {
+      const wk = await deriveWrappingKey(password, userId)
+      const blob = await wrapPrivateKey(local, wk)
+      await supabase.from('profiles').update({ encrypted_private_key: blob }).eq('id', userId)
+    } catch { /* non-fatal */ }
+    return local
+  }
+
+  return null
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -30,6 +65,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   isLoading: true,
   isAuthenticated: false,
   privateKey: null,
+  _tempPassword: null,
 
   initialize: async () => {
     set({ isLoading: true })
@@ -38,46 +74,38 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (session?.user) {
         await get().loadProfile(session.user.id)
         const profile = get().profile
-        const privateKey = loadPrivateKey()
-        
+        const localPk = loadPrivateKey(session.user.id)
         set({
           user: { id: session.user.id, email: session.user.email! },
           isAuthenticated: !!profile?.username,
-          privateKey: profile?.username ? privateKey : null,
+          privateKey: profile?.username ? localPk : null,
         })
       }
     } finally {
       set({ isLoading: false })
     }
 
-    // Listen for auth changes
     supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         await get().loadProfile(session.user.id)
         const profile = get().profile
-        const privateKey = loadPrivateKey()
-
+        const localPk = loadPrivateKey(session.user.id)
         set({
           user: { id: session.user.id, email: session.user.email! },
           isAuthenticated: !!profile?.username,
-          privateKey: profile?.username ? privateKey : null,
+          privateKey: profile?.username ? localPk : null,
         })
       } else if (event === 'SIGNED_OUT') {
-        set({ user: null, profile: null, isAuthenticated: false, privateKey: null })
+        set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
       }
     })
   },
 
   signUp: async (email, password) => {
     try {
-      const { data, error } = await supabase.auth.signUp({ 
-        email, 
-        password
-      })
+      const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) return { error: error.message }
       if (!data.user) return { error: 'Sign up failed' }
-
-      // Do NOT set authenticated since email confirmation is required
       return { error: null, needsConfirmation: true }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -88,26 +116,32 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     try {
       const user = get().user
       if (!user) return { error: 'Not signed in' }
+      const password = get()._tempPassword
 
       const { publicKey, privateKey } = generateKeyPair()
+
+      let encryptedPrivateKey: string | null = null
+      if (password) {
+        try {
+          const wk = await deriveWrappingKey(password, user.id)
+          encryptedPrivateKey = await wrapPrivateKey(privateKey, wk)
+        } catch { /* non-fatal */ }
+      }
 
       const { error: profileError } = await supabase.from('profiles').update({
         username: username.toLowerCase().trim(),
         display_name: displayName.trim(),
         public_key: publicKey,
-        is_online: true
+        encrypted_private_key: encryptedPrivateKey,
+        is_online: true,
       }).eq('id', user.id)
 
       if (profileError) return { error: profileError.message }
 
-      storePrivateKey(privateKey)
-      set({ privateKey })
+      storePrivateKey(privateKey, user.id)
+      set({ privateKey, _tempPassword: null })
 
-      try {
-        await uploadPendingAvatar(user.id)
-      } catch (err) {
-        console.error('Avatar upload failed:', err)
-      }
+      try { await uploadPendingAvatar(user.id) } catch { /* non-fatal */ }
 
       await get().loadProfile(user.id)
       set({ isAuthenticated: true })
@@ -122,7 +156,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const { data, error } = await supabase.auth.verifyOtp({ email, token: code, type: 'email' })
       if (error) return { error: error.message }
       if (!data.user) return { error: 'Verification failed' }
-
       await get().loadProfile(data.user.id)
       return { error: null, userId: data.user.id }
     } catch (err) {
@@ -148,6 +181,23 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const { error: updateError } = await supabase.auth.updateUser({ password: newPassword })
       if (updateError) return { error: updateError.message }
 
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const local = loadPrivateKey(user.id)
+        const keyToWrap = local ?? generateKeyPair().privateKey
+        const publicKeyToStore = local ? get().profile?.public_key : generateKeyPair().publicKey
+
+        try {
+          const wk = await deriveWrappingKey(newPassword, user.id)
+          const blob = await wrapPrivateKey(keyToWrap, wk)
+          const updates: Record<string, string> = { encrypted_private_key: blob }
+          if (!local && publicKeyToStore) updates.public_key = publicKeyToStore
+          await supabase.from('profiles').update(updates).eq('id', user.id)
+          storePrivateKey(keyToWrap, user.id)
+          set({ privateKey: keyToWrap })
+        } catch { /* non-fatal */ }
+      }
+
       return { error: null }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -168,23 +218,24 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await get().loadProfile(data.user.id)
       const profile = get().profile
 
-      const privateKey = loadPrivateKey()
+      let privateKey: string | null = null
 
-      // Mark online
+      if (profile?.username) {
+        privateKey = await restorePrivateKey(data.user.id, password, profile.encrypted_private_key ?? null)
+        set({ _tempPassword: null })
+      } else {
+        set({ _tempPassword: password })
+      }
+
       if (profile?.public_key) {
         await supabase.rpc('set_user_online', { p_user_id: data.user.id, p_online: true })
-        // Try uploading any pending avatar. Does not break signIn on failure.
-        try {
-          await uploadPendingAvatar(data.user.id)
-        } catch (err) {
-          console.error('Deferred avatar upload failed:', err)
-        }
+        try { await uploadPendingAvatar(data.user.id) } catch { /* non-fatal */ }
       }
 
       set({
         user: { id: data.user.id, email: data.user.email! },
         isAuthenticated: !!profile?.username,
-        privateKey: profile?.username ? privateKey : null,
+        privateKey,
       })
 
       return { error: null }
@@ -199,7 +250,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
     }
     await supabase.auth.signOut()
-    set({ user: null, profile: null, isAuthenticated: false, privateKey: null })
+    set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
   },
 
   loadProfile: async (userId: string) => {

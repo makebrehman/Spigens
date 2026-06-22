@@ -1,26 +1,16 @@
 import { supabase } from '@/lib/supabase'
-import type { Contact } from '@/types'
+import { decryptMessage } from '@/lib/encryption'
 
-export async function loadConversations(currentUserId: string, myPublicKey: string) {
-  
-  // 1. Get all conversation ids the user is in
+export async function loadConversations(currentUserId: string, myPrivateKey: string | null) {
   const { data: myParticipants, error: myError } = await supabase
     .from('conversation_participants')
     .select('conversation_id')
     .eq('user_id', currentUserId)
 
-  if (myError) {
-    console.error('Failed to load user conversations:', myError)
-    return []
-  }
+  if (myError || !myParticipants?.length) return []
 
-  if (!myParticipants || myParticipants.length === 0) {
-    return []
-  }
+  const myConversationIds = myParticipants.map(r => r.conversation_id)
 
-  const myConversationIds = myParticipants.map(row => row.conversation_id)
-
-  // 2. For each conversation, find the OTHER participant
   const { data: otherParticipants, error: otherError } = await supabase
     .from('conversation_participants')
     .select(`
@@ -31,10 +21,7 @@ export async function loadConversations(currentUserId: string, myPublicKey: stri
     .in('conversation_id', myConversationIds)
     .neq('user_id', currentUserId)
 
-  if (otherError || !otherParticipants) {
-    console.error('Failed to load other participants:', otherError)
-    return []
-  }
+  if (otherError || !otherParticipants) return []
 
   const results: any[] = []
 
@@ -42,43 +29,34 @@ export async function loadConversations(currentUserId: string, myPublicKey: stri
     const profile = p.profiles as any
     if (!profile) continue
 
-    // 3. Get the LAST message
     const { data: messages, error: msgError } = await supabase
       .from('messages')
-      .select('*')
+      .select('id, sender_id, content, encrypted_content, created_at, deleted_at')
       .eq('conversation_id', p.conversation_id)
       .order('created_at', { ascending: false })
       .limit(1)
 
-    if (msgError) {
-      console.error('Failed to load last message:', msgError)
-      continue
-    }
+    if (msgError || !messages?.length) continue
 
-    if (!messages || messages.length === 0) {
-      // skip 0-message conversations
-      continue
-    }
+    const last = messages[0]
+    let preview = ''
 
-    const lastMsg = messages[0]
-    let decryptedContent = ''
-
-    try {
-      decryptedContent = lastMsg.content ?? ''
-    } catch(e) {
-      decryptedContent = '🔒 message'
+    if (last.deleted_at) {
+      preview = 'Message deleted'
+    } else if (last.encrypted_content && myPrivateKey && profile.public_key) {
+      preview = decryptMessage(last.encrypted_content, profile.public_key, myPrivateKey) ?? '🔒 encrypted'
+    } else {
+      preview = last.content ?? ''
     }
 
     results.push({
       conversationId: p.conversation_id,
       otherProfile: profile,
-      lastMessage: decryptedContent,
-      lastMessageTime: lastMsg.created_at,
+      lastMessage: preview,
+      lastMessageTime: last.created_at,
     })
   }
 
-  // Sort most recent first
   results.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime())
-
   return results
 }

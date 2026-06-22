@@ -59,84 +59,72 @@ export interface MessageConditionRule {
 }
 
 export interface SearchBarStyleOverride {
-  // shared across inline and overlay
-  container?: CSSProperties      // the bar's outer container
-  input?: CSSProperties          // the text input field
-  placeholder?: CSSProperties    // placeholder text colour (applied via css)
-  searchIcon?: CSSProperties     // the magnifying glass icon
-  clearButton?: CSSProperties    // the × clear button
-  closeButton?: CSSProperties    // the close button (overlay) / cancel text (inline)
-  // overlay only
-  backdrop?: CSSProperties       // the dark tint behind the overlay bar
-  iconButton?: CSSProperties     // the collapsed icon-button state
+  container?: CSSProperties
+  input?: CSSProperties
+  placeholder?: CSSProperties
+  searchIcon?: CSSProperties
+  clearButton?: CSSProperties
+  closeButton?: CSSProperties
+  backdrop?: CSSProperties
+  iconButton?: CSSProperties
 }
 
 export interface TopAppBarStyleOverride {
-  // text content (not style — actual text)
-  titleText?: string             // change the title words themselves
-
-  // style slots
-  container?: CSSProperties      // the whole bar background/border
-  title?: CSSProperties          // title text style (color, size, weight)
-  menuButton?: CSSProperties     // hamburger button wrapper
-  menuIcon?: CSSProperties       // hamburger icon style (color, size)
-  searchButton?: CSSProperties   // search button wrapper
-  searchIcon?: CSSProperties     // search icon style
-  newChatButton?: CSSProperties  // pencil button wrapper
-  newChatIcon?: CSSProperties    // pencil icon style
-  rightArea?: CSSProperties      // the right cluster container
-
-  // svg shape replacement (raw svg inner markup, optional)
-  menuIconSvg?: string           // replaces hamburger shape
-  searchIconSvg?: string         // replaces search shape
-  newChatIconSvg?: string        // replaces pencil shape
+  titleText?: string
+  container?: CSSProperties
+  title?: CSSProperties
+  menuButton?: CSSProperties
+  menuIcon?: CSSProperties
+  searchButton?: CSSProperties
+  searchIcon?: CSSProperties
+  newChatButton?: CSSProperties
+  newChatIcon?: CSSProperties
+  rightArea?: CSSProperties
+  menuIconSvg?: string
+  searchIconSvg?: string
+  newChatIconSvg?: string
 }
 
 export interface ChatScreenStyleOverride {
-  // overall
-  screen?: CSSProperties          // the whole screen background
-  // header
-  header?: CSSProperties          // the top bar of the chat screen
-  backButton?: CSSProperties      // the back chevron button wrapper
-  backIcon?: CSSProperties        // the back chevron icon
-  contactName?: CSSProperties     // the contact name text
-  onlineStatus?: CSSProperties    // the online/offline status text
-  headerAvatar?: CSSProperties    // the avatar circle in the header
-  headerAvatarText?: CSSProperties// the avatar initials in the header
-  // messages area
-  messagesArea?: CSSProperties    // the scrollable messages container background
-  emptyState?: CSSProperties      // the "no messages yet" text
-  // input bar
-  inputBar?: CSSProperties        // the bottom input bar container
-  input?: CSSProperties           // the text input field
-  inputPlaceholder?: CSSProperties// placeholder colour (via css)
-  sendButton?: CSSProperties      // the send button circle
-  sendIcon?: CSSProperties        // the send arrow icon
-  attachButton?: CSSProperties    // the + attach button circle
-  attachIcon?: CSSProperties      // the + attach icon
-  // svg replacement
-  backIconSvg?: string            // replace back chevron shape
-  sendIconSvg?: string            // replace send icon shape
+  screen?: CSSProperties
+  header?: CSSProperties
+  backButton?: CSSProperties
+  backIcon?: CSSProperties
+  contactName?: CSSProperties
+  onlineStatus?: CSSProperties
+  headerAvatar?: CSSProperties
+  headerAvatarText?: CSSProperties
+  messagesArea?: CSSProperties
+  emptyState?: CSSProperties
+  inputBar?: CSSProperties
+  input?: CSSProperties
+  inputPlaceholder?: CSSProperties
+  sendButton?: CSSProperties
+  sendIcon?: CSSProperties
+  attachButton?: CSSProperties
+  attachIcon?: CSSProperties
+  backIconSvg?: string
+  sendIconSvg?: string
 }
 
 export interface BottomSheetOptionIconOverride {
-  iconStyle?: CSSProperties   // color, fontSize for this specific option's icon
-  iconSvg?: string            // replace this option's icon with custom svg
+  iconStyle?: CSSProperties
+  iconSvg?: string
 }
 
 export interface BottomSheetStyleOverride {
   layout?: 'list' | 'grid-2x2' | 'grid-2col' | 'horizontal'
   optionDisplay?: 'both' | 'icon-only' | 'text-only'
   optionIconOverrides?: Record<string, BottomSheetOptionIconOverride>
-  backdrop?: CSSProperties        // the dark tint behind the sheet
-  sheet?: CSSProperties           // the sheet panel itself
-  handle?: CSSProperties          // the drag handle pill
-  title?: CSSProperties           // the title text
-  optionItem?: CSSProperties      // each option row
-  optionItemDestructive?: CSSProperties  // NEW — styles the whole destructive row (background etc)
-  optionIcon?: CSSProperties      // the icon on each option
-  optionText?: CSSProperties      // the option label text
-  destructiveText?: CSSProperties // override colour for destructive options
+  backdrop?: CSSProperties
+  sheet?: CSSProperties
+  handle?: CSSProperties
+  title?: CSSProperties
+  optionItem?: CSSProperties
+  optionItemDestructive?: CSSProperties
+  optionIcon?: CSSProperties
+  optionText?: CSSProperties
+  destructiveText?: CSSProperties
 }
 
 // --- layout config (layer 2) ---
@@ -178,46 +166,38 @@ export interface BehaviorConfig {
   }
 }
 
-// an action is a string command the app knows how to perform
 export type AppAction =
-  | 'open-chat'           // open the tapped contact's conversation
-  | 'open-longPressSheet' // open the long-press bottom sheet
-  | 'open-attachSheet'    // open the attach bottom sheet
-  | 'toggle-search'       // toggle the search bar
-  | 'navigate-back'       // go back from chat to list
-  | 'none'                // do nothing
+  | 'open-chat'
+  | 'open-longPressSheet'
+  | 'open-attachSheet'
+  | 'toggle-search'
+  | 'navigate-back'
+  | 'none'
 
 export interface InteractionConfig {
-  // home screen interactions
   tileTap?: AppAction
   tileLongPress?: AppAction
-  // top bar interactions
   menuTap?: AppAction
   searchIconTap?: AppAction
   newChatTap?: AppAction
-  // chat screen interactions
   attachTap?: AppAction
   backTap?: AppAction
 }
 
 export interface ContactListStyleOverride {
-  container?: CSSProperties       // the scroll container background and padding
-  tileGap?: string                // gap between tiles (e.g. "8px")
-  topPadding?: string             // padding at the top of the list
-  bottomPadding?: string          // padding at the bottom of the list
-  showDividers?: boolean          // whether to show dividers between tiles
-  dividerStyle?: CSSProperties    // the divider line style if shown
+  container?: CSSProperties
+  tileGap?: string
+  topPadding?: string
+  bottomPadding?: string
+  showDividers?: boolean
+  dividerStyle?: CSSProperties
 }
 
 export interface CustomComponents {
-  // keyed by zone name -> jsx string
-  // zones: "home-top", "home-bottom", "chat-header", "floating"
   [zone: string]: string
 }
 
 export interface ComponentSources {
-  // keyed by component name -> JSX/createElement source string
-  // e.g. "topAppBar"
   [componentName: string]: string
 }
 

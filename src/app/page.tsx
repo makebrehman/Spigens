@@ -914,7 +914,39 @@ export default function Home() {
             title: longPressConfig.popup.title,
             options: longPressConfig.popup.options,
             onClose: () => setLongPressedContact(null),
-            onOptionSelect: (option: any) => { console.log(`${option.label} on ${longPressedContact?.name}`); setLongPressedContact(null) },
+            onOptionSelect: (option: any) => {
+            const contact = longPressedContact
+            if (!contact || !user?.id) { setLongPressedContact(null); return }
+            const mutedKey = `spigens_muted_${user.id}`
+            const pinnedKey = `spigens_pinned_${user.id}`
+            const archivedKey = `spigens_archived_${user.id}`
+            try {
+              if (option.id === 'mute') {
+                const muted: string[] = JSON.parse(localStorage.getItem(mutedKey) || '[]')
+                const next = muted.includes(contact.id) ? muted.filter(id => id !== contact.id) : [...muted, contact.id]
+                localStorage.setItem(mutedKey, JSON.stringify(next))
+              } else if (option.id === 'pin') {
+                const pinned: string[] = JSON.parse(localStorage.getItem(pinnedKey) || '[]')
+                const next = pinned.includes(contact.id) ? pinned.filter(id => id !== contact.id) : [contact.id, ...pinned]
+                localStorage.setItem(pinnedKey, JSON.stringify(next))
+                const sorted = [...useContactStore.getState().contacts].sort((a, b) => (next.includes(b.id) ? 1 : 0) - (next.includes(a.id) ? 1 : 0))
+                useContactStore.getState().setContacts(sorted)
+                useUIStore.getState().setComponentState('feedContacts', sorted)
+              } else if (option.id === 'archive') {
+                const archived: string[] = JSON.parse(localStorage.getItem(archivedKey) || '[]')
+                if (!archived.includes(contact.id)) localStorage.setItem(archivedKey, JSON.stringify([...archived, contact.id]))
+                const filtered = useContactStore.getState().contacts.filter(c => c.id !== contact.id)
+                useContactStore.getState().setContacts(filtered)
+                useUIStore.getState().setComponentState('feedContacts', filtered)
+              } else if (option.id === 'delete') {
+                const filtered = useContactStore.getState().contacts.filter(c => c.id !== contact.id)
+                useContactStore.getState().setContacts(filtered)
+                useUIStore.getState().setComponentState('feedContacts', filtered)
+                cacheContacts(user.id, filtered)
+              }
+            } catch { /* ignore storage errors */ }
+            setLongPressedContact(null)
+          },
             contactName: longPressedContact?.name,
           }}
         />,

@@ -105,6 +105,11 @@ export default function Home() {
   const [returnToCommunity, setReturnToCommunity] = useState<any | null>(null)
   const [activeTab, setActiveTab] = useState<'chats' | 'communities' | 'profile'>('chats')
   const [showSettings, setShowSettings] = useState(false)
+  const [loadingContacts, setLoadingContacts] = useState(true)
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set())
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
+  const [showArchivedView, setShowArchivedView] = useState(false)
+  const [pendingDeleteContact, setPendingDeleteContact] = useState<Contact | null>(null)
 
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
 
@@ -188,7 +193,7 @@ export default function Home() {
       }
     }
 
-    if (!isOnline) return // offline: cached contacts are enough
+    if (!isOnline) { setLoadingContacts(false); return } // offline: cached contacts are enough
 
     Promise.all([
       loadConversations(user.id, privateKey ?? null),
@@ -217,12 +222,29 @@ export default function Home() {
       useContactStore.getState().setContacts(mappedContacts)
       useUIStore.getState().setComponentState('feedContacts', mappedContacts)
       if (user?.id) cacheContacts(user.id, mappedContacts)
+      setLoadingContacts(false)
     })
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
 
   useEffect(() => {
     fetchConversations()
   }, [fetchConversations])
+
+  // Seed cached contacts instantly + load archived/pinned prefs as soon as user is known
+  useEffect(() => {
+    if (!user?.id) return
+    const cached = getCachedContacts(user.id) as Contact[] | null
+    if (cached?.length) {
+      useContactStore.getState().setContacts(cached)
+      useUIStore.getState().setComponentState('feedContacts', cached)
+    }
+    try {
+      const arch: string[] = JSON.parse(localStorage.getItem(`spigens_archived_${user.id}`) || '[]')
+      setArchivedIds(new Set(arch))
+      const pinned: string[] = JSON.parse(localStorage.getItem(`spigens_pinned_${user.id}`) || '[]')
+      setPinnedIds(new Set(pinned))
+    } catch {}
+  }, [user?.id])
 
   // presence effect
   useEffect(() => {
@@ -800,12 +822,6 @@ export default function Home() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
-      {/* Offline banner */}
-      {!isOnline && (
-        <div style={{ background: '#1a1a1a', borderBottom: '1px solid #333', padding: '6px 16px', textAlign: 'center', fontSize: '12px', color: '#888', letterSpacing: '0.3px', flexShrink: 0 }}>
-          No internet connection · showing cached messages
-        </div>
-      )}
       {/* Top header */}
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', padding: '0 16px', minHeight: '60px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0, gap: '12px' }}>
         <img src="/spigens_logo.png" alt="Spigen" style={{ width: '34px', height: '34px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
@@ -846,25 +862,75 @@ export default function Home() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {activeTab === 'chats' && (
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            {searchQuery.trim().length >= 2 ? (
-              <UserSearchResults
-                searchQuery={searchQuery}
-                onSelectUser={(u: any) => { setActiveChatUser(u); useUIStore.getState().setComponentState('searchQuery', ''); setShowSearch(false) }}
-                onAvatarTap={(u: any) => setContactProfileUser({ id: u.id, display_name: u.display_name, username: u.username, avatar_url: u.avatar_url })}
-              />
-            ) : contacts.length === 0 ? (
-              <EmptyState />
-            ) : (
-              <ContactList
-                onContactSelect={(contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id))}
-                onTileLongPress={(contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id))}
-                onContactAvatarTap={(contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null })}
-              />
-            )}
-          </div>
-        )}
+        {activeTab === 'chats' && (() => {
+          const archivedContactsList = contacts.filter(c => archivedIds.has(c.id))
+          const visibleContacts = contacts.filter(c => !archivedIds.has(c.id))
+          const pinnedContacts = visibleContacts.filter(c => pinnedIds.has(c.id))
+          const visibleContactsWithPin = visibleContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id) }))
+          const chatHandlers = {
+            onContactSelect: (contact: Contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id)),
+            onTileLongPress: (contact: Contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id)),
+            onContactAvatarTap: (contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null }),
+          }
+          return (
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {showArchivedView ? (
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 }}>
+                    <button onClick={() => setShowArchivedView(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 26, cursor: 'pointer', padding: 0, lineHeight: 1 }}>‹</button>
+                    <span style={{ fontSize: 17, fontWeight: 600, color: '#e8e8e8' }}>Archived</span>
+                  </div>
+                  {archivedContactsList.length === 0 ? (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: 14 }}>No archived chats</div>
+                  ) : (
+                    <ContactList contacts={archivedContactsList} {...chatHandlers} />
+                  )}
+                </div>
+              ) : searchQuery.trim().length >= 2 ? (
+                <UserSearchResults
+                  searchQuery={searchQuery}
+                  onSelectUser={(u: any) => { setActiveChatUser(u); useUIStore.getState().setComponentState('searchQuery', ''); setShowSearch(false) }}
+                  onAvatarTap={(u: any) => setContactProfileUser({ id: u.id, display_name: u.display_name, username: u.username, avatar_url: u.avatar_url })}
+                />
+              ) : (
+                <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  {archivedContactsList.length > 0 && (
+                    <button onClick={() => setShowArchivedView(true)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', background: 'none', border: 'none', borderBottom: '1px solid #1a1a1a', width: '100%', cursor: 'pointer', flexShrink: 0, textAlign: 'left' as const }}>
+                      <div style={{ width: 50, height: 50, borderRadius: '50%', background: '#1e1e1e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>📦</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 16, color: '#e8e8e8', fontWeight: 500 }}>Archived</div>
+                        <div style={{ fontSize: 13, color: '#6b7280', marginTop: 1 }}>{archivedContactsList.length} chat{archivedContactsList.length !== 1 ? 's' : ''}</div>
+                      </div>
+                      <span style={{ color: '#4b5563', fontSize: 18 }}>›</span>
+                    </button>
+                  )}
+                  {loadingContacts && visibleContacts.length === 0 ? (
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                      {[1,2,3,4,5,6].map(i => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px' }}>
+                          <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#1a1a1a', flexShrink: 0 }} />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ height: 14, borderRadius: 7, background: '#1a1a1a', width: '50%', marginBottom: 8 }} />
+                            <div style={{ height: 11, borderRadius: 6, background: '#141414', width: '75%' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : visibleContacts.length === 0 ? (
+                    <EmptyState />
+                  ) : (
+                    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                      {pinnedContacts.length > 0 && (
+                        <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0 }}>📌 Pinned</div>
+                      )}
+                      <ContactList contacts={visibleContactsWithPin} {...chatHandlers} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {activeTab === 'communities' && (
           <CommunityListScreen
@@ -929,20 +995,22 @@ export default function Home() {
                 const pinned: string[] = JSON.parse(localStorage.getItem(pinnedKey) || '[]')
                 const next = pinned.includes(contact.id) ? pinned.filter(id => id !== contact.id) : [contact.id, ...pinned]
                 localStorage.setItem(pinnedKey, JSON.stringify(next))
-                const sorted = [...useContactStore.getState().contacts].sort((a, b) => (next.includes(b.id) ? 1 : 0) - (next.includes(a.id) ? 1 : 0))
+                setPinnedIds(new Set(next))
+                const nextSet = new Set(next)
+                const sorted = [...useContactStore.getState().contacts].sort((a, b) => (nextSet.has(b.id) ? 1 : 0) - (nextSet.has(a.id) ? 1 : 0))
                 useContactStore.getState().setContacts(sorted)
                 useUIStore.getState().setComponentState('feedContacts', sorted)
               } else if (option.id === 'archive') {
                 const archived: string[] = JSON.parse(localStorage.getItem(archivedKey) || '[]')
-                if (!archived.includes(contact.id)) localStorage.setItem(archivedKey, JSON.stringify([...archived, contact.id]))
-                const filtered = useContactStore.getState().contacts.filter(c => c.id !== contact.id)
-                useContactStore.getState().setContacts(filtered)
-                useUIStore.getState().setComponentState('feedContacts', filtered)
+                if (!archived.includes(contact.id)) {
+                  const next = [...archived, contact.id]
+                  localStorage.setItem(archivedKey, JSON.stringify(next))
+                  setArchivedIds(new Set(next))
+                }
               } else if (option.id === 'delete') {
-                const filtered = useContactStore.getState().contacts.filter(c => c.id !== contact.id)
-                useContactStore.getState().setContacts(filtered)
-                useUIStore.getState().setComponentState('feedContacts', filtered)
-                cacheContacts(user.id, filtered)
+                setLongPressedContact(null)
+                setPendingDeleteContact(contact)
+                return
               }
             } catch { /* ignore storage errors */ }
             setLongPressedContact(null)
@@ -950,6 +1018,31 @@ export default function Home() {
             contactName: longPressedContact?.name,
           }}
         />,
+        document.body
+      )}
+      {pendingDeleteContact && mounted && createPortal(
+        <div onClick={() => setPendingDeleteContact(null)} style={{ position: 'fixed', inset: 0, zIndex: 220, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: '22px 20px calc(22px + env(safe-area-inset-bottom))', boxSizing: 'border-box' as const }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Delete chat with {pendingDeleteContact.name}?</div>
+            <div style={{ fontSize: 14, color: '#9ca3af', lineHeight: 1.5, marginBottom: 22 }}>
+              This removes the chat from your list. The conversation still exists for the other person.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setPendingDeleteContact(null)} style={{ flex: 1, padding: 12, borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}>Cancel</button>
+              <button
+                onClick={() => {
+                  const c = pendingDeleteContact
+                  const filtered = useContactStore.getState().contacts.filter(x => x.id !== c.id)
+                  useContactStore.getState().setContacts(filtered)
+                  useUIStore.getState().setComponentState('feedContacts', filtered)
+                  if (user?.id) cacheContacts(user.id, filtered)
+                  setPendingDeleteContact(null)
+                }}
+                style={{ flex: 1, padding: 12, borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+              >Delete</button>
+            </div>
+          </div>
+        </div>,
         document.body
       )}
       <GenUIPanel

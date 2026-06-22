@@ -196,7 +196,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   }
 
   const onDeleteMessage = async (messageId: string) => {
-    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[])
+    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityMessages', current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
     await supabase.from('community_messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
   }

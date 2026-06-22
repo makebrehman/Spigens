@@ -66,6 +66,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [realMessages, setRealMessages] = useState<any[]>([])
   const [replyingTo, setReplyingTo] = useState<any>(null)
+  const [encWarning, setEncWarning] = useState(false)
 
   const typingChannelRef = useRef<any>(null)
   const lastTypingSentRef = useRef<number>(0)
@@ -446,7 +447,12 @@ export function ChatScreen(props: ChatScreenProps) {
 
       let encryptedContent: string | null = null
       if (myPrivateKey && otherUserPublicKey) {
-        try { encryptedContent = encryptMessage(content, otherUserPublicKey, myPrivateKey) } catch { /* fall through */ }
+        try {
+          encryptedContent = encryptMessage(content, otherUserPublicKey, myPrivateKey)
+        } catch {
+          setEncWarning(true)
+          setTimeout(() => setEncWarning(false), 3500)
+        }
       }
 
       const newMsg = {
@@ -542,6 +548,11 @@ export function ChatScreen(props: ChatScreenProps) {
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
+      {encWarning && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#92400e', color: '#fef3c7', padding: '10px 18px', borderRadius: 999, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+          ⚠️ Message sent without encryption
+        </div>
+      )}
       {attachConfig?.popup && showAttachSheet && createPortal(
         <RenderifyHost
           code={bottomSheetSource}

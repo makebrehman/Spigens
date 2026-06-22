@@ -15,7 +15,16 @@ import { useMessageStore } from '@/stores/messageStore'
 import { useUIStore } from '@/stores/uiStore'
 import { useContactStore } from '@/stores/contactStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
+import { encryptMessage, decryptMessage } from '@/lib/encryption'
+import {
+  cacheMessages,
+  getCachedMessages,
+  savePendingMessage,
+  getPendingMessages,
+  removePendingMessage,
+} from '@/lib/offlineCache'
 import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
@@ -36,14 +45,16 @@ export interface ChatScreenProps {
 }
 
 export function ChatScreen(props: ChatScreenProps) {
-  const { contactId, otherUserId, otherUserPublicKey, avatarUrl, contactName, contactInitials, contactAvatarColor, isOnline, lastSeen, onBack, onViewContactProfile, onOpenCommunityInvite } = props
+  const {
+    contactId, otherUserId, otherUserPublicKey, avatarUrl,
+    contactName, contactInitials, contactAvatarColor,
+    isOnline, lastSeen, onBack, onViewContactProfile, onOpenCommunityInvite,
+  } = props
 
   const storeMessages = useMessageStore(state => (contactId ? state.messagesByContact[contactId] : undefined)) ?? EMPTY_MESSAGES
-  
+
   useEffect(() => {
-    if (contactId) {
-      useUIStore.getState().setComponentState('chatMessages', storeMessages)
-    }
+    if (contactId) useUIStore.getState().setComponentState('chatMessages', storeMessages)
   }, [contactId, storeMessages])
 
   const attachConfig = useUIStore(state => state.behaviorConfig.attachButton)
@@ -52,8 +63,6 @@ export function ChatScreen(props: ChatScreenProps) {
   const bottomSheetSource = componentSources?.bottomSheet ?? null
 
   const [showAttachSheet, setShowAttachSheet] = useState(false)
-
-  // Real messaging state
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [realMessages, setRealMessages] = useState<any[]>([])
   const [replyingTo, setReplyingTo] = useState<any>(null)
@@ -64,225 +73,201 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const currentUserId = useAuthStore(state => state.user?.id)
   const myPublicKey = useAuthStore(state => state.profile?.public_key)
+  const myPrivateKey = useAuthStore(state => state.privateKey)
+  const networkIsOnline = useNetworkStore(state => state.isOnline)
 
-  // Step 1: Resolve conversationId by user-pair (read-only)
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
     setTimeout(() => setRealMessages([]), 0)
     useUIStore.getState().setComponentState('chatMessages', [])
-    const resolveConversation = async () => {
-      // 1. Get current user's conversation ids
-      const { data: myUserParticipants, error: myError } = await supabase
+
+    const resolve = async () => {
+      const { data: mine, error } = await supabase
         .from('conversation_participants')
         .select('conversation_id')
         .eq('user_id', currentUserId)
 
-      if (myError || !myUserParticipants || myUserParticipants.length === 0) {
-        setConversationId(null)
-        return
-      }
+      if (error || !mine?.length) { setConversationId(null); return }
 
-      const myIds = myUserParticipants.map(row => row.conversation_id)
-
-      // 2. Find which of those also has otherUserId
-      const { data: sharedParticipants, error: sharedError } = await supabase
+      const myIds = mine.map(r => r.conversation_id)
+      const { data: shared, error: sharedErr } = await supabase
         .from('conversation_participants')
         .select('conversation_id')
         .eq('user_id', otherUserId)
         .in('conversation_id', myIds)
         .limit(1)
 
-      if (!sharedError && sharedParticipants && sharedParticipants.length > 0) {
-        setConversationId(sharedParticipants[0].conversation_id)
-      } else {
-        setConversationId(null)
+      setConversationId(!sharedErr && shared?.length ? shared[0].conversation_id : null)
+    }
+
+    if (networkIsOnline) {
+      resolve()
+    } else {
+      setConversationId(null)
+    }
+  }, [otherUserId, currentUserId, networkIsOnline])
+
+  const decryptRow = (row: any, prevMessages: any[]): any => {
+    let content = ''
+    if (row.deleted_at) {
+      content = ''
+    } else if (row.encrypted_content && myPrivateKey && otherUserPublicKey) {
+      content = decryptMessage(row.encrypted_content, otherUserPublicKey, myPrivateKey) ?? row.content ?? '🔒 encrypted'
+    } else {
+      content = row.content ?? ''
+    }
+
+    const isSent = row.sender_id === currentUserId
+    let replyTo = null
+    if (row.reply_to) {
+      const orig = prevMessages.find(m => m.id === row.reply_to)
+      if (orig) {
+        replyTo = { id: row.reply_to, content: orig.content, senderLabel: orig.isSent ? 'You' : contactName }
       }
     }
-    resolveConversation()
-  }, [otherUserId, currentUserId])
 
-  // Step 2: Load and decrypt messages
+    return {
+      id: row.id,
+      content,
+      messageType: row.message_type || 'text',
+      metadata: row.metadata || null,
+      timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: row.created_at,
+      isSent,
+      isRead: true,
+      status: row.status,
+      replyTo,
+      isDeleted: !!row.deleted_at,
+    }
+  }
+
   useEffect(() => {
+    if (!otherUserId) return
+
+    const cacheKey = conversationId ?? `pending_${otherUserId}`
+    const cached = getCachedMessages(cacheKey)
+    if (cached?.length) {
+      setRealMessages(cached as any[])
+      useUIStore.getState().setComponentState('chatMessages', cached)
+    }
+
     if (!conversationId || !currentUserId || !myPublicKey) return
+    if (!networkIsOnline) return
 
     const loadMessages = async () => {
       const { data, error } = await supabase
         .from('messages')
-        .select('id, conversation_id, sender_id, content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at')
+        .select('id, conversation_id, sender_id, content, encrypted_content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
 
-      if (error || !data) {
-        console.error('Failed to load messages:', error)
-        return
-      }
+      if (error || !data) { console.error('Failed to load messages:', error); return }
 
-      try {
-        const decryptedMessages = data.map((row) => {
-          const isSent = row.sender_id === currentUserId
-          let replyTo = null
-          if (row.reply_to) {
-            const original = data.find((r) => r.id === row.reply_to)
-            if (original) {
-              replyTo = {
-                id: row.reply_to,
-                content: original.content ?? '',
-                senderLabel: original.sender_id === currentUserId ? 'You' : contactName,
-              }
-            }
-          }
-          return {
-            id: row.id,
-            content: row.content ?? '',
-            messageType: row.message_type || 'text',
-            metadata: row.metadata || null,
-            timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            createdAt: row.created_at,
-            isSent,
-            isRead: true,
-            status: row.status,
-            replyTo,
-            isDeleted: !!row.deleted_at,
-          }
-        })
+      const msgs: any[] = []
+      data.forEach(row => msgs.push(decryptRow(row, msgs)))
 
-        // Sync loaded messages to component state for the compiled chat component
-        useUIStore.getState().setComponentState('chatMessages', decryptedMessages)
-        setRealMessages(decryptedMessages)
-      } catch (e) {
-        console.error('Decryption failed for history:', e)
-      }
+      cacheMessages(conversationId, msgs)
+      useUIStore.getState().setComponentState('chatMessages', msgs)
+      useUIStore.getState().setComponentState('conversationId', conversationId)
+      useUIStore.getState().setComponentState('currentUserId', currentUserId)
+      setRealMessages(msgs)
     }
-    useUIStore.getState().setComponentState('conversationId', conversationId)
-    useUIStore.getState().setComponentState('currentUserId', currentUserId)
-
-    loadMessages()
 
     const loadReactions = async () => {
-      const { data: reactionRows, error: reactionError } = await supabase
+      const { data: rows, error } = await supabase
         .from('message_reactions')
         .select('message_id, user_id, emoji')
         .eq('conversation_id', conversationId)
-
-      if (reactionError || !reactionRows) {
-        console.error('Failed to load reactions:', reactionError)
-        return
-      }
-
+      if (error || !rows) return
       const grouped: Record<string, any[]> = {}
-      reactionRows.forEach((r: any) => {
+      rows.forEach(r => {
         if (!grouped[r.message_id]) grouped[r.message_id] = []
         grouped[r.message_id].push({ user_id: r.user_id, emoji: r.emoji })
       })
-      Object.keys(grouped).forEach((msgId) => {
-        useUIStore.getState().setComponentState('reactions:' + msgId, grouped[msgId])
-      })
+      Object.keys(grouped).forEach(id => useUIStore.getState().setComponentState('reactions:' + id, grouped[id]))
     }
+
+    loadMessages()
     loadReactions()
 
-    if (!conversationId) return
+    useUIStore.getState().setComponentState('conversationId', conversationId)
+    useUIStore.getState().setComponentState('currentUserId', currentUserId)
 
     const channel = supabase
       .channel('messages:' + conversationId)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
-         const row = payload.new as any
-         // skip own messages
-         if (row.sender_id === currentUserId) return
+        const row = payload.new as any
+        if (row.sender_id === currentUserId) return
 
-         useUIStore.getState().setComponentState('otherUserTyping', false)
-         if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
+        useUIStore.getState().setComponentState('otherUserTyping', false)
+        if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
 
-         if (row.status === 'sent') {
-           supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
-         }
+        if (row.status === 'sent') {
+          supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
+        }
 
-         const content = row.content ?? ''
-
-         setRealMessages(prev => {
-            if (prev.some(m => m.id === row.id)) return prev;
-            let replyTo = null
-            if (row.reply_to) {
-              const original = prev.find((m) => m.id === row.reply_to)
-              if (original) {
-                replyTo = {
-                  id: row.reply_to,
-                  content: original.content ?? '',
-                  senderLabel: original.isSent ? 'You' : contactName,
-                }
-              }
-            }
-            const msg = {
-              id: row.id,
-              content,
-              messageType: row.message_type || 'text',
-              metadata: row.metadata || null,
-              timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              createdAt: row.created_at,
-              isSent: false,
-              isRead: true,
-              status: row.status === 'sent' ? 'delivered' : row.status,
-              replyTo,
-            }
-            const next = [...prev, msg];
-            queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next));
-            return next;
-         })
+        setRealMessages(prev => {
+          if (prev.some(m => m.id === row.id)) return prev
+          const msg = decryptRow(row, prev)
+          msg.status = row.status === 'sent' ? 'delivered' : row.status
+          const next = [...prev, msg]
+          cacheMessages(conversationId, next)
+          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+          return next
+        })
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-         const row = payload.new as any
-         setRealMessages(prev => {
-            const idx = prev.findIndex(m => m.id === row.id)
-            if (idx === -1) return prev
-            const existing = prev[idx]
-            if (row.deleted_at && !existing.isDeleted) {
-               const next = [...prev]
-               next[idx] = { ...existing, isDeleted: true, content: '' }
-               queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-               return next
-            }
-            if (row.sender_id === currentUserId && existing.status !== row.status) {
-               const next = [...prev]
-               next[idx] = { ...existing, status: row.status }
-               queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-               return next
-            }
+        const row = payload.new as any
+        setRealMessages(prev => {
+          const idx = prev.findIndex(m => m.id === row.id)
+          if (idx === -1) return prev
+          const existing = prev[idx]
+          const next = [...prev]
+          if (row.deleted_at && !existing.isDeleted) {
+            next[idx] = { ...existing, isDeleted: true, content: '' }
+          } else if (row.sender_id === currentUserId && existing.status !== row.status) {
+            next[idx] = { ...existing, status: row.status }
+          } else {
             return prev
-         })
+          }
+          cacheMessages(conversationId, next)
+          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+          return next
+        })
       })
       .on('broadcast', { event: 'typing' }, (msg) => {
         const p = (msg as any).payload
-        if (p && p.userId && p.userId !== currentUserId) {
-          const _dm = { ...(useUIStore.getState().componentState?.['dmTypingMap'] || {}) }
-          _dm[p.userId] = true
-          useUIStore.getState().setComponentState('dmTypingMap', _dm)
-          setTimeout(() => { const _m2 = { ...(useUIStore.getState().componentState?.['dmTypingMap'] || {}) }; delete _m2[p.userId]; useUIStore.getState().setComponentState('dmTypingMap', _m2) }, 3000)
+        if (p?.userId && p.userId !== currentUserId) {
+          const map = { ...(useUIStore.getState().componentState?.['dmTypingMap'] || {}) }
+          map[p.userId] = true
+          useUIStore.getState().setComponentState('dmTypingMap', map)
+          setTimeout(() => {
+            const m2 = { ...(useUIStore.getState().componentState?.['dmTypingMap'] || {}) }
+            delete m2[p.userId]
+            useUIStore.getState().setComponentState('dmTypingMap', m2)
+          }, 3000)
           useUIStore.getState().setComponentState('otherUserTyping', true)
           if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
-          typingExpireRef.current = setTimeout(() => {
-            useUIStore.getState().setComponentState('otherUserTyping', false)
-          }, 3000)
+          typingExpireRef.current = setTimeout(() => useUIStore.getState().setComponentState('otherUserTyping', false), 3000)
         }
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
         const row = payload.new as any
         const key = 'reactions:' + row.message_id
-        const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        const next = [...current.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }]
-        useUIStore.getState().setComponentState(key, next)
+        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
+        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
         const row = payload.new as any
         const key = 'reactions:' + row.message_id
-        const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        const next = [...current.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }]
-        useUIStore.getState().setComponentState(key, next)
+        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
+        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
         const row = payload.old as any
         const key = 'reactions:' + row.message_id
-        const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        const next = current.filter((r: any) => r.user_id !== row.user_id)
-        useUIStore.getState().setComponentState(key, next)
+        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
+        useUIStore.getState().setComponentState(key, cur.filter((r: any) => r.user_id !== row.user_id))
       })
       .subscribe()
 
@@ -297,9 +282,44 @@ export function ChatScreen(props: ChatScreenProps) {
       useUIStore.getState().setComponentState('activeMessageActions', null)
       useUIStore.getState().setComponentState('reactionDetail', null)
     }
-  }, [conversationId, currentUserId, myPublicKey, otherUserPublicKey])
+  }, [conversationId, currentUserId, myPublicKey, otherUserPublicKey, networkIsOnline])
 
-  // on open: clear unread badge and mark received messages as read
+  useEffect(() => {
+    if (!networkIsOnline || !conversationId || !currentUserId) return
+    const pending = getPendingMessages(currentUserId).filter(m => {
+      return m.conversationId === conversationId || (!m.conversationId && m.otherUserId === otherUserId)
+    })
+    if (!pending.length) return
+
+    pending.forEach(async pm => {
+      let cid = conversationId
+      if (!cid) {
+        const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: pm.otherUserId })
+        if (data) { cid = data; setConversationId(data) } else return
+      }
+      const { error } = await supabase.from('messages').insert({
+        id: pm.id,
+        conversation_id: cid,
+        sender_id: currentUserId,
+        content: pm.encryptedContent ? null : pm.content,
+        encrypted_content: pm.encryptedContent,
+        status: 'sent',
+        reply_to: pm.replyToId,
+        created_at: pm.createdAt,
+      })
+      if (!error) {
+        removePendingMessage(currentUserId, pm.id)
+        setRealMessages(prev => {
+          const idx = prev.findIndex(m => m.id === pm.id)
+          if (idx === -1) return prev
+          const next = [...prev]
+          next[idx] = { ...next[idx], status: 'sent' }
+          return next
+        })
+      }
+    })
+  }, [networkIsOnline, conversationId])
+
   useEffect(() => {
     if (contactId) {
       useContactStore.getState().clearUnread(contactId)
@@ -307,33 +327,27 @@ export function ChatScreen(props: ChatScreenProps) {
     }
   }, [contactId])
 
-  // mark messages read and update last_read_at
   useEffect(() => {
-    if (!conversationId || !currentUserId) return
-
-    const unreadReceived = realMessages.some(m => !m.isSent && m.status !== 'read')
-    if (unreadReceived) {
-      supabase.from('messages')
-        .update({ status: 'read' })
+    if (!conversationId || !currentUserId || !networkIsOnline) return
+    const hasUnread = realMessages.some(m => !m.isSent && m.status !== 'read')
+    if (hasUnread) {
+      supabase.from('messages').update({ status: 'read' })
         .eq('conversation_id', conversationId)
         .neq('sender_id', currentUserId)
         .neq('status', 'read')
         .then()
     }
-
     supabase.from('conversation_participants')
       .update({ last_read_at: new Date().toISOString() })
       .eq('conversation_id', conversationId)
       .eq('user_id', currentUserId)
       .then()
-  }, [conversationId, currentUserId, realMessages])
+  }, [conversationId, currentUserId, realMessages, networkIsOnline])
 
-  // useComponentState: persistent state for compiled components, survives re-renders
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
-    // subscribe to store changes — re-renders this component when another component writes to this key
     useEffect(() => {
       const unsub = useUIStore.subscribe((state: any, prevState: any) => {
         const next = state.componentState?.[key]
@@ -367,6 +381,7 @@ export function ChatScreen(props: ChatScreenProps) {
     isOnline,
     lastSeen,
     messages: otherUserId ? realMessages : storeMessages,
+    isOffline: !networkIsOnline,
     MessageBubble,
     DateSeparator,
     ComposerBar,
@@ -380,11 +395,7 @@ export function ChatScreen(props: ChatScreenProps) {
     onAttach: () => setShowAttachSheet(true),
     replyingTo,
     onReplyTo: (target: any) => {
-      const next = {
-        id: target.id,
-        content: target.content,
-        senderLabel: target.isSent ? 'You' : contactName,
-      }
+      const next = { id: target.id, content: target.content, senderLabel: target.isSent ? 'You' : contactName }
       setReplyingTo(next)
       useUIStore.getState().setComponentState('replyingTo', next)
     },
@@ -398,9 +409,7 @@ export function ChatScreen(props: ChatScreenProps) {
       if (!el) return
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       useUIStore.getState().setComponentState('highlightedMessageId', targetId)
-      setTimeout(() => {
-        useUIStore.getState().setComponentState('highlightedMessageId', null)
-      }, 1500)
+      setTimeout(() => useUIStore.getState().setComponentState('highlightedMessageId', null), 1500)
     },
     currentUserId,
     onToggleReaction: (messageId: string, emoji: string) => {
@@ -409,24 +418,12 @@ export function ChatScreen(props: ChatScreenProps) {
       const key = 'reactions:' + messageId
       const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       const mine = current.find((r: any) => r.user_id === liveUserId)
-
       if (mine && mine.emoji === emoji) {
-        const next = current.filter((r: any) => r.user_id !== liveUserId)
-        useUIStore.getState().setComponentState(key, next)
-        supabase.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', liveUserId).then(({ error }: any) => {
-          if (error) console.error('Failed to remove reaction:', error)
-        })
+        useUIStore.getState().setComponentState(key, current.filter((r: any) => r.user_id !== liveUserId))
+        supabase.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', liveUserId).then()
       } else {
-        const next = [...current.filter((r: any) => r.user_id !== liveUserId), { user_id: liveUserId, emoji: emoji }]
-        useUIStore.getState().setComponentState(key, next)
-        supabase.from('message_reactions').upsert({
-          message_id: messageId,
-          conversation_id: liveConversationId,
-          user_id: liveUserId,
-          emoji: emoji,
-        }, { onConflict: 'message_id,user_id' }).then(({ error }: any) => {
-          if (error) console.error('Failed to add reaction:', error)
-        })
+        useUIStore.getState().setComponentState(key, [...current.filter((r: any) => r.user_id !== liveUserId), { user_id: liveUserId, emoji }])
+        supabase.from('message_reactions').upsert({ message_id: messageId, conversation_id: liveConversationId, user_id: liveUserId, emoji }, { onConflict: 'message_id,user_id' }).then()
       }
     },
     onOpenCommunityInvite: (meta: any, msgId: string) => onOpenCommunityInvite?.(meta, msgId),
@@ -441,68 +438,79 @@ export function ChatScreen(props: ChatScreenProps) {
         useMessageStore.getState().sendMessage(contactId, content)
         return
       }
+      if (!otherUserId || !currentUserId) return
 
-      if (otherUserId && currentUserId && myPublicKey && otherUserPublicKey) {
-        let cid = conversationId
-        if (!cid) {
-          const { data, error } = await supabase.rpc('get_or_create_conversation', {
-            p_user_a: currentUserId,
-            p_user_b: otherUserId
-          })
-          if (data) {
-            cid = data
-            setConversationId(data)
-          } else {
-            console.error('Failed to get or create conversation on send:', error)
-            return
-          }
-        }
-        
-        try {
-          // Optimistic update
-          const newId = crypto.randomUUID()
-          const replyToSnapshot = useUIStore.getState().componentState?.replyingTo ?? null
-          const replyToId = replyToSnapshot ? replyToSnapshot.id : null
-          const newMsg = {
-             id: newId,
-             content,
-             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-             createdAt: new Date().toISOString(),
-             isSent: true,
-             isRead: true,
-             status: 'sent',
-             replyTo: replyToSnapshot ? { id: replyToSnapshot.id, content: replyToSnapshot.content, senderLabel: replyToSnapshot.senderLabel } : null,
-          }
+      const newId = crypto.randomUUID()
+      const replyToSnapshot = useUIStore.getState().componentState?.replyingTo ?? null
+      const replyToId = replyToSnapshot?.id ?? null
 
-          setReplyingTo(null)
-          useUIStore.getState().setComponentState('replyingTo', null)
-          
-          setRealMessages(prev => {
-            const nextMessages = [...prev, newMsg]
-            queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', nextMessages))
-            return nextMessages
-          })
+      let encryptedContent: string | null = null
+      if (myPrivateKey && otherUserPublicKey) {
+        try { encryptedContent = encryptMessage(content, otherUserPublicKey, myPrivateKey) } catch { /* fall through */ }
+      }
 
-          const { data: result, error } = await supabase.from('messages').insert({
-             id: newId,
-             conversation_id: cid,
-             sender_id: currentUserId,
-             content: content,
-             status: 'sent',
-             reply_to: replyToId,
-          }).select('id, created_at').single()
+      const newMsg = {
+        id: newId,
+        content,
+        messageType: 'text',
+        metadata: null,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: new Date().toISOString(),
+        isSent: true,
+        isRead: true,
+        status: networkIsOnline ? 'sent' : 'sending',
+        replyTo: replyToSnapshot ? { id: replyToSnapshot.id, content: replyToSnapshot.content, senderLabel: replyToSnapshot.senderLabel } : null,
+        isDeleted: false,
+      }
 
-          if (error) {
-             console.error('Failed to insert message:', error)
-             setRealMessages(prev => {
-               const failedMessages = prev.map(m => m.id === newId ? { ...m, content: '🔒 failed to send' } : m)
-               queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', failedMessages))
-               return failedMessages
-             })
-          }
-        } catch (e) {
-          console.error('Error in send', e)
-        }
+      setReplyingTo(null)
+      useUIStore.getState().setComponentState('replyingTo', null)
+
+      setRealMessages(prev => {
+        const next = [...prev, newMsg]
+        const cacheKey = conversationId ?? `pending_${otherUserId}`
+        cacheMessages(cacheKey, next)
+        queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+        return next
+      })
+
+      if (!networkIsOnline) {
+        savePendingMessage(currentUserId, {
+          id: newId,
+          conversationId,
+          otherUserId,
+          content,
+          encryptedContent,
+          replyToId,
+          createdAt: newMsg.createdAt,
+        })
+        return
+      }
+
+      let cid = conversationId
+      if (!cid) {
+        const { data, error } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
+        if (data) { cid = data; setConversationId(data) }
+        else { console.error('Failed to get or create conversation:', error); return }
+      }
+
+      const { error } = await supabase.from('messages').insert({
+        id: newId,
+        conversation_id: cid,
+        sender_id: currentUserId,
+        content: encryptedContent ? null : content,
+        encrypted_content: encryptedContent,
+        status: 'sent',
+        reply_to: replyToId,
+      }).select('id, created_at').single()
+
+      if (error) {
+        console.error('Failed to insert message:', error)
+        setRealMessages(prev => {
+          const failed = prev.map(m => m.id === newId ? { ...m, status: 'failed', content: '🔒 failed to send' } : m)
+          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', failed))
+          return failed
+        })
       }
     },
     LucideReply: CornerUpLeft,
@@ -512,7 +520,8 @@ export function ChatScreen(props: ChatScreenProps) {
       const current = (useUIStore.getState().componentState?.['chatMessages'] ?? []) as any[]
       const next = current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m)
       useUIStore.getState().setComponentState('chatMessages', next)
-      setRealMessages(prev => prev.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
+      setRealMessages(prev => prev.map(m => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
+      if (conversationId) cacheMessages(conversationId, next)
       await supabase.from('messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
     },
     onShowReactors: async (messageId: string) => {
@@ -541,10 +550,7 @@ export function ChatScreen(props: ChatScreenProps) {
             title: attachConfig.popup.title,
             options: attachConfig.popup.options,
             onClose: () => setShowAttachSheet(false),
-            onOptionSelect: (option: any) => {
-              console.log('attach option selected:', option.label)
-              setShowAttachSheet(false)
-            },
+            onOptionSelect: (option: any) => { console.log('attach option selected:', option.label); setShowAttachSheet(false) },
           }}
         />,
         document.body

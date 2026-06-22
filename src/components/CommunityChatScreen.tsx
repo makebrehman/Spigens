@@ -5,6 +5,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
+import { cacheCommunityMessages, getCachedCommunityMessages } from '@/lib/offlineCache'
+import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
 import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
@@ -30,6 +32,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const [communityAvatarUrl, setCommunityAvatarUrl] = useState<string | null>(props.communityAvatarUrl ?? null)
   const currentUserId = useAuthStore(state => state.user?.id)
   const profile = useAuthStore(state => state.profile)
+  const networkIsOnline = useNetworkStore(state => state.isOnline)
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.communityChatScreen ?? null
   const channelRef = useRef<any>(null)
@@ -54,7 +57,6 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     isDeleted: !!row.deleted_at,
     replyTo: row.reply_to || null,
   })
-  // mark community read for the unread badge (on open and on leave)
   useEffect(() => {
     if (!communityId || !currentUserId) return
     const markRead = () => { supabase.rpc('mark_community_read', { p_community_id: communityId }).then() }
@@ -70,6 +72,13 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     })
     supabase.from('community_members').select('user_id, profiles(id, display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active')
       .then(({ data }: any) => { const map: Record<string,any> = {}; data?.forEach((m: any) => { if (m.profiles) map[m.user_id] = m.profiles }); memberProfilesRef.current = map })
+    const cachedMsgs = getCachedCommunityMessages(communityId)
+    if (cachedMsgs?.length) {
+      useUIStore.getState().setComponentState('communityMessages', cachedMsgs)
+    }
+
+    if (!networkIsOnline) return
+
     supabase.from('community_messages').select('id, community_id, sender_id, content, message_type, metadata, created_at, reply_to, deleted_at, profiles!sender_id(display_name, username, avatar_url)').eq('community_id', communityId).order('created_at', { ascending: true }).limit(100)
       .then(({ data }: any) => {
         if (data) {
@@ -82,7 +91,9 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
               }
             }
           })
-          useUIStore.getState().setComponentState('communityMessages', data.map(formatMsg))
+          const formatted = data.map(formatMsg)
+          cacheCommunityMessages(communityId, formatted)
+          useUIStore.getState().setComponentState('communityMessages', formatted)
           if (data && data.length > 0) {
             const msgIds = data.map((r: any) => r.id)
             supabase.from('community_message_reactions').select('message_id, user_id, emoji').in('message_id', msgIds)
@@ -170,7 +181,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     fetchCommunityAvatar()
     const avatarTimer = setTimeout(fetchCommunityAvatar, 3500)
     return () => clearTimeout(avatarTimer)
-  }, [communityId])
+  }, [communityId, networkIsOnline])
 
   if (typeof window !== 'undefined' && currentUserId) { useUIStore.getState().setComponentState('currentUserId', currentUserId) }
   const sendMessage = async (content: string) => {

@@ -17,9 +17,11 @@ import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavStore } from '@/stores/navStore'
+import { useNetworkStore } from '@/stores/networkStore'
 import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
+import { cacheContacts, getCachedContacts } from '@/lib/offlineCache'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
 import { CommunityListScreen } from '@/components/CommunityListScreen'
@@ -107,9 +109,7 @@ export default function Home() {
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
 
   useEffect(() => {
-    // persist middleware finished rehydrating from storage
     const unsubFinish = useUIStore.persist.onFinishHydration(() => setHydrated(true))
-    // in case it already hydrated before this effect ran
     if (useUIStore.persist.hasHydrated()) {
       setHydrated(true)
     }
@@ -118,10 +118,20 @@ export default function Home() {
     }
   }, [])
 
-  // initialize auth on mount
   useEffect(() => {
     useAuthStore.getState().initialize()
   }, [])
+
+  useEffect(() => {
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [setOnline])
 
   const [showGenUI, setShowGenUI] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -149,7 +159,8 @@ export default function Home() {
   const canUndoUI = useUIStore(state => state.history.length > 0)
   const homeLayoutOrder = useUIStore(state => (state.componentState as any)?.['homeLayout.order']) as string[] | undefined
 
-  const { isAuthenticated, isLoading: authLoading, user, profile } = useAuthStore()
+  const { isAuthenticated, isLoading: authLoading, user, profile, privateKey } = useAuthStore()
+  const { isOnline, setOnline } = useNetworkStore()
   const genUIEnabled = useNavStore(state => state.isGenUIEnabled())
   const navScreen = useNavStore(state => state.screen)
   const navigateTo = useNavStore(state => state.navigateTo)
@@ -160,44 +171,53 @@ export default function Home() {
     }
   }, [isAuthenticated, profile?.public_key, navScreen, navigateTo])
 
-  // load conversations on mount and when returning from chat
   const fetchConversations = useCallback(() => {
-    if (isAuthenticated && user?.id && profile?.public_key && !activeChatUser) {
-      Promise.all([
-        loadConversations(user.id, profile.public_key),
-        supabase.rpc('get_dm_unread_counts'),
-        supabase.from('blocks').select('blocked_id')
-      ]).then(([conversations, unreadRes, blocksRes]) => {
-        const unreadMap: Record<string, number> = {}
-        ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
-        const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
-        const mappedContacts: Contact[] = conversations.filter(c => !blockedSet.has(c.otherProfile.id)).map(c => {
-          const dt = new Date(c.lastMessageTime)
-          const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          return {
-            id: c.otherProfile.id,
-            name: c.otherProfile.display_name || c.otherProfile.username || 'Unknown',
-            avatarInitials: (c.otherProfile.display_name || c.otherProfile.username || '?')[0].toUpperCase(),
-            avatarColor: '#555',
-            avatarUrl: c.otherProfile.avatar_url,
-            lastMessage: c.lastMessage,
-            lastMessageTime: timeStr,
-            unreadCount: unreadMap[c.otherProfile.id] || 0,
-            isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
-            rawProfile: c.otherProfile
-          }
-        })
-        useContactStore.getState().setContacts(mappedContacts)
-        useUIStore.getState().setComponentState('feedContacts', mappedContacts)
-      })
+    if (!isAuthenticated || !user?.id || activeChatUser) return
+
+    if (user?.id) {
+      const cached = getCachedContacts(user.id) as Contact[] | null
+      if (cached?.length) {
+        useContactStore.getState().setContacts(cached)
+        useUIStore.getState().setComponentState('feedContacts', cached)
+      }
     }
-  }, [isAuthenticated, user, profile, activeChatUser])
+
+    if (!isOnline) return
+
+    Promise.all([
+      loadConversations(user.id, privateKey ?? null),
+      supabase.rpc('get_dm_unread_counts'),
+      supabase.from('blocks').select('blocked_id')
+    ]).then(([conversations, unreadRes, blocksRes]) => {
+      const unreadMap: Record<string, number> = {}
+      ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
+      const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
+      const mappedContacts: Contact[] = conversations.filter(c => !blockedSet.has(c.otherProfile.id)).map(c => {
+        const dt = new Date(c.lastMessageTime)
+        const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        return {
+          id: c.otherProfile.id,
+          name: c.otherProfile.display_name || c.otherProfile.username || 'Unknown',
+          avatarInitials: (c.otherProfile.display_name || c.otherProfile.username || '?')[0].toUpperCase(),
+          avatarColor: '#555',
+          avatarUrl: c.otherProfile.avatar_url,
+          lastMessage: c.lastMessage,
+          lastMessageTime: timeStr,
+          unreadCount: unreadMap[c.otherProfile.id] || 0,
+          isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
+          rawProfile: c.otherProfile
+        }
+      })
+      useContactStore.getState().setContacts(mappedContacts)
+      useUIStore.getState().setComponentState('feedContacts', mappedContacts)
+      if (user?.id) cacheContacts(user.id, mappedContacts)
+    })
+  }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
 
   useEffect(() => {
     fetchConversations()
   }, [fetchConversations])
 
-  // presence effect
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return
 
@@ -257,7 +277,6 @@ export default function Home() {
     }
   }, [isAuthenticated, user?.id])
 
-  // Mark incoming messages as 'delivered' whenever the app is open (any screen).
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return
 
@@ -265,16 +284,13 @@ export default function Home() {
       supabase.rpc('mark_messages_delivered', { p_user_id: user.id }).then()
     }
 
-    // Catch-up: anything that arrived while we were away.
     markDelivered()
 
-    // Re-run when the app returns to the foreground.
     const onVisible = () => {
       if (document.visibilityState === 'visible') markDelivered()
     }
     document.addEventListener('visibilitychange', onVisible)
 
-    // Live: mark each new incoming message delivered while the app is open.
     const deliveredChannel = supabase
       .channel('delivered-' + user.id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
@@ -291,7 +307,6 @@ export default function Home() {
     }
   }, [isAuthenticated, user?.id])
 
-  // sync live presence to tile list without refetching
   useEffect(() => {
     let updated = false
     const currentContacts = useContactStore.getState().contacts
@@ -337,7 +352,6 @@ export default function Home() {
       componentSources: useUIStore.getState().componentSources,
     } as any
 
-    // determine current screen
     const screen = selectedContact ? 'chat' : 'home'
 
     try {
@@ -348,19 +362,16 @@ export default function Home() {
         contactNames,
       })
 
-      // snapshot current state before applying the change (for undo)
       useUIStore.getState().pushHistory()
 
-      // load any google fonts the AI referenced before applying
       loadFontsFromMutation(mutation)
 
-      // also scan custom component code strings explicitly
       if (mutation.customComponents) {
         Object.values(mutation.customComponents).forEach(code => {
           if (typeof code === 'string') {
             const matches = code.match(/fontFamily:\s*['"]([^'"]+)['"]/g)
             matches?.forEach(m => {
-              const font = m.match(/['"]([^'"]+)['"]/)?.[1]
+              const font = m.match(/['"]([^'"]+)['"]/)?.[ 1]
               if (font) loadGoogleFont(font)
             })
           }
@@ -369,34 +380,28 @@ export default function Home() {
 
       const uiStore = useUIStore.getState()
 
-      // apply layout config
       if (mutation.layoutConfig?.searchBar) {
         uiStore.setSearchBarConfig(mutation.layoutConfig.searchBar)
       }
 
-      // apply contact list container style
       if (mutation.contactListStyle) {
         uiStore.setContactListStyle(mutation.contactListStyle)
       }
 
-      // apply behavior config
       if (mutation.behaviorConfig) {
         uiStore.setBehaviorConfig(mutation.behaviorConfig)
       }
 
-      // apply interaction behavior changes
       if (mutation.interactions) {
         uiStore.setInteractions(mutation.interactions)
       }
 
-      // apply custom generated components
       if (mutation.customComponents) {
         Object.entries(mutation.customComponents).forEach(([zone, code]) => {
           uiStore.setCustomComponent(zone, code)
         })
       }
 
-      // apply AI-edited component source code
       if (mutation.componentSources) {
         Object.entries(mutation.componentSources).forEach(([name, source]) => {
           if (typeof source === 'string') {
@@ -405,20 +410,18 @@ export default function Home() {
         })
       }
 
-      // scan edited component source for fonts/icons to load
       if (mutation.componentSources) {
         Object.values(mutation.componentSources).forEach(source => {
           if (typeof source === 'string') {
             const fontMatches = source.match(/fontFamily:\s*['"]([^'"]+)['"]/g)
             fontMatches?.forEach(m => {
-              const font = m.match(/['"]([^'"]+)['"]/)?.[1]
+              const font = m.match(/['"]([^'"]+)['"]/)?.[ 1]
               if (font) loadGoogleFont(font)
             })
           }
         })
       }
 
-      // apply layout order change
       if ((mutation as any).layoutOrder) {
         uiStore.setComponentState('homeLayout.order', (mutation as any).layoutOrder)
       }
@@ -432,7 +435,6 @@ export default function Home() {
     }
   }, [selectedContact])
 
-  // portal safety — only render portals after client mount
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
@@ -478,16 +480,13 @@ export default function Home() {
     navigateBack: () => setSelectedContactId(null),
     getContacts: () => useContactStore.getState().contacts,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), []) // created once — setters are stable refs
+  }), [])
 
   const topBarScope = useMemo(() => {
-    // useComponentState: works like React.useState but value persists across re-renders
-    // the key must be unique per piece of state, e.g. 'globeToggle', 'myCounter'
     function useComponentState(key: string, defaultValue: any) {
       const [value, setValue] = useState(
         () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
       )
-      // subscribe to store changes — re-renders this component when another component writes to this key
       useEffect(() => {
         const unsub = useUIStore.subscribe((state: any, prevState: any) => {
           const next = state.componentState?.[key]
@@ -539,7 +538,7 @@ export default function Home() {
       ProfileImage: ProfileImage,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]) // created once — all functions read from store at call time, all setters are stable refs
+  }, [profile])
 
   const searchBarScope = useMemo(() => {
     function useComponentState(key: string, defaultValue: any) {
@@ -575,16 +574,14 @@ export default function Home() {
       useComponentState,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // setShowSearch is a stable useState setter — safe to omit from deps
+  }, [])
 
-  // auth splash — checking session
   if (authLoading) return (
     <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigen</div>
     </div>
   )
 
-  // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
 
   if (!hydrated) {
@@ -675,7 +672,6 @@ export default function Home() {
     )
   }
 
-  // --- chat screen ---
   if (activeChatUser) {
     return (
       <>
@@ -731,7 +727,6 @@ export default function Home() {
     )
   }
 
-  // --- determine overlay/floating portal position ---
   const overlayPosition =
     barPosition === 'floating' && searchBarConfig.position
       ? {
@@ -754,7 +749,6 @@ export default function Home() {
         if (c?.rawProfile) {
           setActiveChatUser(c.rawProfile)
         } else {
-          // fallback
           setSelectedContactId(contactId)
         }
       }
@@ -763,7 +757,7 @@ export default function Home() {
       const contact = useContactStore.getState().contacts.find(c => c.id === contactId)
       if (contact) setLongPressedContact(contact)
     },
-    openAttachSheet: () => { /* attach sheet is inside ChatScreen, not used here */ },
+    openAttachSheet: () => {},
     toggleSearch: () => setShowSearch(prev => !prev),
     navigateBack: () => {
       setActiveChatUser(null)
@@ -773,7 +767,11 @@ export default function Home() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
-      {/* Top header */}
+      {!isOnline && (
+        <div style={{ background: '#1a1a1a', borderBottom: '1px solid #333', padding: '6px 16px', textAlign: 'center', fontSize: '12px', color: '#888', letterSpacing: '0.3px', flexShrink: 0 }}>
+          No internet connection · showing cached messages
+        </div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', padding: '0 16px', minHeight: '60px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0, gap: '12px' }}>
         <img src="/spigens_logo.png" alt="Spigen" style={{ width: '34px', height: '34px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
         <div style={{ flex: 1, fontSize: '20px', fontWeight: '700', color: '#F3F4F6' }}>
@@ -797,7 +795,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* Search bar */}
       {showSearch && (
         <div style={{ padding: '10px 16px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 }}>
           <input
@@ -811,7 +808,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {activeTab === 'chats' && (
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -849,7 +845,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* Bottom navbar */}
       <div style={{ flexShrink: 0, background: '#141414', borderTop: '1px solid #1F1F1F', display: 'flex', flexDirection: 'row', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }}>
         {([
           { id: 'chats' as const, label: 'Chats', path: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z' },
@@ -872,7 +867,6 @@ export default function Home() {
         })}
       </div>
 
-      {/* Portals + GenUI */}
       {longPressConfig && longPressedContact !== null && mounted && createPortal(
         <RenderifyHost
           code={bottomSheetSource ?? null}

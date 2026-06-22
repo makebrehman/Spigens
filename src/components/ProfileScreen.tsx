@@ -73,13 +73,17 @@ export function ProfileScreen(props: ProfileScreenProps) {
     })
   }
 
-  const onChangeAvatar = (file: File) => {
+  const onChangeAvatar = async (file: File) => {
     if (!user?.id) return
     setUploading(true)
-    updateAvatar(user.id, file).then((url) => {
+    try {
+      const url = await updateAvatar(user.id, file)
+      if (url) await useAuthStore.getState().loadProfile(user.id)
+    } catch {
+      useUIStore.getState().setComponentState('profileSaveError', 'Failed to update photo')
+    } finally {
       setUploading(false)
-      if (url) { useAuthStore.getState().loadProfile(user.id) }
-    })
+    }
   }
 
   const onLogout = () => {

@@ -196,7 +196,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   }
 
   const onDeleteMessage = async (messageId: string) => {
-    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
+    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[])
     useUIStore.getState().setComponentState('communityMessages', current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
     await supabase.from('community_messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
   }
@@ -218,7 +218,10 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const onJoin = async () => {
     if (!currentUserId) return
     useUIStore.getState().setComponentState('communityJoinStatus', 'loading')
-    const { error } = await supabase.from('community_members').insert({ community_id: communityId, user_id: currentUserId, role: 'member', status: 'active' })
+    const { error } = await supabase.from('community_members').upsert(
+      { community_id: communityId, user_id: currentUserId, role: 'member', status: 'active' },
+      { onConflict: 'community_id,user_id' }
+    )
     if (error) { useUIStore.getState().setComponentState('communityJoinStatus', 'non-member'); return }
     setIsMember(true); setMemberCount(prev => prev + 1)
     useUIStore.getState().setComponentState('communityJoinStatus', 'member')
@@ -228,7 +231,11 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const onRequest = async () => {
     if (!currentUserId) return
     useUIStore.getState().setComponentState('communityJoinStatus', 'requesting')
-    await supabase.from('community_members').insert({ community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' })
+    const { error } = await supabase.from('community_members').upsert(
+      { community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' },
+      { onConflict: 'community_id,user_id' }
+    )
+    if (error) { useUIStore.getState().setComponentState('communityJoinStatus', 'non-member'); return }
     useUIStore.getState().setComponentState('communityJoinStatus', 'requested')
   }
   const onTyping = () => {
@@ -244,7 +251,8 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     if (!currentUserId) return
     const leaveName = profile?.display_name || profile?.username || 'Someone'
     await supabase.from('community_messages').insert({ community_id: communityId, sender_id: currentUserId, content: leaveName + ' left', message_type: 'system' })
-    await supabase.from('community_members').delete().eq('community_id', communityId).eq('user_id', currentUserId)
+    const { error } = await supabase.from('community_members').delete().eq('community_id', communityId).eq('user_id', currentUserId)
+    if (error) { useUIStore.getState().setComponentState('communityError', 'Failed to leave. Please try again.'); return }
     setIsMember(false); setMemberCount(prev => Math.max(0, prev - 1)); onBack()
   }
   const onUpdateCommunityImage = async (file: File) => {

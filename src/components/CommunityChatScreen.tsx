@@ -192,13 +192,23 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityMessages', [...current, optimistic])
     useUIStore.getState().setComponentState('communityReplyingTo', null)
-    await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })
+    const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })
+    if (error) {
+      const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
+      useUIStore.getState().setComponentState('communityMessages', msgs.filter((m: any) => m.id !== newId))
+      useUIStore.getState().setComponentState('communityError', 'Failed to send message. Please try again.')
+    }
   }
 
   const onDeleteMessage = async (messageId: string) => {
     const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
+    const snapshot = current.find((m: any) => m.id === messageId)
     useUIStore.getState().setComponentState('communityMessages', current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
-    await supabase.from('community_messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
+    const { error } = await supabase.from('community_messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
+    if (error && snapshot) {
+      const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
+      useUIStore.getState().setComponentState('communityMessages', msgs.map((m: any) => m.id === messageId ? snapshot : m))
+    }
   }
 
   const onToggleCommunityReaction = async (messageId: string, emoji: string) => {
@@ -259,7 +269,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const url = await uploadCommunityImage(communityId, file)
     if (url) setCommunityAvatarUrl(url)
   }
-  return <RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
+  return <RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
       const key = 'reactions:' + messageId
       const reactions = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       if (!reactions.length) return

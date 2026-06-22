@@ -110,6 +110,8 @@ export default function Home() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [showArchivedView, setShowArchivedView] = useState(false)
   const [pendingDeleteContact, setPendingDeleteContact] = useState<Contact | null>(null)
+  const [mutedIds, setMutedIds] = useState<Set<string>>(new Set())
+  const [longPressedArchivedContact, setLongPressedArchivedContact] = useState<Contact | null>(null)
 
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
 
@@ -243,6 +245,8 @@ export default function Home() {
       setArchivedIds(new Set(arch))
       const pinned: string[] = JSON.parse(localStorage.getItem(`spigens_pinned_${user.id}`) || '[]')
       setPinnedIds(new Set(pinned))
+      const muted: string[] = JSON.parse(localStorage.getItem(`spigens_muted_${user.id}`) || '[]')
+      setMutedIds(new Set(muted))
     } catch {}
   }, [user?.id])
 
@@ -865,11 +869,23 @@ export default function Home() {
         {activeTab === 'chats' && (() => {
           const archivedContactsList = contacts.filter(c => archivedIds.has(c.id))
           const visibleContacts = contacts.filter(c => !archivedIds.has(c.id))
-          const pinnedContacts = visibleContacts.filter(c => pinnedIds.has(c.id))
-          const visibleContactsWithPin = visibleContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id) }))
+          const unmutedContacts = visibleContacts.filter(c => !mutedIds.has(c.id))
+          const mutedVisibleContacts = visibleContacts.filter(c => mutedIds.has(c.id))
+          const pinnedUnmutedContacts = unmutedContacts.filter(c => pinnedIds.has(c.id))
+          const unmutedContactsWithPin = unmutedContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id), isMuted: false }))
+          const mutedContactsWithFlag = mutedVisibleContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id), isMuted: true }))
           const chatHandlers = {
             onContactSelect: (contact: Contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id)),
             onTileLongPress: (contact: Contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id)),
+            onContactAvatarTap: (contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null }),
+          }
+          const archivedHandlers = {
+            onContactSelect: (contact: Contact) => {
+              const c = contact as any
+              if (c?.rawProfile) setActiveChatUser(c.rawProfile)
+              else setSelectedContactId(contact.id)
+            },
+            onTileLongPress: (contact: Contact) => setLongPressedArchivedContact(contact),
             onContactAvatarTap: (contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null }),
           }
           return (
@@ -883,7 +899,7 @@ export default function Home() {
                   {archivedContactsList.length === 0 ? (
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: 14 }}>No archived chats</div>
                   ) : (
-                    <ContactList contacts={archivedContactsList} {...chatHandlers} />
+                    <ContactList contacts={archivedContactsList} {...archivedHandlers} />
                   )}
                 </div>
               ) : searchQuery.trim().length >= 2 ? (
@@ -920,10 +936,20 @@ export default function Home() {
                     <EmptyState />
                   ) : (
                     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                      {pinnedContacts.length > 0 && (
+                      {pinnedUnmutedContacts.length > 0 && (
                         <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0 }}>📌 Pinned</div>
                       )}
-                      <ContactList contacts={visibleContactsWithPin} {...chatHandlers} />
+                      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                        <ContactList contacts={unmutedContactsWithPin} {...chatHandlers} />
+                      </div>
+                      {mutedVisibleContacts.length > 0 && (
+                        <div style={{ flexShrink: 0, maxHeight: '35%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0 }}>🔕 Muted</div>
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <ContactList contacts={mutedContactsWithFlag} {...chatHandlers} />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -991,6 +1017,7 @@ export default function Home() {
                 const muted: string[] = JSON.parse(localStorage.getItem(mutedKey) || '[]')
                 const next = muted.includes(contact.id) ? muted.filter(id => id !== contact.id) : [...muted, contact.id]
                 localStorage.setItem(mutedKey, JSON.stringify(next))
+                setMutedIds(new Set(next))
               } else if (option.id === 'pin') {
                 const pinned: string[] = JSON.parse(localStorage.getItem(pinnedKey) || '[]')
                 const next = pinned.includes(contact.id) ? pinned.filter(id => id !== contact.id) : [contact.id, ...pinned]
@@ -1018,6 +1045,41 @@ export default function Home() {
             contactName: longPressedContact?.name,
           }}
         />,
+        document.body
+      )}
+      {longPressedArchivedContact && mounted && createPortal(
+        <div onClick={() => setLongPressedArchivedContact(null)} style={{ position: 'fixed', inset: 0, zIndex: 220, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: '22px 20px calc(22px + env(safe-area-inset-bottom))', boxSizing: 'border-box' as const }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#9ca3af', marginBottom: 16 }}>{longPressedArchivedContact.name}</div>
+            <button
+              onClick={() => {
+                const c = longPressedArchivedContact
+                if (!user?.id) { setLongPressedArchivedContact(null); return }
+                const archivedKey = `spigens_archived_${user.id}`
+                try {
+                  const archived: string[] = JSON.parse(localStorage.getItem(archivedKey) || '[]')
+                  const next = archived.filter(id => id !== c.id)
+                  localStorage.setItem(archivedKey, JSON.stringify(next))
+                  setArchivedIds(new Set(next))
+                } catch {}
+                setLongPressedArchivedContact(null)
+              }}
+              style={{ width: '100%', padding: '14px 16px', borderRadius: 12, background: '#1f1f1f', color: '#e5e7eb', fontSize: 15, fontWeight: 500, border: 'none', cursor: 'pointer', marginBottom: 8, textAlign: 'left' as const }}
+            >📤 Unarchive chat</button>
+            <button
+              onClick={() => {
+                const c = longPressedArchivedContact
+                setLongPressedArchivedContact(null)
+                setPendingDeleteContact(c)
+              }}
+              style={{ width: '100%', padding: '14px 16px', borderRadius: 12, background: '#1f1f1f', color: '#ef4444', fontSize: 15, fontWeight: 500, border: 'none', cursor: 'pointer', marginBottom: 8, textAlign: 'left' as const }}
+            >🗑️ Delete chat</button>
+            <button
+              onClick={() => setLongPressedArchivedContact(null)}
+              style={{ width: '100%', padding: '12px', borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginTop: 4 }}
+            >Cancel</button>
+          </div>
+        </div>,
         document.body
       )}
       {pendingDeleteContact && mounted && createPortal(

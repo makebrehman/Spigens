@@ -18,6 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
 import { encryptMessage, decryptMessage } from '@/lib/encryption'
+import imageCompression from 'browser-image-compression'
 import {
   cacheMessages,
   getCachedMessages,
@@ -25,9 +26,10 @@ import {
   getPendingMessages,
   removePendingMessage,
 } from '@/lib/offlineCache'
-import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
+import { CornerUpLeft, Copy, Trash2, Mic, Square, X } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
 
 export interface ChatScreenProps {
   contactId?: string
@@ -67,20 +69,29 @@ export function ChatScreen(props: ChatScreenProps) {
   const [realMessages, setRealMessages] = useState<any[]>([])
   const [replyingTo, setReplyingTo] = useState<any>(null)
   const [encWarning, setEncWarning] = useState(false)
-  const [uploading, setUploading] = useState(false)
   const [attachToast, setAttachToast] = useState<string | null>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [showContactPicker, setShowContactPicker] = useState(false)
+  const [contactSearch, setContactSearch] = useState('')
 
   const typingChannelRef = useRef<any>(null)
   const lastTypingSentRef = useRef<number>(0)
   const typingExpireRef = useRef<any>(null)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
   const sendMsgRef = useRef<((content: string) => Promise<void>) | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<any>(null)
+  const recordingCancelledRef = useRef(false)
 
   const currentUserId = useAuthStore(state => state.user?.id)
   const myPublicKey = useAuthStore(state => state.profile?.public_key)
   const myPrivateKey = useAuthStore(state => state.privateKey)
   const networkIsOnline = useNetworkStore(state => state.isOnline)
+  const contacts = useContactStore(state => state.contacts)
 
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
@@ -378,18 +389,173 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const uploadChatMedia = async (file: File): Promise<string | null> => {
     if (!currentUserId) return null
-    const ext = file.name.split('.').pop() || 'bin'
-    const path = `chat_media/${currentUserId}/${Date.now()}.${ext}`
-    setUploading(true)
-    const { error } = await supabase.storage.from('avatars').upload(path, file, { upsert: false })
-    setUploading(false)
-    if (error) {
-      setAttachToast('Upload failed. Please try again.')
+
+    if (file.type.startsWith('video/') && file.size > MAX_VIDEO_BYTES) {
+      setAttachToast('Video too large — max 100 MB')
       setTimeout(() => setAttachToast(null), 2600)
       return null
     }
+
+    let processedFile: File | Blob = file
+
+    if (file.type.startsWith('image/')) {
+      try {
+        processedFile = await imageCompression(file, {
+          maxSizeMB: 1,
+          maxWidthOrHeight: 1080,
+          useWebWorker: true,
+        })
+      } catch { /* fall through with original */ }
+    }
+
+    const ext = file.name.split('.').pop() || 'bin'
+    const path = `${currentUserId}/chat_media/${Date.now()}.${ext}`
+
+    const { error } = await supabase.storage
+      .from('avatars')
+      .upload(path, processedFile, { upsert: false })
+
+    if (error) {
+      setAttachToast('Failed to send. Try again.')
+      setTimeout(() => setAttachToast(null), 2600)
+      return null
+    }
+
     const { data } = supabase.storage.from('avatars').getPublicUrl(path)
     return data.publicUrl
+  }
+
+  const sendMediaOptimistic = async (file: File) => {
+    if (!currentUserId || !otherUserId) return
+
+    const fileType = file.type.startsWith('image/') ? 'image'
+      : file.type.startsWith('video/') ? 'video'
+      : file.type.startsWith('audio/') ? 'audio'
+      : 'file'
+
+    const localUrl = URL.createObjectURL(file)
+    const tempId = `temp_${Date.now()}`
+    const createdAt = new Date().toISOString()
+
+    const optimisticMsg = {
+      id: tempId,
+      content: localUrl,
+      messageType: fileType,
+      metadata: null,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt,
+      isSent: true,
+      isRead: true,
+      status: 'sending' as const,
+      replyTo: null,
+      isDeleted: false,
+    }
+
+    setRealMessages(prev => {
+      const next = [...prev, optimisticMsg]
+      queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+      return next
+    })
+
+    const url = await uploadChatMedia(file)
+    URL.revokeObjectURL(localUrl)
+
+    if (!url) {
+      setRealMessages(prev => {
+        const next = prev.filter(m => m.id !== tempId)
+        queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+        return next
+      })
+      return
+    }
+
+    const realId = crypto.randomUUID()
+    const realMsg = { ...optimisticMsg, id: realId, content: url, status: 'sent' as const }
+
+    setRealMessages(prev => {
+      const next = prev.map(m => m.id === tempId ? realMsg : m)
+      queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
+      return next
+    })
+
+    if (!networkIsOnline) {
+      savePendingMessage(currentUserId, {
+        id: realId,
+        conversationId,
+        otherUserId,
+        content: url,
+        encryptedContent: null,
+        replyToId: null,
+        createdAt,
+      })
+      return
+    }
+
+    let cid = conversationId
+    if (!cid) {
+      const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
+      if (data) { cid = data; setConversationId(data) } else return
+    }
+
+    let encContent: string | null = null
+    if (myPrivateKey && otherUserPublicKey) {
+      try { encContent = encryptMessage(url, otherUserPublicKey, myPrivateKey) } catch { /* send plain */ }
+    }
+
+    await supabase.from('messages').insert({
+      id: realId,
+      conversation_id: cid,
+      sender_id: currentUserId,
+      content: encContent ? null : url,
+      encrypted_content: encContent,
+      message_type: fileType,
+      status: 'sent',
+      reply_to: null,
+    })
+  }
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      recordedChunksRef.current = []
+      recordingCancelledRef.current = false
+
+      recorder.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        setIsRecording(false)
+        clearInterval(recordingTimerRef.current)
+        setRecordingDuration(0)
+        if (recordingCancelledRef.current) { recordingCancelledRef.current = false; return }
+        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' })
+        const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' })
+        await sendMediaOptimistic(file)
+      }
+
+      recorder.start()
+      mediaRecorderRef.current = recorder
+      setIsRecording(true)
+      setRecordingDuration(0)
+      recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000)
+    } catch {
+      setAttachToast('Microphone access denied')
+      setTimeout(() => setAttachToast(null), 2600)
+    }
+  }
+
+  const stopVoiceRecording = () => {
+    recordingCancelledRef.current = false
+    mediaRecorderRef.current?.stop()
+    clearInterval(recordingTimerRef.current)
+  }
+
+  const cancelVoiceRecording = () => {
+    recordingCancelledRef.current = true
+    mediaRecorderRef.current?.stop()
+    clearInterval(recordingTimerRef.current)
+    setIsRecording(false)
+    setRecordingDuration(0)
   }
 
   const handleAttachOption = async (option: any) => {
@@ -398,33 +564,12 @@ export function ChatScreen(props: ChatScreenProps) {
       photoInputRef.current?.click()
     } else if (option.id === 'document') {
       docInputRef.current?.click()
-    } else if (option.id === 'location') {
-      if (!navigator.geolocation) {
-        setAttachToast('Location not available on this device')
-        setTimeout(() => setAttachToast(null), 2600)
-        return
-      }
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          const { latitude, longitude } = pos.coords
-          sendMsgRef.current?.(`📍 https://maps.google.com/?q=${latitude},${longitude}`)
-        },
-        () => { setAttachToast('Could not get location'); setTimeout(() => setAttachToast(null), 2600) }
-      )
-    } else if (option.id === 'contact-share') {
-      if (typeof (navigator as any).contacts?.select === 'function') {
-        try {
-          const picked = await (navigator as any).contacts.select(['name', 'tel'], { multiple: false })
-          if (picked?.length) {
-            const c = picked[0]
-            const label = `👤 ${c.name?.[0] || 'Contact'}${c.tel?.[0] ? ' · ' + c.tel[0] : ''}`
-            sendMsgRef.current?.(label)
-          }
-        } catch { /* user cancelled */ }
-      } else {
-        setAttachToast('Contact sharing not supported on this device')
-        setTimeout(() => setAttachToast(null), 2600)
-      }
+    } else if (option.id === 'audio') {
+      audioInputRef.current?.click()
+    } else if (option.id === 'voice') {
+      startVoiceRecording()
+    } else if (option.id === 'spigens-contact') {
+      setShowContactPicker(true)
     }
   }
 
@@ -604,34 +749,43 @@ export function ChatScreen(props: ChatScreenProps) {
 
   sendMsgRef.current = chatScreenScope.sendMessage as any
 
+  const filteredContacts = contacts.filter(c => {
+    if (!contactSearch.trim()) return true
+    const q = contactSearch.toLowerCase()
+    return c.name.toLowerCase().includes(q) || (c.rawProfile?.username || '').toLowerCase().includes(q)
+  })
+
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
+
       {encWarning && (
         <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#92400e', color: '#fef3c7', padding: '10px 18px', borderRadius: 999, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
           ⚠️ Message sent without encryption
         </div>
       )}
-      <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={async e => {
-        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
-        const url = await uploadChatMedia(file)
-        if (url) sendMsgRef.current?.(url)
-      }} />
-      <input ref={docInputRef} type="file" style={{ display: 'none' }} onChange={async e => {
-        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
-        const url = await uploadChatMedia(file)
-        if (url) sendMsgRef.current?.(url)
-      }} />
-      {uploading && (
-        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none' }}>
-          Uploading…
-        </div>
-      )}
+
       {attachToast && (
-        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none' }}>
+        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none', whiteSpace: 'nowrap' }}>
           {attachToast}
         </div>
       )}
+
+      {/* Hidden file inputs */}
+      <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={async e => {
+        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+        await sendMediaOptimistic(file)
+      }} />
+      <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.txt,.zip,.rar,.xls,.xlsx,.ppt,.pptx,.csv" style={{ display: 'none' }} onChange={async e => {
+        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+        await sendMediaOptimistic(file)
+      }} />
+      <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={async e => {
+        const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+        await sendMediaOptimistic(file)
+      }} />
+
+      {/* Attach sheet */}
       {attachConfig?.popup && showAttachSheet && createPortal(
         <RenderifyHost
           code={bottomSheetSource}
@@ -643,6 +797,94 @@ export function ChatScreen(props: ChatScreenProps) {
             onOptionSelect: (option: any) => handleAttachOption(option),
           }}
         />,
+        document.body
+      )}
+
+      {/* Voice recording overlay */}
+      {isRecording && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(10,10,10,0.97)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'absolute', width: 88, height: 88, borderRadius: '50%', background: 'rgba(239,68,68,0.25)', animation: 'pulse 1.4s ease-in-out infinite' }} />
+            <div style={{ width: 68, height: 68, borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Mic size={30} color="#fff" />
+            </div>
+          </div>
+          <div style={{ color: '#fff', fontSize: 36, fontWeight: 300, fontVariantNumeric: 'tabular-nums', letterSpacing: 2 }}>
+            {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:{String(recordingDuration % 60).padStart(2, '0')}
+          </div>
+          <div style={{ color: '#6b7280', fontSize: 13, letterSpacing: 0.5 }}>Recording voice message</div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+            <button
+              onClick={cancelVoiceRecording}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+            >
+              <X size={18} />
+              Cancel
+            </button>
+            <button
+              onClick={stopVoiceRecording}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#2563EB', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+            >
+              <Square size={16} fill="#fff" />
+              Send
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Spigens contact picker */}
+      {showContactPicker && createPortal(
+        <div
+          onClick={() => { setShowContactPicker(false); setContactSearch('') }}
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
+          >
+            <div style={{ padding: '20px 20px 12px', flexShrink: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>Share contact</div>
+              <input
+                autoFocus
+                value={contactSearch}
+                onChange={e => setContactSearch(e.target.value)}
+                placeholder="Search by name or username…"
+                style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {filteredContacts.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center' as const, color: '#6b7280', fontSize: 14 }}>No contacts found</div>
+              ) : filteredContacts.map(contact => (
+                <div
+                  key={contact.id}
+                  onClick={() => {
+                    const username = contact.rawProfile?.username || ''
+                    sendMsgRef.current?.(`Contact: ${contact.name}${username ? ' · @' + username : ''}`)
+                    setShowContactPicker(false)
+                    setContactSearch('')
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer', transition: 'background 0.15s' }}
+                >
+                  {contact.avatarUrl ? (
+                    <img src={contact.avatarUrl} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: contact.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                      {contact.avatarInitials}
+                    </div>
+                  )}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, color: '#e8e8e8', fontWeight: 500 }}>{contact.name}</div>
+                    {contact.rawProfile?.username && (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>@{contact.rawProfile.username}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>,
         document.body
       )}
     </>

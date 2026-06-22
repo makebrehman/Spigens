@@ -26,7 +26,7 @@ import {
   getPendingMessages,
   removePendingMessage,
 } from '@/lib/offlineCache'
-import { CornerUpLeft, Copy, Trash2, Mic, Square, X } from 'lucide-react'
+import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
@@ -74,6 +74,9 @@ export function ChatScreen(props: ChatScreenProps) {
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [showContactPicker, setShowContactPicker] = useState(false)
   const [contactSearch, setContactSearch] = useState('')
+  const [showForwardPicker, setShowForwardPicker] = useState(false)
+  const [forwardContent, setForwardContent] = useState('')
+  const [forwardSearch, setForwardSearch] = useState('')
 
   const typingChannelRef = useRef<any>(null)
   const lastTypingSentRef = useRef<number>(0)
@@ -550,6 +553,21 @@ export function ChatScreen(props: ChatScreenProps) {
     clearInterval(recordingTimerRef.current)
   }
 
+  const sendForwardedMessage = async (targetUserId: string, content: string) => {
+    if (!currentUserId) return
+    const { data: cid } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: targetUserId })
+    if (!cid) return
+    await supabase.from('messages').insert({
+      id: crypto.randomUUID(),
+      conversation_id: cid,
+      sender_id: currentUserId,
+      content,
+      status: 'sent',
+    })
+    setAttachToast('Forwarded')
+    setTimeout(() => setAttachToast(null), 1500)
+  }
+
   const cancelVoiceRecording = () => {
     recordingCancelledRef.current = true
     mediaRecorderRef.current?.stop()
@@ -724,6 +742,8 @@ export function ChatScreen(props: ChatScreenProps) {
     LucideReply: CornerUpLeft,
     LucideCopy: Copy,
     LucideTrash: Trash2,
+    LucideForward: Forward,
+    onForwardMessage: (content: string) => { setForwardContent(content); setShowForwardPicker(true) },
     onDeleteMessage: async (messageId: string) => {
       const current = (useUIStore.getState().componentState?.['chatMessages'] ?? []) as any[]
       const next = current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m)
@@ -828,6 +848,62 @@ export function ChatScreen(props: ChatScreenProps) {
               <Square size={16} fill="#fff" />
               Send
             </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Forward picker */}
+      {showForwardPicker && createPortal(
+        <div
+          onClick={() => { setShowForwardPicker(false); setForwardSearch('') }}
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
+          >
+            <div style={{ padding: '20px 20px 12px', flexShrink: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>Forward to…</div>
+              <input
+                autoFocus
+                value={forwardSearch}
+                onChange={e => setForwardSearch(e.target.value)}
+                placeholder="Search contacts…"
+                style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {contacts.filter(c => {
+                if (!forwardSearch.trim()) return true
+                const q = forwardSearch.toLowerCase()
+                return c.name.toLowerCase().includes(q) || (c.rawProfile?.username || '').toLowerCase().includes(q)
+              }).map(contact => (
+                <div
+                  key={contact.id}
+                  onClick={async () => {
+                    setShowForwardPicker(false)
+                    setForwardSearch('')
+                    await sendForwardedMessage(contact.id, forwardContent)
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
+                >
+                  {contact.avatarUrl ? (
+                    <img src={contact.avatarUrl} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: contact.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                      {contact.avatarInitials}
+                    </div>
+                  )}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, color: '#e8e8e8', fontWeight: 500 }}>{contact.name}</div>
+                    {contact.rawProfile?.username && (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>@{contact.rawProfile.username}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>,
         document.body

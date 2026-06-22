@@ -15,6 +15,7 @@ import { callGenUIForUpdate } from '@/lib/genuiClient'
 import { useVolumeKeyTrigger } from '@/hooks/useVolumeKeyTrigger'
 import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
+import { Pin, BellOff, Archive, ArchiveRestore, Trash2 as Trash, ChevronRight, ChevronLeft } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavStore } from '@/stores/navStore'
 import { useNetworkStore } from '@/stores/networkStore'
@@ -413,7 +414,7 @@ export default function Home() {
           if (typeof code === 'string') {
             const matches = code.match(/fontFamily:\s*['"]([\'"]+)['"]\g/g)
             matches?.forEach(m => {
-              const font = m.match(/['"]([^'"]+)['"]/)?.[1]
+              const font = m.match(/['"]([^'"]+)['"]/)?.[ 1]
               if (font) loadGoogleFont(font)
             })
           }
@@ -464,7 +465,7 @@ export default function Home() {
           if (typeof source === 'string') {
             const fontMatches = source.match(/fontFamily:\s*['"]([\'"]+)['"]\g/g)
             fontMatches?.forEach(m => {
-              const font = m.match(/['"]([^'"]+)['"]/)?.[1]
+              const font = m.match(/['"]([^'"]+)['"]/)?.[ 1]
               if (font) loadGoogleFont(font)
             })
           }
@@ -498,10 +499,11 @@ export default function Home() {
         popup: {
           title: 'send attachment',
           options: [
-            { id: 'photo', label: 'photo', icon: '📷' },
-            { id: 'document', label: 'document', icon: '📄' },
-            { id: 'location', label: 'location', icon: '📍' },
-            { id: 'contact-share', label: 'contact', icon: '👤' },
+            { id: 'photo', label: 'Photo / Video', icon: '🖼' },
+            { id: 'document', label: 'Document', icon: '📄' },
+            { id: 'audio', label: 'Audio', icon: '🎵' },
+            { id: 'voice', label: 'Voice Note', icon: '🎤' },
+            { id: 'spigens-contact', label: 'Contact', icon: '👤' },
           ],
         },
       },
@@ -893,7 +895,7 @@ export default function Home() {
               {showArchivedView ? (
                 <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 }}>
-                    <button onClick={() => setShowArchivedView(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 26, cursor: 'pointer', padding: 0, lineHeight: 1 }}>‹</button>
+                    <button onClick={() => setShowArchivedView(false)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}><ChevronLeft size={26} /></button>
                     <span style={{ fontSize: 17, fontWeight: 600, color: '#e8e8e8' }}>Archived</span>
                   </div>
                   {archivedContactsList.length === 0 ? (
@@ -912,12 +914,12 @@ export default function Home() {
                 <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   {archivedContactsList.length > 0 && (
                     <button onClick={() => setShowArchivedView(true)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', background: 'none', border: 'none', borderBottom: '1px solid #1a1a1a', width: '100%', cursor: 'pointer', flexShrink: 0, textAlign: 'left' as const }}>
-                      <div style={{ width: 50, height: 50, borderRadius: '50%', background: '#1e1e1e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>📦</div>
+                      <div style={{ width: 50, height: 50, borderRadius: '50%', background: '#1e1e1e', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Archive size={22} color="#9ca3af" /></div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 16, color: '#e8e8e8', fontWeight: 500 }}>Archived</div>
                         <div style={{ fontSize: 13, color: '#6b7280', marginTop: 1 }}>{archivedContactsList.length} chat{archivedContactsList.length !== 1 ? 's' : ''}</div>
                       </div>
-                      <span style={{ color: '#4b5563', fontSize: 18 }}>›</span>
+                      <ChevronRight size={18} color="#4b5563" />
                     </button>
                   )}
                   {loadingContacts && visibleContacts.length === 0 ? (
@@ -937,14 +939,14 @@ export default function Home() {
                   ) : (
                     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       {pinnedUnmutedContacts.length > 0 && (
-                        <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0 }}>📌 Pinned</div>
+                        <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}><Pin size={11} strokeWidth={2.5} />Pinned</div>
                       )}
                       <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
                         <ContactList contacts={unmutedContactsWithPin} {...chatHandlers} />
                       </div>
                       {mutedVisibleContacts.length > 0 && (
                         <div style={{ flexShrink: 0, maxHeight: '35%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                          <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0 }}>🔕 Muted</div>
+                          <div style={{ padding: '10px 16px 2px', fontSize: 11, fontWeight: 700, color: '#4b5563', letterSpacing: 0.5, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}><BellOff size={11} strokeWidth={2.5} />Muted</div>
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <ContactList contacts={mutedContactsWithFlag} {...chatHandlers} />
                           </div>
@@ -1065,7 +1067,7 @@ export default function Home() {
                 setLongPressedArchivedContact(null)
               }}
               style={{ width: '100%', padding: '14px 16px', borderRadius: 12, background: '#1f1f1f', color: '#e5e7eb', fontSize: 15, fontWeight: 500, border: 'none', cursor: 'pointer', marginBottom: 8, textAlign: 'left' as const }}
-            >📤 Unarchive chat</button>
+            ><span style={{ display: 'flex', alignItems: 'center', gap: 10 }}><ArchiveRestore size={16} />Unarchive chat</span></button>
             <button
               onClick={() => {
                 const c = longPressedArchivedContact
@@ -1073,7 +1075,7 @@ export default function Home() {
                 setPendingDeleteContact(c)
               }}
               style={{ width: '100%', padding: '14px 16px', borderRadius: 12, background: '#1f1f1f', color: '#ef4444', fontSize: 15, fontWeight: 500, border: 'none', cursor: 'pointer', marginBottom: 8, textAlign: 'left' as const }}
-            >🗑️ Delete chat</button>
+            ><span style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Trash size={16} />Delete chat</span></button>
             <button
               onClick={() => setLongPressedArchivedContact(null)}
               style={{ width: '100%', padding: '12px', borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginTop: 4 }}

@@ -12,6 +12,7 @@ export interface Contact {
   lastMessageTime: string
   unreadCount: number
   isOnline: boolean
+  isPinned?: boolean
   rawProfile?: any
 }
 

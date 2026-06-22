@@ -38,6 +38,8 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
   }, [isMember])
   const [communityImageUploading, setCommunityImageUploading] = useState(false)
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
+  const [successToast, setSuccessToast] = useState<string | null>(null)
+  const showSuccess = (msg: string) => { setSuccessToast(msg); setTimeout(() => setSuccessToast(null), 2000) }
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)
     useEffect(() => { const unsub = useUIStore.subscribe((state: any, prevState: any) => { const next = state.componentState?.[key]; const prev = prevState.componentState?.[key]; if (next !== prev) setValue(next ?? defaultValue) }); return unsub }, [key, defaultValue])
@@ -88,6 +90,7 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
     await supabase.from('community_messages').insert({ community_id: communityId, sender_id: currentUserId, content: joinName + ' joined', message_type: 'system' })
     setIsMember(true)
     setMemberCount((prev: number) => prev + 1)
+    showSuccess('Joined!')
     const commData = useUIStore.getState().componentState?.communityProfileData as any
     if (commData) useUIStore.getState().setComponentState('communityProfileData', { ...commData, member_count: (commData.member_count || 0) + 1 })
     if (inviteMessageId) {
@@ -103,7 +106,8 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
       { community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' },
       { onConflict: 'community_id,user_id' }
     )
-    if (error) useUIStore.getState().setComponentState('communityProfileError', 'Failed to send request. Please try again.')
+    if (error) { useUIStore.getState().setComponentState('communityProfileError', 'Failed to send request. Please try again.'); return }
+    showSuccess('Request sent!')
   }
   const onApproveRequest = async (userId: string, displayName: string) => {
     const { error } = await supabase.from('community_members').update({ status: 'active' }).eq('community_id', communityId).eq('user_id', userId)
@@ -208,6 +212,12 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
     if (data) useUIStore.getState().setComponentState('communityProfileData', { ...data, name: name.trim(), description: description.trim() || null })
   }
   return (
+    <>
+    {successToast && (
+      <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 220, background: '#16a34a', color: '#fff', padding: '10px 22px', borderRadius: 999, fontSize: 14, fontWeight: 600, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+        ✓ {successToast}
+      </div>
+    )}
     <RenderifyHost
       code={source}
       storeActions={{
@@ -228,7 +238,10 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
         onStartDMWithUser: (userId: string, displayName?: string, username?: string, avatarUrl?: string | null) => onStartDMWithUser?.(userId, displayName, username, avatarUrl),
         onViewMemberProfile: (userId: string, displayName?: string, username?: string, avatarUrl?: string | null) => onViewMemberProfile?.(userId, displayName, username, avatarUrl),
         onBack, ProfileImage, BackButton, useComponentState,
+        joinSuccess: successToast === 'Joined!',
+        requestSent: successToast === 'Request sent!',
       }}
     />
+    </>
   )
 }

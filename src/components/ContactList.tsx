@@ -7,13 +7,15 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 import type { Contact } from '@/types'
 
 interface ContactListProps {
+  contacts?: Contact[]
   onContactSelect?: (contact: Contact) => void
   onTileLongPress?: (contact: Contact) => void
   onContactAvatarTap?: (contact: any) => void
 }
 
-export function ContactList({ onContactSelect, onTileLongPress, onContactAvatarTap }: ContactListProps) {
-  const contacts = useContactStore(state => state.contacts)
+export function ContactList({ contacts: propContacts, onContactSelect, onTileLongPress, onContactAvatarTap }: ContactListProps) {
+  const storeContacts = useContactStore(state => state.contacts)
+  const contacts = propContacts ?? storeContacts
   const componentSources = useUIStore(state => state.componentSources)
   const contactListSource = componentSources?.contactList ?? null
 

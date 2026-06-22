@@ -48,8 +48,12 @@ export function ContactProfileScreen(props: ContactProfileScreenProps) {
     }
     setBusy(false)
     setBlockSheet(false)
-    if (typeof onBlocked === 'function') onBlocked()
-    else if (typeof onBack === 'function') onBack()
+    setToast('✓ Blocked')
+    setTimeout(() => {
+      setToast(null)
+      if (typeof onBlocked === 'function') onBlocked()
+      else if (typeof onBack === 'function') onBack()
+    }, 1000)
   }
 
   const doReport = async (reason: string) => {

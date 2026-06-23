@@ -129,6 +129,65 @@ interface UIStoreState extends UIOverrideState {
   hydrateFromServer: (snapshot: Snapshot | null, versions: GenUIVersion[], userId: string) => void
 }
 
+// the canonical set of editable component sources + their built-in defaults.
+// every key the app actually renders MUST be listed here so that snapshots saved
+// under an older schema (which may be missing newer keys, e.g. an account that last
+// saved before homeHeader/bottomNav existed) self-heal to the default instead of
+// rendering nothing. see mergeWithDefaultSources below.
+const DEFAULT_COMPONENT_SOURCES: Record<string, string> = {
+  homeHeader: DEFAULT_HOMEHEADER_SOURCE,
+  homeSearch: DEFAULT_HOMESEARCH_SOURCE,
+  bottomNav: DEFAULT_BOTTOMNAV_SOURCE,
+  bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE,
+  chatScreen: DEFAULT_CHATSCREEN_SOURCE,
+  messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE,
+  contactList: DEFAULT_CONTACTLIST_SOURCE,
+  dateSeparator: DEFAULT_DATESEPARATOR_SOURCE,
+  composerBar: DEFAULT_COMPOSERBAR_SOURCE,
+  backButton: DEFAULT_BACKBUTTON_SOURCE,
+  profileImage: DEFAULT_PROFILEIMAGE_SOURCE,
+  chatName: DEFAULT_CHATNAME_SOURCE,
+  onlineStatus: DEFAULT_ONLINESTATUS_SOURCE,
+  attachButton: DEFAULT_ATTACHBUTTON_SOURCE,
+  sendButton: DEFAULT_SENDBUTTON_SOURCE,
+  emptyState: DEFAULT_EMPTYSTATE_SOURCE,
+  messageStatus: DEFAULT_MESSAGESTATUS_SOURCE,
+  typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE,
+  replyPreview: DEFAULT_REPLYPREVIEW_SOURCE,
+  replyQuote: DEFAULT_REPLYQUOTE_SOURCE,
+  messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE,
+  reactionPicker: DEFAULT_REACTIONPICKER_SOURCE,
+  profileScreen: DEFAULT_PROFILESCREEN_SOURCE,
+  contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE,
+  communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE,
+  communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE,
+  createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE,
+  communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE,
+  communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE,
+  settingsScreen: DEFAULT_SETTINGSSCREEN_SOURCE,
+  chatRecordingOverlay: DEFAULT_CHATRECORDINGOVERLAY_SOURCE,
+  chatForwardPicker: DEFAULT_CHATFORWARDPICKER_SOURCE,
+  chatContactPicker: DEFAULT_CHATCONTACTPICKER_SOURCE,
+  chatEncryptionToast: DEFAULT_CHATENCRYPTIONTOAST_SOURCE,
+  chatAttachToast: DEFAULT_CHATATTACHTOAST_SOURCE,
+}
+
+// merge a (possibly stale / partial) saved snapshot's componentSources over the
+// current defaults, so any component key the snapshot is missing falls back to its
+// built-in default rather than rendering nothing. the user's real customizations win
+// for the keys they DO have; absent keys are backfilled. stale keys from old schemas
+// (e.g. topAppBar, searchBar, chatTile) are harmless — nothing renders them.
+function mergeWithDefaultSources(componentSources: any): Record<string, string> {
+  return { ...DEFAULT_COMPONENT_SOURCES, ...(componentSources && typeof componentSources === 'object' ? componentSources : {}) }
+}
+
+// normalize any snapshot before it is applied to the live store: guarantees its
+// componentSources contains every key the app renders.
+function normalizeSnapshot(snapshot: any): any {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  return { ...snapshot, componentSources: mergeWithDefaultSources(snapshot.componentSources) }
+}
+
 const defaultState = {
   perContact: {},
   messageConditions: [],
@@ -139,43 +198,7 @@ const defaultState = {
   contactListStyle: {},
   bottomSheetStyles: {},
   customComponents: {},
-  componentSources: {
-    homeHeader: DEFAULT_HOMEHEADER_SOURCE,
-    homeSearch: DEFAULT_HOMESEARCH_SOURCE,
-    bottomNav: DEFAULT_BOTTOMNAV_SOURCE,
-    bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE,
-    chatScreen: DEFAULT_CHATSCREEN_SOURCE,
-    messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE,
-    contactList: DEFAULT_CONTACTLIST_SOURCE,
-    dateSeparator: DEFAULT_DATESEPARATOR_SOURCE,
-    composerBar: DEFAULT_COMPOSERBAR_SOURCE,
-    backButton: DEFAULT_BACKBUTTON_SOURCE,
-    profileImage: DEFAULT_PROFILEIMAGE_SOURCE,
-    chatName: DEFAULT_CHATNAME_SOURCE,
-    onlineStatus: DEFAULT_ONLINESTATUS_SOURCE,
-    attachButton: DEFAULT_ATTACHBUTTON_SOURCE,
-    sendButton: DEFAULT_SENDBUTTON_SOURCE,
-    emptyState: DEFAULT_EMPTYSTATE_SOURCE,
-    messageStatus: DEFAULT_MESSAGESTATUS_SOURCE,
-    typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE,
-    replyPreview: DEFAULT_REPLYPREVIEW_SOURCE,
-    replyQuote: DEFAULT_REPLYQUOTE_SOURCE,
-    messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE,
-    reactionPicker: DEFAULT_REACTIONPICKER_SOURCE,
-    profileScreen: DEFAULT_PROFILESCREEN_SOURCE,
-    contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE,
-    communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE,
-    communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE,
-    createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE,
-    communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE,
-    communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE,
-    settingsScreen: DEFAULT_SETTINGSSCREEN_SOURCE,
-    chatRecordingOverlay: DEFAULT_CHATRECORDINGOVERLAY_SOURCE,
-    chatForwardPicker: DEFAULT_CHATFORWARDPICKER_SOURCE,
-    chatContactPicker: DEFAULT_CHATCONTACTPICKER_SOURCE,
-    chatEncryptionToast: DEFAULT_CHATENCRYPTIONTOAST_SOURCE,
-    chatAttachToast: DEFAULT_CHATATTACHTOAST_SOURCE,
-  },
+  componentSources: { ...DEFAULT_COMPONENT_SOURCES },
   layoutConfig: {
     searchBar: {
       barPosition: 'top-bar' as const,
@@ -401,7 +424,7 @@ export const useUIStore = create<UIStoreState>()(
         if (state.history.length === 0) return {}
         const previous = state.history[state.history.length - 1]
         const newHistory = state.history.slice(0, -1)
-        return { ...previous, history: newHistory }
+        return { ...normalizeSnapshot(previous), history: newHistory }
       }),
 
       // reset — wipe everything back to defaults (keeps history empty)
@@ -426,7 +449,7 @@ export const useUIStore = create<UIStoreState>()(
           backTap: 'navigate-back',
         },
         customComponents: {},
-        componentSources: { homeHeader: DEFAULT_HOMEHEADER_SOURCE, homeSearch: DEFAULT_HOMESEARCH_SOURCE, bottomNav: DEFAULT_BOTTOMNAV_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE, dateSeparator: DEFAULT_DATESEPARATOR_SOURCE, composerBar: DEFAULT_COMPOSERBAR_SOURCE, backButton: DEFAULT_BACKBUTTON_SOURCE, profileImage: DEFAULT_PROFILEIMAGE_SOURCE, chatName: DEFAULT_CHATNAME_SOURCE, onlineStatus: DEFAULT_ONLINESTATUS_SOURCE, attachButton: DEFAULT_ATTACHBUTTON_SOURCE, sendButton: DEFAULT_SENDBUTTON_SOURCE, emptyState: DEFAULT_EMPTYSTATE_SOURCE, messageStatus: DEFAULT_MESSAGESTATUS_SOURCE, typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE, replyPreview: DEFAULT_REPLYPREVIEW_SOURCE, replyQuote: DEFAULT_REPLYQUOTE_SOURCE, messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE, reactionPicker: DEFAULT_REACTIONPICKER_SOURCE, profileScreen: DEFAULT_PROFILESCREEN_SOURCE, contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE, communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE, createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE, communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE, settingsScreen: DEFAULT_SETTINGSSCREEN_SOURCE, chatRecordingOverlay: DEFAULT_CHATRECORDINGOVERLAY_SOURCE, chatForwardPicker: DEFAULT_CHATFORWARDPICKER_SOURCE, chatContactPicker: DEFAULT_CHATCONTACTPICKER_SOURCE, chatEncryptionToast: DEFAULT_CHATENCRYPTIONTOAST_SOURCE, chatAttachToast: DEFAULT_CHATATTACHTOAST_SOURCE },
+        componentSources: { ...DEFAULT_COMPONENT_SOURCES },
         history: [],
         componentState: {},
         activeVersionId: null,
@@ -440,7 +463,7 @@ export const useUIStore = create<UIStoreState>()(
       getSnapshot: () => captureSnapshot(get()),
 
       // overwrite the live customization state with a snapshot (functions/versions untouched)
-      applySnapshot: (snapshot) => set(() => ({ ...snapshot })),
+      applySnapshot: (snapshot) => set(() => ({ ...normalizeSnapshot(snapshot) })),
 
       // append a named version capturing the CURRENT state; becomes the active version
       addVersion: (name) => {
@@ -460,13 +483,13 @@ export const useUIStore = create<UIStoreState>()(
       restoreVersion: (id) => set((state) => {
         const v = state.versions.find(x => x.id === id)
         if (!v) return {}
-        return { ...v.snapshot, activeVersionId: id }
+        return { ...normalizeSnapshot(v.snapshot), activeVersionId: id }
       }),
 
       // load server-saved state + versions on login (only overwrites when server has data)
       hydrateFromServer: (snapshot, versions, userId) => set(() => {
         const next: Record<string, any> = { versions: versions ?? [], ownerUserId: userId }
-        if (snapshot && Object.keys(snapshot).length > 0) Object.assign(next, snapshot)
+        if (snapshot && Object.keys(snapshot).length > 0) Object.assign(next, normalizeSnapshot(snapshot))
         return next
       }),
 
@@ -478,6 +501,14 @@ export const useUIStore = create<UIStoreState>()(
     {
       name: 'genui-customizations',
       storage: createJSONStorage(() => PERSISTENCE_ENABLED ? capacitorStorage : devStorage),
+      // when rehydrating the on-device cache, backfill any component keys the cached
+      // snapshot is missing (older schema) so the header/navbar/etc. never render blank.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Record<string, any>
+        const merged = { ...current, ...p } as any
+        merged.componentSources = mergeWithDefaultSources(p.componentSources)
+        return merged
+      },
       // persist only the data fields, NOT the functions
       partialize: (state) => ({
         perContact: state.perContact,

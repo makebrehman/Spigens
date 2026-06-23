@@ -73,10 +73,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [showContactPicker, setShowContactPicker] = useState(false)
-  const [contactSearch, setContactSearch] = useState('')
   const [showForwardPicker, setShowForwardPicker] = useState(false)
-  const [forwardContent, setForwardContent] = useState('')
-  const [forwardSearch, setForwardSearch] = useState('')
+  const forwardContentRef = useRef('')
 
   const typingChannelRef = useRef<any>(null)
   const lastTypingSentRef = useRef<number>(0)
@@ -89,6 +87,11 @@ export function ChatScreen(props: ChatScreenProps) {
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<any>(null)
   const recordingCancelledRef = useRef(false)
+
+  // Mirror live overlay values into componentState so the GenUI sources read them
+  // (RenderifyHost freezes scope at mount, so changing values must flow via componentState).
+  useEffect(() => { useUIStore.getState().setComponentState('chatRecordingDuration', recordingDuration) }, [recordingDuration])
+  useEffect(() => { useUIStore.getState().setComponentState('chatAttachToastText', attachToast) }, [attachToast])
 
   const currentUserId = useAuthStore(state => state.user?.id)
   const myPublicKey = useAuthStore(state => state.profile?.public_key)
@@ -743,7 +746,7 @@ export function ChatScreen(props: ChatScreenProps) {
     LucideCopy: Copy,
     LucideTrash: Trash2,
     LucideForward: Forward,
-    onForwardMessage: (content: string) => { setForwardContent(content); setShowForwardPicker(true) },
+    onForwardMessage: (content: string) => { forwardContentRef.current = content; setShowForwardPicker(true) },
     onDeleteMessage: async (messageId: string) => {
       const current = (useUIStore.getState().componentState?.['chatMessages'] ?? []) as any[]
       const next = current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m)
@@ -769,27 +772,54 @@ export function ChatScreen(props: ChatScreenProps) {
 
   sendMsgRef.current = chatScreenScope.sendMessage as any
 
-  const filteredContacts = contacts.filter(c => {
-    if (!contactSearch.trim()) return true
-    const q = contactSearch.toLowerCase()
-    return c.name.toLowerCase().includes(q) || (c.rawProfile?.username || '').toLowerCase().includes(q)
-  })
+  // Plain serializable contacts for the forward / share-contact picker sources.
+  const pickerContacts = contacts.map(c => ({
+    id: c.id,
+    name: c.name,
+    username: c.rawProfile?.username || '',
+    avatarUrl: c.avatarUrl || null,
+    avatarColor: c.avatarColor || '#333',
+    avatarInitials: c.avatarInitials,
+  }))
+
+  const recordingOverlayScope = {
+    onCancel: cancelVoiceRecording,
+    onStop: stopVoiceRecording,
+    LucideMic: Mic,
+    LucideX: X,
+    LucideSquare: Square,
+    useComponentState,
+  }
+
+  const forwardPickerScope = {
+    contacts: pickerContacts,
+    onClose: () => setShowForwardPicker(false),
+    onSelect: async (contactId: string) => {
+      setShowForwardPicker(false)
+      await sendForwardedMessage(contactId, forwardContentRef.current)
+    },
+  }
+
+  const contactPickerScope = {
+    contacts: pickerContacts,
+    onClose: () => setShowContactPicker(false),
+    onSelect: (contactId: string) => {
+      const c = contacts.find(x => x.id === contactId)
+      if (c) {
+        const username = c.rawProfile?.username || ''
+        sendMsgRef.current?.(`Contact: ${c.name}${username ? ' · @' + username : ''}`)
+      }
+      setShowContactPicker(false)
+    },
+  }
 
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
 
-      {encWarning && (
-        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#92400e', color: '#fef3c7', padding: '10px 18px', borderRadius: 999, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-          ⚠️ Message sent without encryption
-        </div>
-      )}
+      {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}
 
-      {attachToast && (
-        <div style={{ position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none', whiteSpace: 'nowrap' }}>
-          {attachToast}
-        </div>
-      )}
+      <RenderifyHost code={componentSources?.chatAttachToast ?? null} storeActions={{ useComponentState }} />
 
       {/* Hidden file inputs */}
       <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={async e => {
@@ -822,145 +852,19 @@ export function ChatScreen(props: ChatScreenProps) {
 
       {/* Voice recording overlay */}
       {isRecording && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(10,10,10,0.97)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', width: 88, height: 88, borderRadius: '50%', background: 'rgba(239,68,68,0.25)', animation: 'pulse 1.4s ease-in-out infinite' }} />
-            <div style={{ width: 68, height: 68, borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Mic size={30} color="#fff" />
-            </div>
-          </div>
-          <div style={{ color: '#fff', fontSize: 36, fontWeight: 300, fontVariantNumeric: 'tabular-nums', letterSpacing: 2 }}>
-            {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:{String(recordingDuration % 60).padStart(2, '0')}
-          </div>
-          <div style={{ color: '#6b7280', fontSize: 13, letterSpacing: 0.5 }}>Recording voice message</div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-            <button
-              onClick={cancelVoiceRecording}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}
-            >
-              <X size={18} />
-              Cancel
-            </button>
-            <button
-              onClick={stopVoiceRecording}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#2563EB', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}
-            >
-              <Square size={16} fill="#fff" />
-              Send
-            </button>
-          </div>
-        </div>,
+        <RenderifyHost code={componentSources?.chatRecordingOverlay ?? null} storeActions={recordingOverlayScope} />,
         document.body
       )}
 
       {/* Forward picker */}
       {showForwardPicker && createPortal(
-        <div
-          onClick={() => { setShowForwardPicker(false); setForwardSearch('') }}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
-          >
-            <div style={{ padding: '20px 20px 12px', flexShrink: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>Forward to…</div>
-              <input
-                autoFocus
-                value={forwardSearch}
-                onChange={e => setForwardSearch(e.target.value)}
-                placeholder="Search contacts…"
-                style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
-              />
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {contacts.filter(c => {
-                if (!forwardSearch.trim()) return true
-                const q = forwardSearch.toLowerCase()
-                return c.name.toLowerCase().includes(q) || (c.rawProfile?.username || '').toLowerCase().includes(q)
-              }).map(contact => (
-                <div
-                  key={contact.id}
-                  onClick={async () => {
-                    setShowForwardPicker(false)
-                    setForwardSearch('')
-                    await sendForwardedMessage(contact.id, forwardContent)
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' }}
-                >
-                  {contact.avatarUrl ? (
-                    <img src={contact.avatarUrl} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: contact.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                      {contact.avatarInitials}
-                    </div>
-                  )}
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 15, color: '#e8e8e8', fontWeight: 500 }}>{contact.name}</div>
-                    {contact.rawProfile?.username && (
-                      <div style={{ fontSize: 12, color: '#6b7280' }}>@{contact.rawProfile.username}</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>,
+        <RenderifyHost code={componentSources?.chatForwardPicker ?? null} storeActions={forwardPickerScope} />,
         document.body
       )}
 
       {/* Spigens contact picker */}
       {showContactPicker && createPortal(
-        <div
-          onClick={() => { setShowContactPicker(false); setContactSearch('') }}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
-          >
-            <div style={{ padding: '20px 20px 12px', flexShrink: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>Share contact</div>
-              <input
-                autoFocus
-                value={contactSearch}
-                onChange={e => setContactSearch(e.target.value)}
-                placeholder="Search by name or username…"
-                style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
-              />
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {filteredContacts.length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center' as const, color: '#6b7280', fontSize: 14 }}>No contacts found</div>
-              ) : filteredContacts.map(contact => (
-                <div
-                  key={contact.id}
-                  onClick={() => {
-                    const username = contact.rawProfile?.username || ''
-                    sendMsgRef.current?.(`Contact: ${contact.name}${username ? ' · @' + username : ''}`)
-                    setShowContactPicker(false)
-                    setContactSearch('')
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer', transition: 'background 0.15s' }}
-                >
-                  {contact.avatarUrl ? (
-                    <img src={contact.avatarUrl} alt="" style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: contact.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                      {contact.avatarInitials}
-                    </div>
-                  )}
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 15, color: '#e8e8e8', fontWeight: 500 }}>{contact.name}</div>
-                    {contact.rawProfile?.username && (
-                      <div style={{ fontSize: 12, color: '#6b7280' }}>@{contact.rawProfile.username}</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>,
+        <RenderifyHost code={componentSources?.chatContactPicker ?? null} storeActions={contactPickerScope} />,
         document.body
       )}
     </>

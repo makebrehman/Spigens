@@ -1777,3 +1777,99 @@ export const DEFAULT_SETTINGSSCREEN_SOURCE = `function Component() {
     ) : null
   );
 }`;
+
+export const DEFAULT_CHATRECORDINGOVERLAY_SOURCE = `function Component() {
+  var d = (useComponentState('chatRecordingDuration', 0)[0]) || 0;
+  var mm = String(Math.floor(d / 60)); while (mm.length < 2) mm = '0' + mm;
+  var ss = String(d % 60); while (ss.length < 2) ss = '0' + ss;
+  return React.createElement('div', { style: { position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(10,10,10,0.97)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 } },
+    React.createElement('div', { style: { position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+      React.createElement('div', { style: { position: 'absolute', width: 88, height: 88, borderRadius: '50%', background: 'rgba(239,68,68,0.25)', animation: 'pulse 1.4s ease-in-out infinite' } }),
+      React.createElement('div', { style: { width: 68, height: 68, borderRadius: '50%', background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+        React.createElement(LucideMic, { size: 30, color: '#fff' })
+      )
+    ),
+    React.createElement('div', { style: { color: '#fff', fontSize: 36, fontWeight: 300, fontVariantNumeric: 'tabular-nums', letterSpacing: 2 } }, mm + ':' + ss),
+    React.createElement('div', { style: { color: '#6b7280', fontSize: 13, letterSpacing: 0.5 } }, 'Recording voice message'),
+    React.createElement('div', { style: { display: 'flex', gap: 12, marginTop: 8 } },
+      React.createElement('button', { onClick: function() { if (typeof onCancel === 'function') onCancel(); }, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' } },
+        React.createElement(LucideX, { size: 18 }), 'Cancel'
+      ),
+      React.createElement('button', { onClick: function() { if (typeof onStop === 'function') onStop(); }, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 24px', borderRadius: 999, background: '#2563EB', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' } },
+        React.createElement(LucideSquare, { size: 16, fill: '#fff' }), 'Send'
+      )
+    )
+  );
+}`;
+
+export const DEFAULT_CHATFORWARDPICKER_SOURCE = `function Component() {
+  var sState = React.useState(''); var q = sState[0], setQ = sState[1];
+  var list = (contacts || []).filter(function(c) {
+    if (!q.trim()) return true;
+    var s = q.toLowerCase();
+    return (c.name || '').toLowerCase().indexOf(s) !== -1 || (c.username || '').toLowerCase().indexOf(s) !== -1;
+  });
+  return React.createElement('div', { onClick: function() { if (typeof onClose === 'function') onClose(); }, style: { position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' } },
+    React.createElement('div', { onClick: function(e) { e.stopPropagation(); }, style: { width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' } },
+      React.createElement('div', { style: { padding: '20px 20px 12px', flexShrink: 0 } },
+        React.createElement('div', { style: { fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 } }, 'Forward to' + String.fromCharCode(8230)),
+        React.createElement('input', { autoFocus: true, value: q, onChange: function(e) { setQ(e.target.value); }, placeholder: 'Search contacts' + String.fromCharCode(8230), style: { width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' } })
+      ),
+      React.createElement('div', { style: { flex: 1, overflowY: 'auto' } },
+        list.map(function(c) {
+          return React.createElement('div', { key: c.id, onClick: function() { if (typeof onSelect === 'function') onSelect(c.id); }, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer' } },
+            c.avatarUrl
+              ? React.createElement('img', { src: c.avatarUrl, alt: '', style: { width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 } })
+              : React.createElement('div', { style: { width: 44, height: 44, borderRadius: '50%', background: c.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 } }, c.avatarInitials),
+            React.createElement('div', { style: { minWidth: 0 } },
+              React.createElement('div', { style: { fontSize: 15, color: '#e8e8e8', fontWeight: 500 } }, c.name),
+              c.username ? React.createElement('div', { style: { fontSize: 12, color: '#6b7280' } }, '@' + c.username) : null
+            )
+          );
+        })
+      )
+    )
+  );
+}`;
+
+export const DEFAULT_CHATCONTACTPICKER_SOURCE = `function Component() {
+  var sState = React.useState(''); var q = sState[0], setQ = sState[1];
+  var list = (contacts || []).filter(function(c) {
+    if (!q.trim()) return true;
+    var s = q.toLowerCase();
+    return (c.name || '').toLowerCase().indexOf(s) !== -1 || (c.username || '').toLowerCase().indexOf(s) !== -1;
+  });
+  return React.createElement('div', { onClick: function() { if (typeof onClose === 'function') onClose(); }, style: { position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' } },
+    React.createElement('div', { onClick: function(e) { e.stopPropagation(); }, style: { width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70vh', display: 'flex', flexDirection: 'column', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' } },
+      React.createElement('div', { style: { padding: '20px 20px 12px', flexShrink: 0 } },
+        React.createElement('div', { style: { fontSize: 16, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 } }, 'Share contact'),
+        React.createElement('input', { autoFocus: true, value: q, onChange: function(e) { setQ(e.target.value); }, placeholder: 'Search by name or username' + String.fromCharCode(8230), style: { width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '10px 14px', fontSize: 14, color: '#e8e8e8', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' } })
+      ),
+      React.createElement('div', { style: { flex: 1, overflowY: 'auto' } },
+        list.length === 0
+          ? React.createElement('div', { style: { padding: '24px', textAlign: 'center', color: '#6b7280', fontSize: 14 } }, 'No contacts found')
+          : list.map(function(c) {
+              return React.createElement('div', { key: c.id, onClick: function() { if (typeof onSelect === 'function') onSelect(c.id); }, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer', transition: 'background 0.15s' } },
+                c.avatarUrl
+                  ? React.createElement('img', { src: c.avatarUrl, alt: '', style: { width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 } })
+                  : React.createElement('div', { style: { width: 44, height: 44, borderRadius: '50%', background: c.avatarColor || '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 } }, c.avatarInitials),
+                React.createElement('div', { style: { minWidth: 0 } },
+                  React.createElement('div', { style: { fontSize: 15, color: '#e8e8e8', fontWeight: 500 } }, c.name),
+                  c.username ? React.createElement('div', { style: { fontSize: 12, color: '#6b7280' } }, '@' + c.username) : null
+                )
+              );
+            })
+      )
+    )
+  );
+}`;
+
+export const DEFAULT_CHATENCRYPTIONTOAST_SOURCE = `function Component() {
+  return React.createElement('div', { style: { position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#92400e', color: '#fef3c7', padding: '10px 18px', borderRadius: 999, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.4)', whiteSpace: 'nowrap', pointerEvents: 'none' } }, String.fromCodePoint(9888) + String.fromCodePoint(65039) + ' Message sent without encryption');
+}`;
+
+export const DEFAULT_CHATATTACHTOAST_SOURCE = `function Component() {
+  var t = useComponentState('chatAttachToastText', null)[0];
+  if (!t) return null;
+  return React.createElement('div', { style: { position: 'fixed', left: '50%', bottom: 'calc(80px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 210, background: '#1f2937', color: '#fff', padding: '12px 18px', borderRadius: 999, fontSize: 14, fontWeight: 500, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', pointerEvents: 'none', whiteSpace: 'nowrap' } }, t);
+}`;

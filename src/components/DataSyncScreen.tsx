@@ -52,19 +52,18 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         }))
         if (contacts.length) cacheContacts(userId, contacts)
 
-        // Step 2 — messages for top 10 conversations (25 → 65 %)
+        // Step 2 — last 50 messages for every conversation (25 → 65 %)
         setLabel('syncing messages...')
-        const top10 = conversations.slice(0, 10)
-        for (let i = 0; i < top10.length; i++) {
+        for (let i = 0; i < conversations.length; i++) {
           if (!active) return
           const { data } = await supabase
             .from('messages')
             .select('id, conversation_id, sender_id, content, encrypted_content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at')
-            .eq('conversation_id', top10[i].conversationId)
+            .eq('conversation_id', conversations[i].conversationId)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) cacheMessages(top10[i].conversationId, [...data].reverse())
-          setProgress(25 + Math.round(((i + 1) / Math.max(top10.length, 1)) * 40))
+          if (data?.length) cacheMessages(conversations[i].conversationId, [...data].reverse())
+          setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
         }
 
         // Step 3 — communities (65 → 80 %)
@@ -86,19 +85,18 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         if (myComms.length) cacheCommunityList(userId, myComms)
         setProgress(80)
 
-        // Step 4 — community messages for top 5 (80 → 97 %)
+        // Step 4 — last 50 messages for every community (80 → 97 %)
         setLabel('syncing community chats...')
-        const top5 = myComms.slice(0, 5)
-        for (let i = 0; i < top5.length; i++) {
+        for (let i = 0; i < myComms.length; i++) {
           if (!active) return
           const { data } = await supabase
             .from('community_messages')
             .select('id, community_id, sender_id, content, message_type, metadata, created_at, reply_to, deleted_at, profiles!sender_id(display_name, username, avatar_url)')
-            .eq('community_id', top5[i].id)
+            .eq('community_id', myComms[i].id)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) cacheCommunityMessages(top5[i].id, [...data].reverse())
-          setProgress(80 + Math.round(((i + 1) / Math.max(top5.length, 1)) * 17))
+          if (data?.length) cacheCommunityMessages(myComms[i].id, [...data].reverse())
+          setProgress(80 + Math.round(((i + 1) / Math.max(myComms.length, 1)) * 17))
         }
 
         if (!active) return

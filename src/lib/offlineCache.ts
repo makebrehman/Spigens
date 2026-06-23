@@ -13,6 +13,14 @@ function load<T>(key: string): T | null {
   } catch { return null }
 }
 
+export function cacheProfile(userId: string, profile: unknown): void {
+  save(`profile_${userId}`, profile)
+}
+
+export function getCachedProfile(userId: string): unknown | null {
+  return load<unknown>(`profile_${userId}`)
+}
+
 export function cacheMessages(conversationId: string, messages: unknown[]): void {
   save(`msgs_${conversationId}`, messages)
 }

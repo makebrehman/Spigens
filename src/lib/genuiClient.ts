@@ -4,6 +4,7 @@ import { COMPONENT_DESCRIPTIONS } from '@/lib/componentDescriptions'
 
 export type StoreMutation = Partial<UIOverrideState> & {
   clearPerContact?: boolean
+  versionName?: string
 }
 
 const RESPONSE_SCHEMA = {
@@ -61,6 +62,7 @@ const RESPONSE_SCHEMA = {
       type: 'object',
       additionalProperties: { type: 'string' },
     },
+    versionName: { type: 'string' },
   },
 }
 
@@ -648,12 +650,15 @@ examples:
 - "use a bold condensed font for the headline" → use "Anton" or "Archivo Black" in the relevant slot
 - mix fonts freely: a "Playfair Display" headline with "Manrope" body text is elegant.
 
+VERSION NAME — always include a "versionName" field: a SHORT human-friendly title (2-5 words, Title Case) describing this specific change, so the user can recognise it later in their version history. examples: "Purple Gradient Tiles", "Search Moved To Bottom", "iOS-Style Action Sheet", "Bigger Message Text". make it specific to what changed, not generic.
+
 rules:
 1. output only the fields that need to change
 2. contact names must match exactly including capitalisation
 3. all css values must be valid css strings
 4. for cloud shape: clipPath: "polygon(10% 40%, 15% 20%, 30% 10%, 50% 15%, 70% 10%, 85% 20%, 90% 40%, 85% 60%, 70% 70%, 50% 75%, 30% 70%, 15% 60%)"
 5. output only json — no explanation text
+6. ALWAYS include a "versionName" describing the change
 
 example output format:
 {

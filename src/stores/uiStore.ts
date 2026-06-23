@@ -34,6 +34,33 @@ type Snapshot = {
   componentSources: any
 }
 
+// a named, restorable point in the customization timeline
+export type GenUIVersion = {
+  id: string
+  name: string
+  createdAt: string
+  snapshot: Snapshot
+}
+
+// pull the full customization snapshot out of the live store state
+function captureSnapshot(state: any): Snapshot {
+  return {
+    perContact: state.perContact,
+    messageConditions: state.messageConditions,
+    globalTile: state.globalTile,
+    layoutConfig: state.layoutConfig,
+    behaviorConfig: state.behaviorConfig,
+    searchBarStyle: state.searchBarStyle,
+    topAppBarStyle: state.topAppBarStyle,
+    chatScreenStyle: state.chatScreenStyle,
+    contactListStyle: state.contactListStyle,
+    bottomSheetStyles: state.bottomSheetStyles,
+    interactions: state.interactions,
+    customComponents: state.customComponents,
+    componentSources: state.componentSources,
+  }
+}
+
 interface UIStoreState extends UIOverrideState {
   history: Snapshot[]
   searchBarStyle: SearchBarStyleOverride
@@ -63,6 +90,14 @@ interface UIStoreState extends UIOverrideState {
   canUndo: () => boolean
   componentState: Record<string, any>
   setComponentState: (key: string, value: any) => void
+  // version timeline
+  versions: GenUIVersion[]
+  activeVersionId: string | null
+  getSnapshot: () => Snapshot
+  applySnapshot: (snapshot: Snapshot) => void
+  addVersion: (name: string) => GenUIVersion
+  restoreVersion: (id: string) => void
+  hydrateFromServer: (snapshot: Snapshot | null, versions: GenUIVersion[]) => void
 }
 
 const defaultState = {
@@ -124,6 +159,8 @@ const defaultState = {
   },
   history: [] as Snapshot[],
   componentState: {} as Record<string, any>,
+  versions: [] as GenUIVersion[],
+  activeVersionId: null as string | null,
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -350,10 +387,46 @@ export const useUIStore = create<UIStoreState>()(
         componentSources: { topAppBar: DEFAULT_TOPAPPBAR_SOURCE, searchBar: DEFAULT_SEARCHBAR_SOURCE, chatTile: DEFAULT_CHATTILE_SOURCE, bottomSheet: DEFAULT_BOTTOMSHEET_SOURCE, chatScreen: DEFAULT_CHATSCREEN_SOURCE, messageBubble: DEFAULT_MESSAGEBUBBLE_SOURCE, contactList: DEFAULT_CONTACTLIST_SOURCE, dateSeparator: DEFAULT_DATESEPARATOR_SOURCE, composerBar: DEFAULT_COMPOSERBAR_SOURCE, backButton: DEFAULT_BACKBUTTON_SOURCE, profileImage: DEFAULT_PROFILEIMAGE_SOURCE, chatName: DEFAULT_CHATNAME_SOURCE, onlineStatus: DEFAULT_ONLINESTATUS_SOURCE, attachButton: DEFAULT_ATTACHBUTTON_SOURCE, sendButton: DEFAULT_SENDBUTTON_SOURCE, emptyState: DEFAULT_EMPTYSTATE_SOURCE, messageStatus: DEFAULT_MESSAGESTATUS_SOURCE, typingIndicator: DEFAULT_TYPINGINDICATOR_SOURCE, replyPreview: DEFAULT_REPLYPREVIEW_SOURCE, replyQuote: DEFAULT_REPLYQUOTE_SOURCE, messageReactions: DEFAULT_MESSAGEREACTIONS_SOURCE, reactionPicker: DEFAULT_REACTIONPICKER_SOURCE, profileScreen: DEFAULT_PROFILESCREEN_SOURCE, contactProfileScreen: DEFAULT_CONTACTPROFILESCREEN_SOURCE, communityMessageBubble: DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, communityListScreen: DEFAULT_COMMUNITYLISTSCREEN_SOURCE, createCommunityScreen: DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, communityChatScreen: DEFAULT_COMMUNITYCHATSCREEN_SOURCE, communityProfileScreen: DEFAULT_COMMUNITYPROFILESCREEN_SOURCE },
         history: [],
         componentState: {},
+        activeVersionId: null,
       })),
 
       // helper for UI to know if undo is available
       canUndo: () => get().history.length > 0,
+
+      // ---- version timeline ----
+      // capture the current full customization state
+      getSnapshot: () => captureSnapshot(get()),
+
+      // overwrite the live customization state with a snapshot (functions/versions untouched)
+      applySnapshot: (snapshot) => set(() => ({ ...snapshot })),
+
+      // append a named version capturing the CURRENT state; becomes the active version
+      addVersion: (name) => {
+        const snapshot = captureSnapshot(get())
+        const version: GenUIVersion = {
+          id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `v_${Date.now()}`,
+          name: (name && name.trim() ? name.trim() : 'Untitled change').slice(0, 60),
+          createdAt: new Date().toISOString(),
+          snapshot,
+        }
+        // append-only; cap at 100 to bound storage, dropping the oldest
+        set((state) => ({ versions: [...state.versions, version].slice(-100), activeVersionId: version.id }))
+        return version
+      },
+
+      // jump to any version WITHOUT mutating the timeline — old chain stays intact
+      restoreVersion: (id) => set((state) => {
+        const v = state.versions.find(x => x.id === id)
+        if (!v) return {}
+        return { ...v.snapshot, activeVersionId: id }
+      }),
+
+      // load server-saved state + versions on login (only overwrites when server has data)
+      hydrateFromServer: (snapshot, versions) => set(() => {
+        const next: Record<string, any> = { versions: versions ?? [] }
+        if (snapshot && Object.keys(snapshot).length > 0) Object.assign(next, snapshot)
+        return next
+      }),
 
       setComponentState: (key, value) =>
         set((state) => ({
@@ -380,6 +453,8 @@ export const useUIStore = create<UIStoreState>()(
         componentSources: state.componentSources,
         history: state.history,
         componentState: state.componentState,
+        versions: state.versions,
+        activeVersionId: state.activeVersionId,
       }),
     }
   )

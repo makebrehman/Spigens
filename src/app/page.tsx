@@ -17,6 +17,7 @@ import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
 import { Pin, BellOff, Archive, ArchiveRestore, Trash2 as Trash, ChevronRight, ChevronLeft } from 'lucide-react'
 import { registerServiceWorker, subscribeToPush } from '@/lib/pushNotifications'
+import { loadGenUIFromServer, saveGenUIToServer, saveVersionToServer } from '@/lib/genuiSync'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavStore } from '@/stores/navStore'
 import { useNetworkStore } from '@/stores/networkStore'
@@ -173,6 +174,8 @@ export default function Home() {
   const barPosition = searchBarConfig.barPosition
   const iconPosition = searchBarConfig.iconPosition
   const canUndoUI = useUIStore(state => state.history.length > 0)
+  const genuiVersions = useUIStore(state => state.versions)
+  const genuiActiveVersionId = useUIStore(state => state.activeVersionId)
   const homeLayoutOrder = useUIStore(state => (state.componentState as any)?.['homeLayout.order']) as string[] | undefined
   const genUIEnabled = useNavStore(state => state.isGenUIEnabled())
   const navScreen = useNavStore(state => state.screen)
@@ -478,6 +481,14 @@ export default function Home() {
         uiStore.setComponentState('homeLayout.order', (mutation as any).layoutOrder)
       }
 
+      // record a named version (AI-titled) and sync state + version to the server
+      const uid = useAuthStore.getState().user?.id
+      const version = uiStore.addVersion((mutation as any).versionName || message)
+      if (uid) {
+        saveVersionToServer(uid, version)
+        saveGenUIToServer(uid)
+      }
+
       setIsGenerating(false)
       setShowGenUI(false)
 
@@ -501,6 +512,12 @@ export default function Home() {
     // Delay slightly so the app is visible before asking for permission
     const t = setTimeout(() => subscribeToPush(user.id), 3000)
     return () => clearTimeout(t)
+  }, [isAuthenticated, user?.id])
+
+  // Load this user's saved GenUI customizations + version history from the server
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return
+    loadGenUIFromServer(user.id)
   }, [isAuthenticated, user?.id])
 
   useEffect(() => {
@@ -643,6 +660,21 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // setShowSearch is a stable useState setter — safe to omit from deps
 
+  // shared props for every GenUIPanel instance (server-synced undo/reset/restore)
+  const uid = user?.id
+  const genuiPanelProps = {
+    isGenerating,
+    onClose: () => { if (!isGenerating) setShowGenUI(false) },
+    onGenerate: handleGenerate,
+    lastError: genUIError,
+    canUndo: canUndoUI,
+    versions: genuiVersions,
+    activeVersionId: genuiActiveVersionId,
+    onUndo: () => { useUIStore.getState().undo(); if (uid) saveGenUIToServer(uid) },
+    onReset: () => { useUIStore.getState().resetAllCustomizations(); if (uid) saveGenUIToServer(uid) },
+    onRestoreVersion: (id: string) => { useUIStore.getState().restoreVersion(id); if (uid) saveGenUIToServer(uid) },
+  }
+
   // auth splash — checking session
   if (authLoading) return (
     <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -757,16 +789,7 @@ export default function Home() {
           onViewContactProfile={() => setContactProfileUser(activeChatUser)}
           onOpenCommunityInvite={(meta: any, msgId: string) => { setActiveCommunityProfile({ id: meta.communityId, name: meta.communityName, type: meta.communityType || 'public', avatar_url: meta.avatarUrl || null, description: meta.description || null, member_count: meta.memberCount || 0, isMember: false, userRole: null, _inviteMessageId: msgId }) }}
         />
-        <GenUIPanel
-          isOpen={showGenUI}
-          isGenerating={isGenerating}
-          onClose={() => !isGenerating && setShowGenUI(false)}
-          onGenerate={handleGenerate}
-          lastError={genUIError}
-          onUndo={() => useUIStore.getState().undo()}
-          onReset={() => useUIStore.getState().resetAllCustomizations()}
-          canUndo={canUndoUI}
-        />
+        <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
       </>
     )
   }
@@ -783,16 +806,7 @@ export default function Home() {
           lastSeen={selectedContact.rawProfile?.last_seen}
           onBack={() => setSelectedContactId(null)}
         />
-        <GenUIPanel
-          isOpen={showGenUI}
-          isGenerating={isGenerating}
-          onClose={() => !isGenerating && setShowGenUI(false)}
-          onGenerate={handleGenerate}
-          lastError={genUIError}
-          onUndo={() => useUIStore.getState().undo()}
-          onReset={() => useUIStore.getState().resetAllCustomizations()}
-          canUndo={canUndoUI}
-        />
+        <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
       </>
     )
   }
@@ -1120,16 +1134,7 @@ export default function Home() {
         </div>,
         document.body
       )}
-      <GenUIPanel
-        isOpen={showGenUI}
-        isGenerating={isGenerating}
-        onClose={() => !isGenerating && setShowGenUI(false)}
-        onGenerate={handleGenerate}
-        lastError={genUIError}
-        onUndo={() => useUIStore.getState().undo()}
-        onReset={() => useUIStore.getState().resetAllCustomizations()}
-        canUndo={canUndoUI}
-      />
+      <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
     </div>
   )
 }

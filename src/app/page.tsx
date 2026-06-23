@@ -36,6 +36,7 @@ import { CommunityProfileScreen } from '@/components/CommunityProfileScreen'
 import { ProfileImage } from '@/components/ProfileImage'
 import { SettingsScreen } from '@/components/SettingsScreen'
 import { DataSyncScreen } from '@/components/DataSyncScreen'
+import { LaunchSplash } from '@/components/LaunchSplash'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 
@@ -147,11 +148,17 @@ export default function Home() {
   const { isAuthenticated, isLoading: authLoading, user, profile, privateKey } = useAuthStore()
   const { isOnline, setOnline } = useNetworkStore()
 
-  // Trigger post-login sync once per user per session
+  // Trigger post-login sync only on a fresh sign-in (flag set by authStore.signIn)
   useEffect(() => {
     if (!isAuthenticated || !user?.id || !profile?.username) return
     if (syncedUsers.current.has(user.id)) { setSyncPhase('done'); return }
-    setSyncPhase('syncing')
+    const justSignedIn = typeof window !== 'undefined' && localStorage.getItem('spigens_just_signed_in') === user.id
+    if (justSignedIn) {
+      setSyncPhase('syncing')
+    } else {
+      syncedUsers.current.add(user.id)
+      setSyncPhase('done')
+    }
   }, [isAuthenticated, user?.id, profile?.username])
 
   // Track online/offline state globally
@@ -782,12 +789,7 @@ export default function Home() {
   }
 
   // auth splash — checking session
-  if (authLoading) return (
-    <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
-      <img src="/spigens_logo.png" alt="Spigens" style={{ width: 84, height: 84, borderRadius: 22, objectFit: 'cover' }} />
-      <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigens</div>
-    </div>
-  )
+  if (authLoading) return <LaunchSplash />
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
@@ -801,6 +803,7 @@ export default function Home() {
         isOnline={isOnline}
         onDone={() => {
           syncedUsers.current.add(user.id)
+          if (typeof window !== 'undefined') localStorage.removeItem('spigens_just_signed_in')
           setSyncPhase('done')
         }}
       />
@@ -814,14 +817,7 @@ export default function Home() {
   //  - fresh device / different account / no cache, online -> wait for the server fetch
   const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
-  if (!hydrated || waitingForGenUI) {
-    return (
-      <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
-        <img src="/spigens_logo.png" alt="Spigens" style={{ width: 84, height: 84, borderRadius: 22, objectFit: 'cover' }} />
-        <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigens</div>
-      </div>
-    )
-  }
+  if (!hydrated || waitingForGenUI) return <LaunchSplash />
 
   if (showSettings) {
     return <SettingsScreen onBack={() => setShowSettings(false)} />

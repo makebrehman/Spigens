@@ -16,6 +16,7 @@ import { useVolumeKeyTrigger } from '@/hooks/useVolumeKeyTrigger'
 import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
 import { Pin, BellOff, Archive, ArchiveRestore, Trash2 as Trash, ChevronRight, ChevronLeft } from 'lucide-react'
+import { registerServiceWorker, subscribeToPush } from '@/lib/pushNotifications'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavStore } from '@/stores/navStore'
 import { useNetworkStore } from '@/stores/networkStore'
@@ -490,7 +491,17 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
+    // Register service worker for push notifications
+    registerServiceWorker()
   }, [])
+
+  // Subscribe to push after auth
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return
+    // Delay slightly so the app is visible before asking for permission
+    const t = setTimeout(() => subscribeToPush(user.id), 3000)
+    return () => clearTimeout(t)
+  }, [isAuthenticated, user?.id])
 
   useEffect(() => {
     useUIStore.getState().setBehaviorConfig({

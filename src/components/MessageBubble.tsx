@@ -14,10 +14,23 @@ const previewCache = new Map<string, any>()
 async function fetchLinkPreview(url: string): Promise<any> {
   if (previewCache.has(url)) return previewCache.get(url)
   try {
-    const res = await fetch(`/api/og-preview?url=${encodeURIComponent(url)}`)
-    const data = await res.json()
-    if (data?.title) previewCache.set(url, data)
-    return data
+    // Static export — no server. Fetch OG metadata client-side via a CORS-enabled service.
+    const res = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(url)}`)
+    const json = await res.json()
+    if (json?.status !== 'success' || !json.data) return null
+    const d = json.data
+    let hostname = ''
+    try { hostname = new URL(url).hostname.replace(/^www\./, '') } catch {}
+    const preview = {
+      url,
+      title: d.title || null,
+      description: d.description || null,
+      image: d.image?.url || d.logo?.url || null,
+      siteName: d.publisher || null,
+      hostname,
+    }
+    if (preview.title) previewCache.set(url, preview)
+    return preview
   } catch {
     return null
   }

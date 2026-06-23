@@ -619,7 +619,7 @@ export function AuthScreen() {
 
       {/* brand */}
       <div style={{ fontSize: '10px', letterSpacing: '5px', color: 'rgba(255,255,255,0.16)', marginBottom: '4px' }}>
-        spigen
+        spigens
       </div>
 
       {/* animated S — never moves */}

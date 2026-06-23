@@ -15,8 +15,8 @@ const dmSerif = DM_Serif_Display({ subsets: ['latin'], weight: ['400'], variable
 const bricolage = Bricolage_Grotesque({ subsets: ['latin'], weight: ['400','600','700','800'], variable: '--font-bricolage' })
 
 export const metadata: Metadata = {
-  title: 'ChatApp',
-  description: 'Mobile-first chat application',
+  title: 'Spigens',
+  description: 'Spigens — end-to-end encrypted chat',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

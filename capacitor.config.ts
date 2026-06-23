@@ -2,7 +2,7 @@ import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.spigens.app',
-  appName: 'ChatApp',
+  appName: 'Spigens',
   webDir: 'out',
   server: {
     androidScheme: 'https'

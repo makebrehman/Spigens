@@ -736,8 +736,9 @@ export default function Home() {
 
   // auth splash — checking session
   if (authLoading) return (
-    <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigen</div>
+    <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+      <img src="/spigens_logo.png" alt="Spigens" style={{ width: 84, height: 84, borderRadius: 22, objectFit: 'cover' }} />
+      <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigens</div>
     </div>
   )
 
@@ -753,8 +754,9 @@ export default function Home() {
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
   if (!hydrated || waitingForGenUI) {
     return (
-      <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigen</div>
+      <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+        <img src="/spigens_logo.png" alt="Spigens" style={{ width: 84, height: 84, borderRadius: 22, objectFit: 'cover' }} />
+        <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigens</div>
       </div>
     )
   }

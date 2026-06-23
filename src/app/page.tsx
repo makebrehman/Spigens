@@ -523,6 +523,11 @@ export default function Home() {
     loadGenUIFromServer(user.id)
   }, [isAuthenticated, user?.id])
 
+  // Mirror home-nav state into componentState so the editable home-chrome
+  // sources (homeHeader / homeSearch / bottomNav) can read it live.
+  useEffect(() => { useUIStore.getState().setComponentState('activeTab', activeTab) }, [activeTab])
+  useEffect(() => { useUIStore.getState().setComponentState('showSearch', showSearch) }, [showSearch])
+
   useEffect(() => {
     useUIStore.getState().setBehaviorConfig({
       attachButton: {
@@ -662,6 +667,50 @@ export default function Home() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // setShowSearch is a stable useState setter — safe to omit from deps
+
+  // live persistent-state hook for compiled home-chrome sources (mirrors ContactList's)
+  function useComponentState(key: string, defaultValue: any) {
+    const [value, setValue] = useState(
+      () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
+    )
+    useEffect(() => {
+      const unsub = useUIStore.subscribe((state: any, prevState: any) => {
+        const next = state.componentState?.[key]
+        const prev = prevState.componentState?.[key]
+        if (next !== prev) setValue(next ?? defaultValue)
+      })
+      return unsub
+    }, [key, defaultValue])
+    return [value, (newVal: any) => {
+      if (typeof newVal === 'function') {
+        setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r })
+      } else {
+        setValue(newVal)
+        useUIStore.getState().setComponentState(key, newVal)
+      }
+    }] as [any, (v: any) => void]
+  }
+
+  // editable home-chrome scopes — dynamic values flow via useComponentState (live),
+  // only stable callbacks/static data go through storeActions.
+  const homeHeaderScope = {
+    useComponentState,
+    onSearchTap: () => setShowSearch(s => !s),
+    onCreateCommunity: () => setShowCreateCommunity(true),
+  }
+  const homeSearchScope = {
+    useComponentState,
+    onClose: () => { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
+  }
+  const bottomNavScope = {
+    useComponentState,
+    tabs: [
+      { id: 'chats', label: 'Chats', path: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z' },
+      { id: 'communities', label: 'Communities', path: 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z' },
+      { id: 'profile', label: 'Profile', path: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
+    ],
+    onSelectTab: (id: string) => { setActiveTab(id as 'chats' | 'communities' | 'profile'); setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
+  }
 
   // shared props for every GenUIPanel instance (server-synced undo/reset/restore)
   const uid = user?.id
@@ -858,42 +907,12 @@ export default function Home() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
-      {/* Top header */}
-      <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', padding: '0 16px', minHeight: '60px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0, gap: '12px' }}>
-        <img src="/spigens_logo.png" alt="Spigen" style={{ width: '34px', height: '34px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
-        <div style={{ flex: 1, fontSize: '20px', fontWeight: '700', color: '#F3F4F6' }}>
-          {activeTab === 'chats' ? 'Chats' : activeTab === 'communities' ? 'Communities' : 'Profile'}
-        </div>
-        {activeTab !== 'profile' && (
-          <button
-            onClick={() => setShowSearch(s => !s)}
-            style={{ background: 'none', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: showSearch ? '#2563EB' : 'rgba(255,255,255,0.6)', flexShrink: 0 }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-            </svg>
-          </button>
-        )}
-        {activeTab === 'communities' && (
-          <button
-            onClick={() => setShowCreateCommunity(true)}
-            style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#2563EB', border: 'none', color: '#FFF', fontSize: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-          >+</button>
-        )}
-      </div>
+      {/* Top header — editable via GenUI (componentSources.homeHeader) */}
+      <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeHeaderScope} />
 
-      {/* Search bar */}
+      {/* Search bar — editable via GenUI (componentSources.homeSearch) */}
       {showSearch && (
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 }}>
-          <input
-            autoFocus
-            value={searchQuery}
-            onChange={(e) => useUIStore.getState().setComponentState('searchQuery', e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') } }}
-            placeholder={activeTab === 'communities' ? 'Search communities...' : 'Search chats...'}
-            style={{ width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: '999px', padding: '9px 16px', fontSize: '14px', color: '#E8E8E8', border: '1px solid rgba(255,255,255,0.08)', outline: 'none', boxSizing: 'border-box' as const, fontFamily: 'inherit' }}
-          />
-        </div>
+        <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeSearchScope} />
       )}
 
       {/* Tab content */}
@@ -1006,28 +1025,8 @@ export default function Home() {
         )}
       </div>
 
-      {/* Bottom navbar */}
-      <div style={{ flexShrink: 0, background: '#141414', borderTop: '1px solid #1F1F1F', display: 'flex', flexDirection: 'row', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }}>
-        {([
-          { id: 'chats' as const, label: 'Chats', path: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z' },
-          { id: 'communities' as const, label: 'Communities', path: 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z' },
-          { id: 'profile' as const, label: 'Profile', path: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
-        ]).map((tab) => {
-          const isActive = activeTab === tab.id
-          return (
-            <button
-              key={tab.id}
-              onClick={() => { setActiveTab(tab.id); setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') }}
-              style={{ flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', WebkitTapHighlightColor: 'transparent' as any, userSelect: 'none' as any }}
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill={isActive ? '#2563EB' : 'rgba(255,255,255,0.4)'}>
-                <path d={tab.path} />
-              </svg>
-              <span style={{ fontSize: '10px', fontWeight: isActive ? '700' : '500', color: isActive ? '#2563EB' : 'rgba(255,255,255,0.4)', letterSpacing: '0.1px' }}>{tab.label}</span>
-            </button>
-          )
-        })}
-      </div>
+      {/* Bottom navbar — editable via GenUI (componentSources.bottomNav) */}
+      <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={bottomNavScope} />
 
       {/* Portals + GenUI */}
       {longPressConfig && longPressedContact !== null && mounted && createPortal(

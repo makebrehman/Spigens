@@ -79,6 +79,19 @@ function buildSystemPrompt(
   const homeSlots = `
 HOME SCREEN — AVAILABLE STYLE SLOTS:
 
+HOME SCREEN CHROME — three FULLY CODE-EDITABLE sources drive the home shell. To restyle/restructure one, return its complete new source in componentSources. Use React.createElement (NOT JSX). In scope: React, useState, useEffect, useRef, motion, AnimatePresence, Icon, useComponentState.
+
+1. componentSources.homeHeader — the top header (logo, screen title, search button, + button). Scope: useComponentState, onSearchTap() (toggles the search bar), onCreateCommunity() (opens create-community). Read the active tab: var activeTab = useComponentState('activeTab','chats')[0]  // 'chats' | 'communities' | 'profile'. Read search-open state: useComponentState('showSearch', false)[0]. KEEP the title and a search affordance; only show the + button when activeTab === 'communities'.
+
+2. componentSources.homeSearch — the search input that appears under the header when search is open. Scope: useComponentState, onClose(). Bind the input to the SHARED query key (do not rename it): var s = useComponentState('searchQuery',''); var value = s[0]; var setValue = s[1]; — results filtering reads 'searchQuery', so it MUST stay that key.
+
+3. componentSources.bottomNav — the bottom tab bar (Chats / Communities / Profile). Scope: useComponentState, tabs (array of { id, label, path } where path is an SVG path string), onSelectTab(id). Highlight the active tab via useComponentState('activeTab','chats')[0]. ALWAYS map over EVERY item in tabs and wire onClick to onSelectTab(tab.id) so navigation keeps working — never drop a tab.
+
+examples:
+- "make the active bottom tab blue and bigger" → rewrite componentSources.bottomNav, colour/scale the active item
+- "center the app title in the header" → rewrite componentSources.homeHeader with the title centered
+- "make the search bar a rounded pill with a magnifier icon" → rewrite componentSources.homeSearch
+
 contact list CONTAINER STYLING (contactListStyle) — the list area BEHIND and AROUND the tiles. this is DIFFERENT from the tiles themselves:
 - IMPORTANT distinction:
   - "make the list background black" / "the chat list area" → contactListStyle.container { background: "#000" }
@@ -242,9 +255,9 @@ combine with Icon: React.createElement(motion.div, { whileTap: { scale: 0.9 } },
 
 prefer motion for any request involving movement, transitions, bounce, spring, fade, slide, pulse, or "make it feel alive".
 
-EDITING THE APP BAR (componentSources.topAppBar) — the top app bar is now FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — you REWRITE its source code.
+EDITING THE APP BAR (componentSources.homeHeader) — the top app bar is now FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — you REWRITE its source code.
 
-the current source is shown above under CURRENT EDITABLE COMPONENT SOURCE. to change the bar, return the COMPLETE new source as componentSources.topAppBar.
+the current source is shown above under CURRENT EDITABLE COMPONENT SOURCE. to change the bar, return the COMPLETE new source as componentSources.homeHeader.
 
 rules for the source:
 1. define a component named exactly "Component"
@@ -262,9 +275,9 @@ CRITICAL: when the user says "add a button next to search", rewrite the ENTIRE b
 example — adding a bell button:
 componentSources: { "topAppBar": "function Component() { return React.createElement('div', { style: { display:'flex', alignItems:'center', padding:'12px 16px', background:'#141414', gap:'8px' } }, React.createElement('button', { onClick: onMenuTap, style:{...} }, '☰'), React.createElement('span', { style:{ flex:1, fontSize:'20px', fontWeight:'700', color:'#fff' } }, title), React.createElement('button', { onClick: () => alert('bell'), style:{...} }, React.createElement(Icon,{name:'bell',size:22})), React.createElement('button', { onClick: onSearchTap, style:{...} }, React.createElement(Icon,{name:'search',size:22})), React.createElement('button', { onClick: onNewChatTap, style:{...} }, React.createElement(Icon,{name:'edit',size:22}))) }" }
 
-IMPORTANT: prefer editing componentSources.topAppBar for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — rewrite the source instead.
+IMPORTANT: prefer editing componentSources.homeHeader for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — rewrite the source instead.
 
-EDITING THE SEARCH BAR (componentSources.searchBar) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — REWRITE its source code. return the new source as componentSources.searchBar.
+EDITING THE SEARCH BAR (componentSources.homeSearch) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — REWRITE its source code. return the new source as componentSources.homeSearch.
 
 rules for the source:
 1. define a component named exactly "Component"
@@ -488,9 +501,9 @@ combine with Icon: React.createElement(motion.div, { whileTap: { scale: 0.9 } },
 
 prefer motion for any request involving movement, transitions, bounce, spring, fade, slide, pulse, or "make it feel alive".
 
-EDITING THE APP BAR (componentSources.topAppBar) — the top app bar is now FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — you REWRITE its source code.
+EDITING THE APP BAR (componentSources.homeHeader) — the top app bar is now FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — you REWRITE its source code.
 
-the current source is shown above under CURRENT EDITABLE COMPONENT SOURCE. to change the bar, return the COMPLETE new source as componentSources.topAppBar.
+the current source is shown above under CURRENT EDITABLE COMPONENT SOURCE. to change the bar, return the COMPLETE new source as componentSources.homeHeader.
 
 rules for the source:
 1. define a component named exactly "Component"
@@ -508,9 +521,9 @@ CRITICAL: when the user says "add a button next to search", rewrite the ENTIRE b
 example — adding a bell button:
 componentSources: { "topAppBar": "function Component() { return React.createElement('div', { style: { display:'flex', alignItems:'center', padding:'12px 16px', background:'#141414', gap:'8px' } }, React.createElement('button', { onClick: onMenuTap, style:{...} }, '☰'), React.createElement('span', { style:{ flex:1, fontSize:'20px', fontWeight:'700', color:'#fff' } }, title), React.createElement('button', { onClick: () => alert('bell'), style:{...} }, React.createElement(Icon,{name:'bell',size:22})), React.createElement('button', { onClick: onSearchTap, style:{...} }, React.createElement(Icon,{name:'search',size:22})), React.createElement('button', { onClick: onNewChatTap, style:{...} }, React.createElement(Icon,{name:'edit',size:22}))) }" }
 
-IMPORTANT: prefer editing componentSources.topAppBar for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — rewrite the source instead.
+IMPORTANT: prefer editing componentSources.homeHeader for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — rewrite the source instead.
 
-EDITING THE SEARCH BAR (componentSources.searchBar) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — REWRITE its source code. return the new source as componentSources.searchBar.
+EDITING THE SEARCH BAR (componentSources.homeSearch) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — REWRITE its source code. return the new source as componentSources.homeSearch.
 
 rules for the source:
 1. define a component named exactly "Component"

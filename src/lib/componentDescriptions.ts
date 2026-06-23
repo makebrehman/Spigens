@@ -1,6 +1,7 @@
 export const COMPONENT_DESCRIPTIONS: Record<string, string> = {
-  topAppBar: "The bar across the very top of the home screen. Contains the app title/'messages' heading and the top icons (menu, search, compose). Users might call it: the top bar, the header, the title bar, the bar at the top.",
-  searchBar: "The search input where users type to find people. Users might call it: search box, search field, the find bar.",
+  homeHeader: "The bar across the very top of the home screen — the app logo, the current screen title (Chats / Communities / Profile), the search button, and (on the Communities tab) the + create button. Users might call it: the top bar, the header, the title bar, the bar at the top.",
+  homeSearch: "The search input bar that drops down under the home header when the search button is tapped. Users might call it: search box, search field, the find bar.",
+  bottomNav: "The bottom navigation bar with the Chats, Communities, and Profile tabs. Users might call it: the bottom bar, the tab bar, the navigation, the bottom tabs, the navbar.",
   contactList: "The scrollable list of chat tiles on the home screen — each row showing a person's avatar, name, last message, and time. Handles the whole list container, the tiles, grouping, tabs. Users might call it: the chat list, conversations, the inbox, the list of chats, the tiles.",
   bottomSheet: "The slide-up panel/sheet at the bottom (e.g. attachment options). Users might call it: the popup, the sheet, the bottom popup, the drawer.",
   chatScreen: "The overall layout of an open conversation — the container holding the messages area and arranging everything between the header and the composer. Users might call it: the chat, the conversation screen, the messages area, the chat background.",

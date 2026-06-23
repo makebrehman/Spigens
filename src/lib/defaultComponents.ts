@@ -1542,3 +1542,70 @@ export const DEFAULT_CONTACTLIST_SOURCE = `function Component() {
     })
   );
 }`;
+
+export const DEFAULT_HOMEHEADER_SOURCE = `function Component() {
+  var tabState = useComponentState('activeTab', 'chats');
+  var activeTab = tabState[0];
+  var searchState = useComponentState('showSearch', false);
+  var showSearch = searchState[0];
+  var title = activeTab === 'chats' ? 'Chats' : (activeTab === 'communities' ? 'Communities' : 'Profile');
+  var children = [
+    React.createElement('img', { key: 'logo', src: '/spigens_logo.png', alt: 'Spigens', style: { width: 34, height: 34, borderRadius: 10, objectFit: 'cover', flexShrink: 0 } }),
+    React.createElement('div', { key: 'title', style: { flex: 1, fontSize: 20, fontWeight: 700, color: '#F3F4F6' } }, title)
+  ];
+  if (activeTab !== 'profile') {
+    children.push(React.createElement('button', {
+      key: 'search',
+      onClick: function() { if (typeof onSearchTap === 'function') onSearchTap(); },
+      style: { background: 'none', border: 'none', width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: showSearch ? '#2563EB' : 'rgba(255,255,255,0.6)', flexShrink: 0 }
+    }, React.createElement(Icon, { name: 'search', size: 20, color: showSearch ? '#2563EB' : 'rgba(255,255,255,0.6)' })));
+  }
+  if (activeTab === 'communities') {
+    children.push(React.createElement('button', {
+      key: 'create',
+      onClick: function() { if (typeof onCreateCommunity === 'function') onCreateCommunity(); },
+      style: { width: 36, height: 36, borderRadius: '50%', background: '#2563EB', border: 'none', color: '#FFF', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }
+    }, '+'));
+  }
+  return React.createElement('div', {
+    style: { display: 'flex', flexDirection: 'row', alignItems: 'center', padding: '0 16px', minHeight: 60, borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0, gap: 12 }
+  }, children);
+}`;
+
+export const DEFAULT_HOMESEARCH_SOURCE = `function Component() {
+  var tabState = useComponentState('activeTab', 'chats');
+  var activeTab = tabState[0];
+  var q = useComponentState('searchQuery', '');
+  var value = q[0];
+  var setValue = q[1];
+  return React.createElement('div', {
+    style: { padding: '10px 16px', borderBottom: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 }
+  }, React.createElement('input', {
+    autoFocus: true,
+    value: value,
+    onChange: function(e) { setValue(e.target.value); },
+    onKeyDown: function(e) { if (e.key === 'Escape' && typeof onClose === 'function') onClose(); },
+    placeholder: activeTab === 'communities' ? 'Search communities...' : 'Search chats...',
+    style: { width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: 999, padding: '9px 16px', fontSize: 14, color: '#E8E8E8', border: '1px solid rgba(255,255,255,0.08)', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }
+  }));
+}`;
+
+export const DEFAULT_BOTTOMNAV_SOURCE = `function Component() {
+  var tabState = useComponentState('activeTab', 'chats');
+  var activeTab = tabState[0];
+  var items = (typeof tabs !== 'undefined' && tabs) ? tabs : [];
+  return React.createElement('div', {
+    style: { flexShrink: 0, background: '#141414', borderTop: '1px solid #1F1F1F', display: 'flex', flexDirection: 'row', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }
+  }, items.map(function(tab) {
+    var isActive = activeTab === tab.id;
+    var color = isActive ? '#2563EB' : 'rgba(255,255,255,0.4)';
+    return React.createElement('button', {
+      key: tab.id,
+      onClick: function() { if (typeof onSelectTab === 'function') onSelectTab(tab.id); },
+      style: { flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, WebkitTapHighlightColor: 'transparent', userSelect: 'none' }
+    }, [
+      React.createElement('svg', { key: 'icon', width: 22, height: 22, viewBox: '0 0 24 24', fill: color }, React.createElement('path', { d: tab.path })),
+      React.createElement('span', { key: 'label', style: { fontSize: 10, fontWeight: isActive ? 700 : 500, color: color, letterSpacing: 0.1 } }, tab.label)
+    ]);
+  }));
+}`;

@@ -274,6 +274,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         try { await uploadPendingAvatar(data.user.id) } catch { /* non-fatal */ }
       }
 
+      // Signal page.tsx to show the post-login DataSyncScreen exactly once
+      if (typeof window !== 'undefined' && profile?.username) {
+        localStorage.setItem('spigens_just_signed_in', data.user.id)
+      }
+
       set({
         user: { id: data.user.id, email: data.user.email! },
         isAuthenticated: !!profile?.username,

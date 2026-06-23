@@ -28,7 +28,7 @@ export async function loadGenUIFromServer(userId: string): Promise<boolean> {
     }))
 
     const snapshot = (stateRes.data as any)?.snapshot ?? null
-    useUIStore.getState().hydrateFromServer(snapshot, versions)
+    useUIStore.getState().hydrateFromServer(snapshot, versions, userId)
     return true
   } catch (err) {
     console.error('GenUI load from server failed:', err)

@@ -5,9 +5,11 @@ import { capacitorStorage } from '@/lib/persistStorage'
 import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources } from '@/types'
 import { DEFAULT_HOMEHEADER_SOURCE, DEFAULT_HOMESEARCH_SOURCE, DEFAULT_BOTTOMNAV_SOURCE, DEFAULT_CHATTILE_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE, DEFAULT_MESSAGESTATUS_SOURCE, DEFAULT_TYPINGINDICATOR_SOURCE, DEFAULT_REPLYPREVIEW_SOURCE, DEFAULT_REPLYQUOTE_SOURCE, DEFAULT_MESSAGEREACTIONS_SOURCE, DEFAULT_REACTIONPICKER_SOURCE, DEFAULT_PROFILESCREEN_SOURCE, DEFAULT_CONTACTPROFILESCREEN_SOURCE, DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, DEFAULT_COMMUNITYLISTSCREEN_SOURCE, DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, DEFAULT_COMMUNITYCHATSCREEN_SOURCE, DEFAULT_COMMUNITYPROFILESCREEN_SOURCE } from '@/lib/defaultComponents'
 
-// set false for web dev/testing (fresh state every refresh)
-// set true for mobile builds (state persists via capacitor preferences)
-export const PERSISTENCE_ENABLED = false
+// local on-device cache for the GenUI design state (component sources, versions, styles).
+// ON for both web and mobile: Capacitor Preferences uses native storage on device and
+// falls back to localStorage in the browser, so the customized UI loads instantly on open
+// and works fully offline. The Supabase server sync runs on top of this as source of truth.
+export const PERSISTENCE_ENABLED = true
 
 // noop storage: reads return null (defaults always used), writes are silent no-ops
 // used when PERSISTENCE_ENABLED is false so there is no console spam
@@ -15,6 +17,29 @@ const devStorage: StateStorage = {
   getItem: (_name: string) => Promise.resolve(null),
   setItem: (_name: string, _value: string) => Promise.resolve(),
   removeItem: (_name: string) => Promise.resolve(),
+}
+
+// runtime / ephemeral componentState keys that must NOT be cached to local storage —
+// these are live app data (contacts, messages, open menus, typing, search text, the active
+// tab) that have to be fresh at runtime, never restored stale from disk. Contacts have their
+// own offline cache (offlineCache.ts). Any OTHER key (e.g. a GenUI-authored toggle the user
+// set through the panel) is design state and DOES get persisted so it survives offline.
+const RUNTIME_COMPONENT_STATE_KEYS = new Set<string>([
+  'feedContacts', 'chatMessages', 'activeMessageActions', 'dmDeleteTarget', 'reactionDetail',
+  'openReactionMessageId', 'otherUserTyping', 'replyingTo', 'searchQuery', 'activeTab', 'showSearch',
+  'profileSaveError', 'contactProfileData', 'contactMutualCommunities', 'highlightedMessageId',
+  'communityDeleteTarget',
+])
+
+function filterPersistentComponentState(cs: Record<string, any> | undefined): Record<string, any> {
+  if (!cs) return {}
+  const out: Record<string, any> = {}
+  for (const [k, v] of Object.entries(cs)) {
+    if (RUNTIME_COMPONENT_STATE_KEYS.has(k)) continue
+    if (k.startsWith('reactions:')) continue
+    out[k] = v
+  }
+  return out
 }
 
 // a snapshot is all persisted customization fields
@@ -93,11 +118,14 @@ interface UIStoreState extends UIOverrideState {
   // version timeline
   versions: GenUIVersion[]
   activeVersionId: string | null
+  // which user the locally-cached design belongs to (guards against showing one
+  // account's UI when a different account signs in on the same device)
+  ownerUserId: string | null
   getSnapshot: () => Snapshot
   applySnapshot: (snapshot: Snapshot) => void
   addVersion: (name: string) => GenUIVersion
   restoreVersion: (id: string) => void
-  hydrateFromServer: (snapshot: Snapshot | null, versions: GenUIVersion[]) => void
+  hydrateFromServer: (snapshot: Snapshot | null, versions: GenUIVersion[], userId: string) => void
 }
 
 const defaultState = {
@@ -162,6 +190,7 @@ const defaultState = {
   componentState: {} as Record<string, any>,
   versions: [] as GenUIVersion[],
   activeVersionId: null as string | null,
+  ownerUserId: null as string | null,
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -424,8 +453,8 @@ export const useUIStore = create<UIStoreState>()(
       }),
 
       // load server-saved state + versions on login (only overwrites when server has data)
-      hydrateFromServer: (snapshot, versions) => set(() => {
-        const next: Record<string, any> = { versions: versions ?? [] }
+      hydrateFromServer: (snapshot, versions, userId) => set(() => {
+        const next: Record<string, any> = { versions: versions ?? [], ownerUserId: userId }
         if (snapshot && Object.keys(snapshot).length > 0) Object.assign(next, snapshot)
         return next
       }),
@@ -454,9 +483,10 @@ export const useUIStore = create<UIStoreState>()(
         customComponents: state.customComponents,
         componentSources: state.componentSources,
         history: state.history,
-        componentState: state.componentState,
+        componentState: filterPersistentComponentState(state.componentState),
         versions: state.versions,
         activeVersionId: state.activeVersionId,
+        ownerUserId: state.ownerUserId,
       }),
     }
   )

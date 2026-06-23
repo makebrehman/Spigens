@@ -155,6 +155,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [genUIError, setGenUIError] = useState<string | null>(null)
   const [showReveal, setShowReveal] = useState(false)
+  const [genuiSynced, setGenuiSynced] = useState(false)
 
   const [longPressedContact, setLongPressedContact] = useState<Contact | null>(null)
   const longPressConfig = useUIStore(state => state.behaviorConfig.longPress)
@@ -178,6 +179,7 @@ export default function Home() {
   const canUndoUI = useUIStore(state => state.history.length > 0)
   const genuiVersions = useUIStore(state => state.versions)
   const genuiActiveVersionId = useUIStore(state => state.activeVersionId)
+  const genuiOwnerUserId = useUIStore(state => state.ownerUserId)
   const homeLayoutOrder = useUIStore(state => (state.componentState as any)?.['homeLayout.order']) as string[] | undefined
   const genUIEnabled = useNavStore(state => state.isGenUIEnabled())
   const navScreen = useNavStore(state => state.screen)
@@ -517,10 +519,15 @@ export default function Home() {
     return () => clearTimeout(t)
   }, [isAuthenticated, user?.id])
 
-  // Load this user's saved GenUI customizations + version history from the server
+  // Load this user's saved GenUI customizations + version history from the server.
+  // genuiSynced flips true once the first fetch settles (success OR failure) so the
+  // gate below knows the server has been consulted and can stop waiting.
   useEffect(() => {
-    if (!isAuthenticated || !user?.id) return
-    loadGenUIFromServer(user.id)
+    if (!isAuthenticated || !user?.id) { setGenuiSynced(false); return }
+    setGenuiSynced(false)
+    let active = true
+    loadGenUIFromServer(user.id).finally(() => { if (active) setGenuiSynced(true) })
+    return () => { active = false }
   }, [isAuthenticated, user?.id])
 
   // Mirror home-nav state into componentState so the editable home-chrome
@@ -737,8 +744,19 @@ export default function Home() {
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
 
-  if (!hydrated) {
-    return <div className="h-screen w-full bg-[#0a0a0a]" />
+  // Gate the home UI so the DEFAULT (un-customized) UI never flashes before this
+  // account's saved design loads. Rules:
+  //  - local cache belongs to THIS user and has versions -> show instantly (works offline)
+  //  - offline                                           -> show whatever the cache restored
+  //  - fresh device / different account / no cache, online -> wait for the server fetch
+  const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
+  const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
+  if (!hydrated || waitingForGenUI) {
+    return (
+      <div style={{ height: '100vh', width: '100%', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ fontSize: '32px', fontWeight: '800', color: '#fff', letterSpacing: '-1px' }}>spigen</div>
+      </div>
+    )
   }
 
   if (showSettings) {

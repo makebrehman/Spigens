@@ -211,6 +211,12 @@ export default function Home() {
       supabase.rpc('get_dm_unread_counts'),
       supabase.from('blocks').select('blocked_id')
     ]).then(([conversations, unreadRes, blocksRes]) => {
+      // If we came back offline while the requests were in flight, discard empty results
+      // so we don't wipe the cached contacts that are already showing.
+      if (!useNetworkStore.getState().isOnline && !conversations.length) {
+        setLoadingContacts(false)
+        return
+      }
       const unreadMap: Record<string, number> = {}
       ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
       const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
@@ -232,7 +238,7 @@ export default function Home() {
       })
       useContactStore.getState().setContacts(mappedContacts)
       useUIStore.getState().setComponentState('feedContacts', mappedContacts)
-      if (user?.id) cacheContacts(user.id, mappedContacts)
+      if (user?.id && mappedContacts.length) cacheContacts(user.id, mappedContacts)
       setLoadingContacts(false)
     })
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])

@@ -37,6 +37,14 @@ export function getCachedCommunityMessages(communityId: string): unknown[] | nul
   return load<unknown[]>(`cmsgs_${communityId}`)
 }
 
+export function cacheCommunityList(userId: string, list: unknown[]): void {
+  save(`community_list_${userId}`, list)
+}
+
+export function getCachedCommunityList(userId: string): unknown[] | null {
+  return load<unknown[]>(`community_list_${userId}`)
+}
+
 interface PendingMsg {
   id: string
   conversationId: string | null

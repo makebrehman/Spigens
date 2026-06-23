@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
+import { cacheCommunityList, getCachedCommunityList } from '@/lib/offlineCache'
 export interface CommunityListScreenProps {
   onBack: () => void
   onOpenCommunity: (community: any) => void
@@ -26,6 +27,13 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
   useEffect(() => {
     let cancelled = false
     let debounceTimer: any = null
+
+    // Seed from cache immediately so the list shows without waiting for the network
+    if (currentUserId) {
+      const cached = getCachedCommunityList(currentUserId)
+      if (cached?.length) useUIStore.getState().setComponentState('communityList', cached)
+    }
+
     const load = async () => {
       try {
         const { data: all, error: allError } = await supabase.from('communities').select('*').order('name')
@@ -60,6 +68,7 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
         }))
         if (!cancelled) {
           useUIStore.getState().setComponentState('communityList', withLastMsgs)
+          if (currentUserId) cacheCommunityList(currentUserId, withLastMsgs)
         }
       } catch (e) {
         console.error('Communities load exception:', e)
@@ -80,7 +89,7 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
         if (c && c.isMember) scheduleReload()
       })
       .subscribe()
-    return () => { cancelled = true; if (debounceTimer) clearTimeout(debounceTimer); supabase.removeChannel(channel); useUIStore.getState().setComponentState('communityList', []) }
+    return () => { cancelled = true; if (debounceTimer) clearTimeout(debounceTimer); supabase.removeChannel(channel) }
   }, [currentUserId])
   const onJoinCommunity = async (communityId: string) => {
     if (!currentUserId) return

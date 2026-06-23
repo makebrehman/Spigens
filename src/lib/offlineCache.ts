@@ -119,3 +119,23 @@ export function removePendingCommunityMessage(userId: string, msgId: string): vo
     localStorage.setItem(commPendingKey(userId), JSON.stringify(existing.filter(m => m.id !== msgId)))
   } catch { /* ignore */ }
 }
+
+export function clearUserCache(userId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const toRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k) continue
+      if (
+        k.startsWith(P) ||
+        k === `spigens_pk_${userId}` ||
+        k === `spigens_archived_${userId}` ||
+        k === `spigens_pinned_${userId}` ||
+        k === `spigens_muted_${userId}`
+      ) toRemove.push(k)
+    }
+    toRemove.forEach(k => localStorage.removeItem(k))
+    try { sessionStorage.removeItem(`spigens_synced_${userId}`) } catch { /* ignore */ }
+  } catch { /* ignore */ }
+}

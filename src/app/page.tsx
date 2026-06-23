@@ -34,6 +34,8 @@ import { CommunityChatScreen } from '@/components/CommunityChatScreen'
 import { CommunityProfileScreen } from '@/components/CommunityProfileScreen'
 import { ProfileImage } from '@/components/ProfileImage'
 import { SettingsScreen } from '@/components/SettingsScreen'
+import { App as CapApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 
 function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQuery: string, onSelectUser?: (user: any) => void, onAvatarTap?: (user: any) => void }) {
   const [results, setResults] = useState<any[]>([])
@@ -540,6 +542,31 @@ export default function Home() {
   // sources (homeHeader / homeSearch / bottomNav) can read it live.
   useEffect(() => { useUIStore.getState().setComponentState('activeTab', activeTab) }, [activeTab])
   useEffect(() => { useUIStore.getState().setComponentState('showSearch', showSearch) }, [showSearch])
+
+  // Hardware back button (Android / Capacitor)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    let handle: { remove: () => void } | null = null
+    const register = async () => {
+      handle = await CapApp.addListener('backButton', () => {
+        if (activeChatUser) {
+          setActiveChatUser(null)
+          if (returnToProfile) { setActiveCommunityProfile(returnToProfile); setReturnToProfile(null) }
+          else if (returnToCommunity) { setActiveCommunity(returnToCommunity); setReturnToCommunity(null) }
+          return
+        }
+        if (contactProfileUser) { setContactProfileUser(null); return }
+        if (activeCommunity) { setActiveCommunity(null); return }
+        if (activeCommunityProfile) { setActiveCommunityProfile(null); return }
+        if (showCreateCommunity) { setShowCreateCommunity(false); return }
+        if (showSettings) { setShowSettings(false); return }
+        if (activeTab !== 'chats') { setActiveTab('chats'); return }
+        CapApp.exitApp()
+      })
+    }
+    register()
+    return () => { handle?.remove() }
+  }, [activeChatUser, returnToProfile, returnToCommunity, contactProfileUser, activeCommunity, activeCommunityProfile, showCreateCommunity, showSettings, activeTab])
 
   useEffect(() => {
     useUIStore.getState().setBehaviorConfig({

@@ -10,7 +10,7 @@ import {
 } from '@/lib/encryption'
 import type { Database } from '@/lib/supabase'
 import { uploadPendingAvatar } from '@/lib/avatarUpload'
-import { cacheProfile, getCachedProfile } from '@/lib/offlineCache'
+import { cacheProfile, getCachedProfile, clearUserCache } from '@/lib/offlineCache'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -290,6 +290,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const user = get().user
     if (user) {
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
+      clearUserCache(user.id)
     }
     await supabase.auth.signOut()
     set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })

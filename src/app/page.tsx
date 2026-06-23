@@ -11,6 +11,7 @@ import { ChatScreen } from '@/components/ChatScreen'
 import { EmptyState } from '@/components/EmptyState'
 import { SearchBar } from '@/components/SearchBar'
 import GenUIPanel from '@/components/GenUIPanel'
+import { GenUIReveal } from '@/components/GenUIReveal'
 import { callGenUIForUpdate } from '@/lib/genuiClient'
 import { useVolumeKeyTrigger } from '@/hooks/useVolumeKeyTrigger'
 import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
@@ -153,6 +154,7 @@ export default function Home() {
   const [showGenUI, setShowGenUI] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [genUIError, setGenUIError] = useState<string | null>(null)
+  const [showReveal, setShowReveal] = useState(false)
 
   const [longPressedContact, setLongPressedContact] = useState<Contact | null>(null)
   const longPressConfig = useUIStore(state => state.behaviorConfig.longPress)
@@ -491,6 +493,7 @@ export default function Home() {
 
       setIsGenerating(false)
       setShowGenUI(false)
+      setShowReveal(true)
 
     } catch (err) {
       setGenUIError(err instanceof Error ? err.message : 'something went wrong')
@@ -790,6 +793,7 @@ export default function Home() {
           onOpenCommunityInvite={(meta: any, msgId: string) => { setActiveCommunityProfile({ id: meta.communityId, name: meta.communityName, type: meta.communityType || 'public', avatar_url: meta.avatarUrl || null, description: meta.description || null, member_count: meta.memberCount || 0, isMember: false, userRole: null, _inviteMessageId: msgId }) }}
         />
         <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
+        {showReveal && <GenUIReveal onDone={() => setShowReveal(false)} />}
       </>
     )
   }
@@ -807,6 +811,7 @@ export default function Home() {
           onBack={() => setSelectedContactId(null)}
         />
         <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
+        {showReveal && <GenUIReveal onDone={() => setShowReveal(false)} />}
       </>
     )
   }

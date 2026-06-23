@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Mic, X, ArrowUp, History, Undo2, RotateCcw, ChevronLeft, Check, Clock, Sparkles } from 'lucide-react'
+import { Mic, X, ArrowUp, History, Undo2, RotateCcw, ChevronLeft, Check, Clock } from 'lucide-react'
 import { startVoiceInput, type VoiceSession } from '@/lib/voiceInput'
 import type { GenUIVersion } from '@/stores/uiStore'
 
@@ -18,6 +18,10 @@ export interface GenUIPanelProps {
   activeVersionId?: string | null
   onRestoreVersion?: (id: string) => void
 }
+
+const BLUE = '#2563EB'
+// continuously flowing gradient (blue → cyan → teal → green → blue) — no purple
+const FLOW_GRADIENT = 'linear-gradient(90deg, #2563EB, #06B6D4, #22D3EE, #10B981, #38BDF8, #2563EB)'
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -61,7 +65,6 @@ export default function GenUIPanel({
     }
   }, [isOpen, view])
 
-  // tear down any active voice session when closing
   useEffect(() => {
     if (!isOpen && voiceRef.current) {
       voiceRef.current.stop()
@@ -101,32 +104,39 @@ export default function GenUIPanel({
     }
   }
 
+  const canSend = !!inputValue.trim() && !isGenerating
+
   const submit = () => {
-    if (inputValue.trim() && !isGenerating) {
+    if (canSend) {
       if (voiceRef.current) { voiceRef.current.stop(); voiceRef.current = null; setIsListening(false) }
       onGenerate(inputValue)
       setInputValue('')
     }
   }
 
-  const borderStyle = {
-    backgroundSize: '300% 300%',
-    animation: 'gradient-border-flow 2s ease infinite, gen-ui-pulse 1.5s ease-in-out infinite',
-    zIndex: 9998,
-    pointerEvents: 'none' as const,
-  }
-
-  const accent = '#7C3AED'
-
   return (
     <>
+      {/* Generating border — thick, prominent, glowing flow around the whole screen */}
       {isGenerating && (
-        <>
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: '4px', background: 'linear-gradient(90deg, #7C3AED, #2563EB, #10B981, #F59E0B, #EF4444, #7C3AED)', ...borderStyle }} />
-          <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: '4px', background: 'linear-gradient(90deg, #7C3AED, #2563EB, #10B981, #F59E0B, #EF4444, #7C3AED)', ...borderStyle }} />
-          <div style={{ position: 'fixed', top: 0, bottom: 0, left: 0, width: '4px', background: 'linear-gradient(180deg, #7C3AED, #2563EB, #10B981, #F59E0B, #EF4444, #7C3AED)', ...borderStyle }} />
-          <div style={{ position: 'fixed', top: 0, bottom: 0, right: 0, width: '4px', background: 'linear-gradient(180deg, #7C3AED, #2563EB, #10B981, #F59E0B, #EF4444, #7C3AED)', ...borderStyle }} />
-        </>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9998, pointerEvents: 'none' }}>
+          {(['top', 'bottom', 'left', 'right'] as const).map((side) => {
+            const horizontal = side === 'top' || side === 'bottom'
+            return (
+              <div
+                key={side}
+                style={{
+                  position: 'absolute',
+                  [side]: 0,
+                  ...(horizontal ? { left: 0, right: 0, height: 7 } : { top: 0, bottom: 0, width: 7 }),
+                  background: FLOW_GRADIENT,
+                  backgroundSize: '300% 300%',
+                  animation: 'gradient-border-flow 1.6s linear infinite',
+                  boxShadow: '0 0 22px 4px rgba(37,99,235,0.55)',
+                }}
+              />
+            )
+          })}
+        </div>
       )}
 
       <div
@@ -157,9 +167,7 @@ export default function GenUIPanel({
           <>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #2563EB)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Sparkles size={18} color="#fff" />
-              </div>
+              <img src="/spigens_logo.png" alt="Spigens" style={{ width: 34, height: 34, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#F3F4F6', lineHeight: 1.2 }}>Customize your UI</div>
                 <div style={{ fontSize: 12, color: '#8A8A8A', marginTop: 1 }}>Describe a change in plain words</div>
@@ -189,7 +197,7 @@ export default function GenUIPanel({
               <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
                 <button
                   onClick={() => setView('versions')}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(124,58,237,0.14)', color: '#c4b5fd', border: '1px solid rgba(124,58,237,0.25)', borderRadius: 9, padding: '7px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(37,99,235,0.16)', color: '#93c5fd', border: '1px solid rgba(37,99,235,0.3)', borderRadius: 9, padding: '7px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                 >
                   <History size={15} />
                   Versions{versions.length ? ` · ${versions.length}` : ''}
@@ -212,80 +220,95 @@ export default function GenUIPanel({
               </div>
             )}
 
-            {/* Pro text field */}
+            {/* Pro text field with continuously-flowing animated gradient border */}
             <div
               style={{
-                background: '#0f0f10',
-                border: `1.5px solid ${focused ? accent : 'rgba(255,255,255,0.08)'}`,
-                borderRadius: 16,
-                padding: '12px 12px 10px 14px',
-                transition: 'border-color 0.18s, box-shadow 0.18s',
-                boxShadow: focused ? `0 0 0 3px rgba(124,58,237,0.15)` : 'none',
+                borderRadius: 18,
+                padding: 2,
+                background: FLOW_GRADIENT,
+                backgroundSize: '300% 300%',
+                animation: 'gradient-border-flow 5s linear infinite',
+                boxShadow: focused ? '0 0 0 4px rgba(37,99,235,0.18)' : 'none',
+                transition: 'box-shadow 0.2s',
               }}
             >
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={(e) => { setInputValue(e.target.value); autoGrow(e.target) }}
-                onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submit() }
-                }}
-                disabled={isGenerating}
-                rows={2}
-                placeholder="e.g. make the chat tiles a purple gradient… move search to the bottom… add a bell icon to the top bar…"
-                style={{
-                  width: '100%',
-                  minHeight: 52,
-                  maxHeight: 180,
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#F3F4F6',
-                  fontSize: 15,
-                  lineHeight: 1.45,
-                  resize: 'none',
-                  outline: 'none',
-                  fontFamily: 'inherit',
-                  display: 'block',
-                }}
-              />
-
-              {/* Field footer */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                <button
-                  onClick={toggleVoice}
+              <div style={{ background: '#0f0f10', borderRadius: 16, padding: '12px 12px 10px 14px' }}>
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={(e) => { setInputValue(e.target.value); autoGrow(e.target) }}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submit() }
+                  }}
                   disabled={isGenerating}
-                  title="Voice typing"
+                  rows={2}
+                  placeholder="e.g. make the chat tiles a blue gradient… move search to the bottom… add a bell icon to the top bar…"
                   style={{
-                    width: 38, height: 38, borderRadius: '50%', flexShrink: 0, border: 'none', cursor: isGenerating ? 'default' : 'pointer',
-                    background: isListening ? '#EF4444' : 'rgba(255,255,255,0.07)',
-                    color: isListening ? '#fff' : '#9ca3af',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    boxShadow: isListening ? '0 0 0 6px rgba(239,68,68,0.18)' : 'none',
-                    transition: 'background 0.15s, box-shadow 0.15s',
+                    width: '100%',
+                    minHeight: 52,
+                    maxHeight: 180,
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#F3F4F6',
+                    fontSize: 15,
+                    lineHeight: 1.45,
+                    resize: 'none',
+                    outline: 'none',
+                    fontFamily: 'inherit',
+                    display: 'block',
                   }}
-                >
-                  <Mic size={18} />
-                </button>
+                />
 
-                <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: isListening ? '#f87171' : '#4A4A4A' }}>
-                  {isListening ? 'Listening… tap mic to stop' : `${inputValue.length} chars`}
+                {/* Field footer */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                  <button
+                    onClick={toggleVoice}
+                    disabled={isGenerating}
+                    title="Voice typing"
+                    style={{
+                      width: 38, height: 38, borderRadius: '50%', flexShrink: 0, border: 'none', cursor: isGenerating ? 'default' : 'pointer',
+                      background: isListening ? '#EF4444' : 'rgba(255,255,255,0.07)',
+                      color: isListening ? '#fff' : '#9ca3af',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: isListening ? '0 0 0 6px rgba(239,68,68,0.18)' : 'none',
+                      transition: 'background 0.15s, box-shadow 0.15s',
+                    }}
+                  >
+                    <Mic size={18} />
+                  </button>
+
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: isListening ? '#f87171' : '#4A4A4A' }}>
+                    {isListening ? 'Listening… tap mic to stop' : `${inputValue.length} chars`}
+                  </div>
+
+                  {/* Generate button — identical dimensions whether empty or filled */}
+                  <button
+                    onClick={submit}
+                    disabled={!canSend}
+                    style={{
+                      height: 40,
+                      borderRadius: 20,
+                      padding: '0 18px',
+                      border: 'none',
+                      background: BLUE,
+                      color: '#fff',
+                      fontSize: 14,
+                      fontWeight: 700,
+                      cursor: canSend ? 'pointer' : 'default',
+                      opacity: canSend ? 1 : 0.45,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                      transition: 'opacity 0.15s',
+                    }}
+                  >
+                    {isGenerating ? 'Generating…' : (<><span>Generate</span><ArrowUp size={16} /></>)}
+                  </button>
                 </div>
-
-                <button
-                  onClick={submit}
-                  disabled={isGenerating || !inputValue.trim()}
-                  style={{
-                    height: 40, minWidth: 40, borderRadius: 20, padding: inputValue.trim() ? '0 16px' : '0', border: 'none',
-                    background: (isGenerating || !inputValue.trim()) ? '#2A2A2A' : 'linear-gradient(135deg, #7C3AED, #2563EB)',
-                    color: (isGenerating || !inputValue.trim()) ? '#8A8A8A' : '#fff',
-                    fontSize: 14, fontWeight: 700, cursor: (isGenerating || !inputValue.trim()) ? 'default' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexShrink: 0,
-                  }}
-                >
-                  {isGenerating ? 'Generating…' : (<><span>Generate</span><ArrowUp size={16} /></>)}
-                </button>
               </div>
             </div>
 
@@ -318,7 +341,6 @@ export default function GenUIPanel({
             </div>
 
             <div style={{ maxHeight: '52vh', overflowY: 'auto', margin: '0 -4px', padding: '0 4px' }}>
-              {/* Default baseline entry */}
               <VersionRow
                 title="Default"
                 subtitle="The original, unmodified UI"
@@ -356,18 +378,18 @@ function VersionRow({ title, subtitle, active, onClick }: { title: string; subti
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
         padding: '11px 12px', marginBottom: 8, borderRadius: 12, cursor: 'pointer',
-        background: active ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.035)',
-        border: `1px solid ${active ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.06)'}`,
+        background: active ? 'rgba(37,99,235,0.16)' : 'rgba(255,255,255,0.035)',
+        border: `1px solid ${active ? 'rgba(37,99,235,0.45)' : 'rgba(255,255,255,0.06)'}`,
       }}
     >
-      <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: active ? 'linear-gradient(135deg, #7C3AED, #2563EB)' : 'rgba(255,255,255,0.06)', color: active ? '#fff' : '#8A8A8A' }}>
+      <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: active ? '#2563EB' : 'rgba(255,255,255,0.06)', color: active ? '#fff' : '#8A8A8A' }}>
         {active ? <Check size={17} /> : <Clock size={16} />}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#E8E8E8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
         <div style={{ fontSize: 12, color: '#7a7a7a', marginTop: 1 }}>{subtitle}</div>
       </div>
-      {active && <span style={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd', flexShrink: 0 }}>CURRENT</span>}
+      {active && <span style={{ fontSize: 11, fontWeight: 700, color: '#93c5fd', flexShrink: 0 }}>CURRENT</span>}
     </button>
   )
 }

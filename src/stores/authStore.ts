@@ -10,6 +10,7 @@ import {
 } from '@/lib/encryption'
 import type { Database } from '@/lib/supabase'
 import { uploadPendingAvatar } from '@/lib/avatarUpload'
+import { cacheProfile, getCachedProfile } from '@/lib/offlineCache'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -30,6 +31,29 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<{ error: string | null; needsVerification?: boolean }>
   signOut: () => Promise<void>
   loadProfile: (userId: string) => Promise<void>
+}
+
+function getLocalAuthSession(): { userId: string; email: string } | null {
+  if (typeof window === 'undefined') return null
+  try {
+    let raw: string | null = null
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    if (url) {
+      const match = url.match(/https?:\/\/([^.]+)\.supabase\.co/)
+      if (match) raw = localStorage.getItem(`sb-${match[1]}-auth-token`)
+    }
+    if (!raw) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) { raw = localStorage.getItem(k); break }
+      }
+    }
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const user = parsed?.user
+    if (!user?.id || !user?.email) return null
+    return { userId: user.id, email: user.email }
+  } catch { return null }
 }
 
 async function restorePrivateKey(
@@ -70,13 +94,31 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   initialize: async () => {
     set({ isLoading: true })
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user) {
-        await get().loadProfile(session.user.id)
-        const profile = get().profile
-        const localPk = loadPrivateKey(session.user.id)
+      let userId: string | null = null
+      let email: string | null = null
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) { userId = session.user.id; email = session.user.email! }
+      } catch { /* offline — fall through */ }
+
+      // Offline fallback: read the session token Supabase stored in localStorage
+      if (!userId) {
+        const local = getLocalAuthSession()
+        if (local) { userId = local.userId; email = local.email }
+      }
+
+      if (userId && email) {
+        await get().loadProfile(userId)
+        let profile = get().profile
+        // If network load failed (offline), fall back to cached profile
+        if (!profile) {
+          profile = getCachedProfile(userId) as Profile | null
+          if (profile) set({ profile })
+        }
+        const localPk = loadPrivateKey(userId)
         set({
-          user: { id: session.user.id, email: session.user.email! },
+          user: { id: userId, email },
           isAuthenticated: !!profile?.username,
           privateKey: profile?.username ? localPk : null,
         })
@@ -86,7 +128,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
 
     supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
         await get().loadProfile(session.user.id)
         const profile = get().profile
         const localPk = loadPrivateKey(session.user.id)
@@ -255,6 +297,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   loadProfile: async (userId: string) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    if (data) set({ profile: data })
+    if (data) { set({ profile: data }); cacheProfile(userId, data) }
   },
 }))

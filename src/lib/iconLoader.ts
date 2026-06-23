@@ -2,42 +2,55 @@
 
 import { useState, useEffect } from 'react'
 
-// cache fetched icon svg markup by name
+const PREFIX = 'spigens_icon_'
+
+// in-memory cache for the current session
 const iconCache = new Map<string, string>()
 // track in-flight requests to avoid duplicate fetches
 const pendingFetches = new Map<string, Promise<string | null>>()
 
+function saveIconToStorage(name: string, svg: string): void {
+  if (typeof window === 'undefined') return
+  try { localStorage.setItem(PREFIX + name, svg) } catch { /* storage full */ }
+}
+
+function loadIconFromStorage(name: string): string | null {
+  if (typeof window === 'undefined') return null
+  try { return localStorage.getItem(PREFIX + name) } catch { return null }
+}
+
 /**
  * fetches a lucide icon's raw svg markup by name.
- * e.g. fetchLucideIcon("heart") -> "<svg ...>...</svg>"
- * returns null if the icon doesn't exist (404) or fetch fails.
+ * 3-tier lookup: memory → localStorage → network (unpkg).
+ * returns null if the icon doesn't exist or fetch fails (offline + not cached).
  */
 export async function fetchLucideIcon(name: string): Promise<string | null> {
   if (!name) return null
 
   const clean = name.trim().toLowerCase()
 
-  // return cached if available
-  if (iconCache.has(clean)) {
-    return iconCache.get(clean)!
+  // 1. memory cache
+  if (iconCache.has(clean)) return iconCache.get(clean)!
+
+  // 2. localStorage cache (survives page reloads and offline sessions)
+  const stored = loadIconFromStorage(clean)
+  if (stored) {
+    iconCache.set(clean, stored)
+    return stored
   }
 
-  // return in-flight promise if already fetching
-  if (pendingFetches.has(clean)) {
-    return pendingFetches.get(clean)!
-  }
+  // 3. in-flight dedup
+  if (pendingFetches.has(clean)) return pendingFetches.get(clean)!
 
   const fetchPromise = (async () => {
     try {
       const url = `https://unpkg.com/lucide-static@latest/icons/${clean}.svg`
       const res = await fetch(url)
-      if (!res.ok) {
-        return null // icon doesn't exist
-      }
+      if (!res.ok) return null
       let svg = await res.text()
-      // ensure the svg uses currentColor so it can be styled
       svg = svg.replace(/stroke="[^"]*"/g, 'stroke="currentColor"')
       iconCache.set(clean, svg)
+      saveIconToStorage(clean, svg)
       return svg
     } catch {
       return null
@@ -52,22 +65,19 @@ export async function fetchLucideIcon(name: string): Promise<string | null> {
 
 /**
  * react hook to use a lucide icon by name.
- * returns the svg markup string, or null while loading / if not found.
+ * initialises synchronously from cache so there is no flash on reload.
  */
 export function useLucideIcon(name: string | undefined): string | null {
-  const [svg, setSvg] = useState<string | null>(
-    name ? iconCache.get(name.trim().toLowerCase()) ?? null : null
-  )
+  const [svg, setSvg] = useState<string | null>(() => {
+    if (!name) return null
+    const clean = name.trim().toLowerCase()
+    return iconCache.get(clean) ?? loadIconFromStorage(clean) ?? null
+  })
 
   useEffect(() => {
-    if (!name) {
-      setTimeout(() => setSvg(null), 0)
-      return
-    }
+    if (!name) { setSvg(null); return }
     let active = true
-    fetchLucideIcon(name).then(result => {
-      if (active) setSvg(result)
-    })
+    fetchLucideIcon(name).then(result => { if (active) setSvg(result) })
     return () => { active = false }
   }, [name])
 

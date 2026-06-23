@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useNetworkStore } from '@/stores/networkStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 
@@ -13,6 +14,9 @@ interface SettingsScreenProps {
 export function SettingsScreen({ onBack }: SettingsScreenProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.settingsScreen ?? null
+  const user = useAuthStore(state => state.user)
+  const profile = useAuthStore(state => state.profile)
+  const networkIsOnline = useNetworkStore(state => state.isOnline)
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -55,6 +59,12 @@ export function SettingsScreen({ onBack }: SettingsScreenProps) {
       useUIStore.getState().setComponentState('settingsUnblockSuccess', null)
     }
   }, [])
+
+  // Keep profile data in componentState so GenUI sources can access it via useComponentState.
+  useEffect(() => {
+    useUIStore.getState().setComponentState('settingsProfile', profile ?? null)
+    useUIStore.getState().setComponentState('settingsUser', user ?? null)
+  }, [profile, user])
 
   const onToggleNotifs = () => {
     const cur = (useUIStore.getState().componentState as any)?.settingsNotifsEnabled ?? true
@@ -137,6 +147,9 @@ export function SettingsScreen({ onBack }: SettingsScreenProps) {
         onLogout,
         onDeleteAccount,
         onChangePassword,
+        profile,
+        user,
+        networkIsOnline,
       }}
     />
   )

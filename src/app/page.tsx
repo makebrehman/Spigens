@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { useContactStore } from '@/stores/contactStore'
 import { useUIStore } from '@/stores/uiStore'
@@ -26,6 +26,7 @@ import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
 import { cacheContacts, getCachedContacts } from '@/lib/offlineCache'
+import { initLocalDb } from '@/lib/localDb'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
 import { CommunityListScreen } from '@/components/CommunityListScreen'
@@ -34,6 +35,9 @@ import { CommunityChatScreen } from '@/components/CommunityChatScreen'
 import { CommunityProfileScreen } from '@/components/CommunityProfileScreen'
 import { ProfileImage } from '@/components/ProfileImage'
 import { SettingsScreen } from '@/components/SettingsScreen'
+import { DataSyncScreen } from '@/components/DataSyncScreen'
+import { App as CapApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 
 function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQuery: string, onSelectUser?: (user: any) => void, onAvatarTap?: (user: any) => void }) {
   const [results, setResults] = useState<any[]>([])
@@ -95,6 +99,10 @@ function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQ
 }
 
 export default function Home() {
+  // tracks which userIds have completed the post-login data sync in this session
+  const syncedUsers = useRef<Set<string>>(new Set())
+  const [syncPhase, setSyncPhase] = useState<'pending' | 'syncing' | 'done'>('pending')
+
   const [showSearch, setShowSearch] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [hydrated, setHydrated] = useState(false)
@@ -131,13 +139,20 @@ export default function Home() {
     }
   }, [])
 
-  // initialize auth on mount
+  // initialize local DB then auth on mount
   useEffect(() => {
-    useAuthStore.getState().initialize()
+    initLocalDb().finally(() => useAuthStore.getState().initialize())
   }, [])
 
   const { isAuthenticated, isLoading: authLoading, user, profile, privateKey } = useAuthStore()
   const { isOnline, setOnline } = useNetworkStore()
+
+  // Trigger post-login sync once per user per session
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id || !profile?.username) return
+    if (syncedUsers.current.has(user.id)) { setSyncPhase('done'); return }
+    setSyncPhase('syncing')
+  }, [isAuthenticated, user?.id, profile?.username])
 
   // Track online/offline state globally
   useEffect(() => {
@@ -192,12 +207,12 @@ export default function Home() {
   }, [isAuthenticated, profile?.public_key, navScreen, navigateTo])
 
   // load conversations on mount and when returning from chat
-  const fetchConversations = useCallback(() => {
+  const fetchConversations = useCallback(async () => {
     if (!isAuthenticated || !user?.id || activeChatUser) return
 
     // Show cached contacts immediately while network loads
     if (user?.id) {
-      const cached = getCachedContacts(user.id) as Contact[] | null
+      const cached = await getCachedContacts(user.id)
       if (cached?.length) {
         useContactStore.getState().setContacts(cached)
         useUIStore.getState().setComponentState('feedContacts', cached)
@@ -206,35 +221,41 @@ export default function Home() {
 
     if (!isOnline) { setLoadingContacts(false); return } // offline: cached contacts are enough
 
-    Promise.all([
+    const [conversations, unreadRes, blocksRes] = await Promise.all([
       loadConversations(user.id, privateKey ?? null),
       supabase.rpc('get_dm_unread_counts'),
       supabase.from('blocks').select('blocked_id')
-    ]).then(([conversations, unreadRes, blocksRes]) => {
-      const unreadMap: Record<string, number> = {}
-      ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
-      const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
-      const mappedContacts: Contact[] = conversations.filter(c => !blockedSet.has(c.otherProfile.id)).map(c => {
-        const dt = new Date(c.lastMessageTime)
-        const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        return {
-          id: c.otherProfile.id,
-          name: c.otherProfile.display_name || c.otherProfile.username || 'Unknown',
-          avatarInitials: (c.otherProfile.display_name || c.otherProfile.username || '?')[0].toUpperCase(),
-          avatarColor: '#555',
-          avatarUrl: c.otherProfile.avatar_url,
-          lastMessage: c.lastMessage,
-          lastMessageTime: timeStr,
-          unreadCount: unreadMap[c.otherProfile.id] || 0,
-          isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
-          rawProfile: c.otherProfile
-        }
-      })
-      useContactStore.getState().setContacts(mappedContacts)
-      useUIStore.getState().setComponentState('feedContacts', mappedContacts)
-      if (user?.id) cacheContacts(user.id, mappedContacts)
+    ])
+
+    // If we came back offline while the requests were in flight, discard empty results
+    // so we don't wipe the cached contacts that are already showing.
+    if (!useNetworkStore.getState().isOnline && !conversations.length) {
       setLoadingContacts(false)
+      return
+    }
+    const unreadMap: Record<string, number> = {}
+    ;(((unreadRes as any).data) || []).forEach((r: any) => { unreadMap[r.other_user_id] = Number(r.unread_count) })
+    const blockedSet = new Set((((blocksRes as any).data) || []).map((b: any) => b.blocked_id))
+    const mappedContacts: Contact[] = conversations.filter(c => !blockedSet.has(c.otherProfile.id)).map(c => {
+      const dt = new Date(c.lastMessageTime)
+      const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      return {
+        id: c.otherProfile.id,
+        name: c.otherProfile.display_name || c.otherProfile.username || 'Unknown',
+        avatarInitials: (c.otherProfile.display_name || c.otherProfile.username || '?')[0].toUpperCase(),
+        avatarColor: '#555',
+        avatarUrl: c.otherProfile.avatar_url,
+        lastMessage: c.lastMessage,
+        lastMessageTime: timeStr,
+        unreadCount: unreadMap[c.otherProfile.id] || 0,
+        isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
+        rawProfile: c.otherProfile
+      }
     })
+    useContactStore.getState().setContacts(mappedContacts)
+    useUIStore.getState().setComponentState('feedContacts', mappedContacts)
+    if (user?.id && mappedContacts.length) await cacheContacts(user.id, mappedContacts)
+    setLoadingContacts(false)
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
 
   useEffect(() => {
@@ -244,11 +265,12 @@ export default function Home() {
   // Seed cached contacts instantly + load archived/pinned prefs as soon as user is known
   useEffect(() => {
     if (!user?.id) return
-    const cached = getCachedContacts(user.id) as Contact[] | null
-    if (cached?.length) {
-      useContactStore.getState().setContacts(cached)
-      useUIStore.getState().setComponentState('feedContacts', cached)
-    }
+    getCachedContacts(user.id).then(cached => {
+      if (cached?.length) {
+        useContactStore.getState().setContacts(cached)
+        useUIStore.getState().setComponentState('feedContacts', cached)
+      }
+    })
     try {
       const arch: string[] = JSON.parse(localStorage.getItem(`spigens_archived_${user.id}`) || '[]')
       setArchivedIds(new Set(arch))
@@ -535,6 +557,31 @@ export default function Home() {
   useEffect(() => { useUIStore.getState().setComponentState('activeTab', activeTab) }, [activeTab])
   useEffect(() => { useUIStore.getState().setComponentState('showSearch', showSearch) }, [showSearch])
 
+  // Hardware back button (Android / Capacitor)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    let handle: { remove: () => void } | null = null
+    const register = async () => {
+      handle = await CapApp.addListener('backButton', () => {
+        if (activeChatUser) {
+          setActiveChatUser(null)
+          if (returnToProfile) { setActiveCommunityProfile(returnToProfile); setReturnToProfile(null) }
+          else if (returnToCommunity) { setActiveCommunity(returnToCommunity); setReturnToCommunity(null) }
+          return
+        }
+        if (contactProfileUser) { setContactProfileUser(null); return }
+        if (activeCommunity) { setActiveCommunity(null); return }
+        if (activeCommunityProfile) { setActiveCommunityProfile(null); return }
+        if (showCreateCommunity) { setShowCreateCommunity(false); return }
+        if (showSettings) { setShowSettings(false); return }
+        if (activeTab !== 'chats') { setActiveTab('chats'); return }
+        CapApp.exitApp()
+      })
+    }
+    register()
+    return () => { handle?.remove() }
+  }, [activeChatUser, returnToProfile, returnToCommunity, contactProfileUser, activeCommunity, activeCommunityProfile, showCreateCommunity, showSettings, activeTab])
+
   useEffect(() => {
     useUIStore.getState().setBehaviorConfig({
       attachButton: {
@@ -744,6 +791,21 @@ export default function Home() {
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
+
+  // Post-login data sync — runs once per user per session
+  if (syncPhase === 'syncing' && user?.id) {
+    return (
+      <DataSyncScreen
+        userId={user.id}
+        privateKey={privateKey}
+        isOnline={isOnline}
+        onDone={() => {
+          syncedUsers.current.add(user.id)
+          setSyncPhase('done')
+        }}
+      />
+    )
+  }
 
   // Gate the home UI so the DEFAULT (un-customized) UI never flashes before this
   // account's saved design loads. Rules:
@@ -1148,7 +1210,7 @@ export default function Home() {
                   const filtered = useContactStore.getState().contacts.filter(x => x.id !== c.id)
                   useContactStore.getState().setContacts(filtered)
                   useUIStore.getState().setComponentState('feedContacts', filtered)
-                  if (user?.id) cacheContacts(user.id, filtered)
+                  if (user?.id) void cacheContacts(user.id, filtered)
                   setPendingDeleteContact(null)
                 }}
                 style={{ flex: 1, padding: 12, borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}

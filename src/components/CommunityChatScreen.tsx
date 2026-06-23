@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
-import { cacheCommunityMessages, getCachedCommunityMessages, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
+import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
@@ -72,15 +72,16 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     })
     supabase.from('community_members').select('user_id, profiles(id, display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active')
       .then(({ data }: any) => { const map: Record<string,any> = {}; data?.forEach((m: any) => { if (m.profiles) map[m.user_id] = m.profiles }); memberProfilesRef.current = map })
-    const cachedMsgs = getCachedCommunityMessages(communityId)
-    if (cachedMsgs?.length) {
-      useUIStore.getState().setComponentState('communityMessages', cachedMsgs)
-    }
+    getCachedCommunityMessages(communityId).then(cachedMsgs => {
+      if (cachedMsgs?.length) {
+        useUIStore.getState().setComponentState('communityMessages', cachedMsgs)
+      }
+    })
 
     if (!networkIsOnline) return
 
     supabase.from('community_messages').select('id, community_id, sender_id, content, message_type, metadata, created_at, reply_to, deleted_at, profiles!sender_id(display_name, username, avatar_url)').eq('community_id', communityId).order('created_at', { ascending: true }).limit(100)
-      .then(({ data }: any) => {
+      .then(async ({ data }: any) => {
         if (data) {
           data.forEach((row: any) => {
             if (row.sender_id && row.profiles) {
@@ -92,7 +93,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
             }
           })
           const formatted = data.map(formatMsg)
-          cacheCommunityMessages(communityId, formatted)
+          await cacheCommunityMessages(communityId, formatted)
           useUIStore.getState().setComponentState('communityMessages', formatted)
           if (data && data.length > 0) {
             const msgIds = data.map((r: any) => r.id)
@@ -139,7 +140,10 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
         }
         const msg = formatMsg(row)
         const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-        if (!current.some((m: any) => m.id === msg.id)) useUIStore.getState().setComponentState('communityMessages', [...current, msg])
+        if (!current.some((m: any) => m.id === msg.id)) {
+          void upsertCommunityMessage(communityId, row)
+          useUIStore.getState().setComponentState('communityMessages', [...current, msg])
+        }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'community_messages', filter: 'community_id=eq.' + communityId }, (payload: any) => {
         const row = payload.new
@@ -187,14 +191,18 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
 
   useEffect(() => {
     if (!networkIsOnline || !currentUserId) return
-    const pending = getPendingCommunityMessages(currentUserId).filter(m => m.communityId === communityId)
-    if (!pending.length) return
-    pending.forEach(async pm => {
-      const { error } = await supabase.from('community_messages').insert({ id: pm.id, community_id: pm.communityId, sender_id: currentUserId, content: pm.content, reply_to: pm.replyToId, created_at: pm.createdAt })
-      if (!error) {
-        removePendingCommunityMessage(currentUserId, pm.id)
+    const flushPending = async () => {
+      const allPending = await getPendingCommunityMessages(currentUserId)
+      const pending = allPending.filter(m => m.communityId === communityId)
+      if (!pending.length) return
+      for (const pm of pending) {
+        const { error } = await supabase.from('community_messages').insert({ id: pm.id, community_id: pm.communityId, sender_id: currentUserId, content: pm.content, reply_to: pm.replyToId, created_at: pm.createdAt })
+        if (!error) {
+          await removePendingCommunityMessage(currentUserId, pm.id)
+        }
       }
-    })
+    }
+    flushPending()
   }, [networkIsOnline, communityId, currentUserId])
 
   const sendMessage = async (content: string) => {
@@ -207,7 +215,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     useUIStore.getState().setComponentState('communityMessages', [...current, optimistic])
     useUIStore.getState().setComponentState('communityReplyingTo', null)
     if (!networkIsOnline) {
-      savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: content.trim(), replyToId: replyingTo?.id || null, createdAt })
+      await savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: content.trim(), replyToId: replyingTo?.id || null, createdAt })
       return
     }
     const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })

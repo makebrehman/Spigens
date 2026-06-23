@@ -50,7 +50,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
           isOnline: false,
           rawProfile: c.otherProfile,
         }))
-        if (contacts.length) cacheContacts(userId, contacts)
+        if (contacts.length) await cacheContacts(userId, contacts)
 
         // Step 2 — last 50 messages for every conversation (25 → 65 %)
         setLabel('syncing messages...')
@@ -62,7 +62,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             .eq('conversation_id', conversations[i].conversationId)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) cacheMessages(conversations[i].conversationId, [...data].reverse())
+          if (data?.length) await cacheMessages(conversations[i].conversationId, [...data].reverse())
           setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
         }
 
@@ -82,7 +82,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         const allComms = commRes.data || []
         const myIds = new Set((memRes.data || []).map((m: any) => m.community_id as string))
         const myComms = allComms.filter((c: any) => myIds.has(c.id))
-        if (myComms.length) cacheCommunityList(userId, myComms)
+        if (myComms.length) await cacheCommunityList(userId, myComms)
         setProgress(80)
 
         // Step 4 — last 50 messages for every community (80 → 97 %)
@@ -95,7 +95,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             .eq('community_id', myComms[i].id)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) cacheCommunityMessages(myComms[i].id, [...data].reverse())
+          if (data?.length) await cacheCommunityMessages(myComms[i].id, [...data].reverse())
           setProgress(80 + Math.round(((i + 1) / Math.max(myComms.length, 1)) * 17))
         }
 

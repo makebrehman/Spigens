@@ -30,8 +30,9 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
 
     // Seed from cache immediately so the list shows without waiting for the network
     if (currentUserId) {
-      const cached = getCachedCommunityList(currentUserId)
-      if (cached?.length) useUIStore.getState().setComponentState('communityList', cached)
+      getCachedCommunityList(currentUserId).then(cached => {
+        if (cached?.length) useUIStore.getState().setComponentState('communityList', cached)
+      })
     }
 
     const load = async () => {
@@ -68,7 +69,7 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
         }))
         if (!cancelled) {
           useUIStore.getState().setComponentState('communityList', withLastMsgs)
-          if (currentUserId) cacheCommunityList(currentUserId, withLastMsgs)
+          if (currentUserId) void cacheCommunityList(currentUserId, withLastMsgs)
         }
       } catch (e) {
         console.error('Communities load exception:', e)

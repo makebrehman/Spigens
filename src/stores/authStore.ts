@@ -113,7 +113,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         let profile = get().profile
         // If network load failed (offline), fall back to cached profile
         if (!profile) {
-          profile = getCachedProfile(userId) as Profile | null
+          profile = await getCachedProfile(userId) as Profile | null
           if (profile) set({ profile })
         }
         const localPk = loadPrivateKey(userId)
@@ -128,7 +128,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
 
     supabase.auth.onAuthStateChange(async (event, session) => {
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+      if (event === 'SIGNED_IN' && session?.user) {
         await get().loadProfile(session.user.id)
         const profile = get().profile
         const localPk = loadPrivateKey(session.user.id)
@@ -290,7 +290,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const user = get().user
     if (user) {
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
-      clearUserCache(user.id)
+      await clearUserCache(user.id)
     }
     await supabase.auth.signOut()
     set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
@@ -298,6 +298,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   loadProfile: async (userId: string) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    if (data) { set({ profile: data }); cacheProfile(userId, data) }
+    if (data) { set({ profile: data }); await cacheProfile(userId, data) }
   },
 }))

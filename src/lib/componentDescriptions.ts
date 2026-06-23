@@ -28,4 +28,5 @@ export const COMPONENT_DESCRIPTIONS: Record<string, string> = {
   createCommunityScreen: "The form screen for creating a new community — name, description, and type (public/protected/private) fields. Fields, type options, and styling can all be changed.",
   communityChatScreen: "The full chat screen inside a community — header with name and member count, scrollable message list, and a text composer at the bottom. Join/Leave button, layout, and styling can all be changed.",
   communityProfileScreen: "The community info/profile page showing the community avatar, name, type, description, member count, and members list — tappable via the avatar in the community chat header. Owners can edit the community photo. Layout, sections, and styling can all be changed.",
+  settingsScreen: "The Settings screen reached from the profile tab — sections for Notifications (push toggle), Privacy (blocked users list in a sheet), and Account (change password, log out, delete account). Layout, sections, toggles, sheets, and styling can all be changed. Users might call it: settings, preferences, the settings page, account settings.",
 }

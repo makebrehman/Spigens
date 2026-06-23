@@ -1609,3 +1609,171 @@ export const DEFAULT_BOTTOMNAV_SOURCE = `function Component() {
     ]);
   }));
 }`;
+
+export const DEFAULT_SETTINGSSCREEN_SOURCE = `function Component() {
+  var notifsState = useComponentState('settingsNotifsEnabled', true);
+  var notifs = notifsState[0];
+  var blockedState = useComponentState('settingsBlocked', []);
+  var blocked = blockedState[0] || [];
+  var loadingState = useComponentState('settingsBlockedLoading', false);
+  var loadingBlocked = loadingState[0];
+  var blockedErrState = useComponentState('settingsBlockedError', null);
+  var blockedError = blockedErrState[0];
+  var unblockOkState = useComponentState('settingsUnblockSuccess', null);
+  var unblockSuccess = unblockOkState[0];
+
+  var sheetState = React.useState(false); var showBlockedSheet = sheetState[0], setShowBlockedSheet = sheetState[1];
+  var pwSheetState = React.useState(false); var showPasswordSheet = pwSheetState[0], setShowPasswordSheet = pwSheetState[1];
+  var confirmState = React.useState(null); var confirm = confirmState[0], setConfirm = confirmState[1];
+  var busyState = React.useState(false); var busy = busyState[0], setBusy = busyState[1];
+  var actionErrState = React.useState(null); var actionError = actionErrState[0], setActionError = actionErrState[1];
+  var newPwState = React.useState(''); var newPassword = newPwState[0], setNewPassword = newPwState[1];
+  var confPwState = React.useState(''); var confirmPassword = confPwState[0], setConfirmPassword = confPwState[1];
+  var pwErrState = React.useState(null); var passwordError = pwErrState[0], setPasswordError = pwErrState[1];
+  var pwOkState = React.useState(false); var passwordSuccess = pwOkState[0], setPasswordSuccess = pwOkState[1];
+  var pwBusyState = React.useState(false); var changingPassword = pwBusyState[0], setChangingPassword = pwBusyState[1];
+
+  var handleOpenBlockedSheet = function() {
+    setShowBlockedSheet(true);
+    if (blocked.length === 0 && !loadingBlocked && typeof onLoadBlocked === 'function') onLoadBlocked();
+  };
+  var doUnblock = function(blockId, userId) { if (typeof onUnblock === 'function') onUnblock(blockId, userId); };
+  var doLogout = function() { setBusy(true); if (typeof onLogout === 'function') onLogout(); };
+  var doDelete = function() {
+    setBusy(true); setActionError(null);
+    if (typeof onDeleteAccount === 'function') {
+      onDeleteAccount().then(function(res) {
+        if (res && res.error) { setActionError(res.error); setBusy(false); }
+      });
+    }
+  };
+  var closePasswordSheet = function() {
+    if (changingPassword) return;
+    setShowPasswordSheet(false); setNewPassword(''); setConfirmPassword(''); setPasswordError(null); setPasswordSuccess(false);
+  };
+  var doChangePassword = function() {
+    setPasswordError(null);
+    if (!newPassword.trim()) { setPasswordError('Enter a new password.'); return; }
+    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters.'); return; }
+    if (newPassword !== confirmPassword) { setPasswordError("Passwords don't match."); return; }
+    setChangingPassword(true);
+    if (typeof onChangePassword === 'function') {
+      onChangePassword(newPassword).then(function(res) {
+        setChangingPassword(false);
+        if (res && res.error) { setPasswordError(res.error); return; }
+        setPasswordSuccess(true); setNewPassword(''); setConfirmPassword('');
+        setTimeout(function() { setPasswordSuccess(false); setShowPasswordSheet(false); }, 2000);
+      });
+    }
+  };
+
+  var wrap = { position: 'fixed', inset: 0, zIndex: 60, background: '#0a0a0a', display: 'flex', flexDirection: 'column', color: '#fff' };
+  var header = { display: 'flex', alignItems: 'center', gap: 14, padding: 'calc(env(safe-area-inset-top) + 14px) 16px 14px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 };
+  var body = { flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '0 0 40px' };
+  var sectionLabel = { fontSize: 12, fontWeight: 600, color: '#4b5563', padding: '22px 20px 6px', letterSpacing: 0.2 };
+  var row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px' };
+  var rowBtn = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '15px 20px', width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' };
+  var sheetOverlay = { position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' };
+  var sheetCard = { width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: '22px 20px calc(22px + env(safe-area-inset-bottom))', boxSizing: 'border-box' };
+  var chevron = String.fromCharCode(8250);
+
+  return React.createElement('div', { style: wrap },
+    React.createElement('div', { style: header },
+      React.createElement('button', { onClick: onBack, 'aria-label': 'Back', style: { background: 'transparent', border: 'none', color: '#fff', fontSize: 28, lineHeight: 1, cursor: 'pointer', padding: 0, width: 26 } }, String.fromCharCode(8249)),
+      React.createElement('span', { style: { fontSize: 19, fontWeight: 700 } }, 'Settings')
+    ),
+    React.createElement('div', { style: body },
+      React.createElement('div', { style: sectionLabel }, 'Notifications'),
+      React.createElement('div', { style: row },
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 15, color: '#e5e7eb' } }, 'Push notifications'),
+          React.createElement('div', { style: { fontSize: 12.5, color: '#6b7280', marginTop: 2 } }, 'New messages and mentions')
+        ),
+        React.createElement('button', { onClick: function() { if (typeof onToggleNotifs === 'function') onToggleNotifs(); }, 'aria-label': 'Toggle push notifications', style: { width: 50, height: 30, borderRadius: 999, border: 'none', cursor: 'pointer', padding: 3, background: notifs ? '#2563EB' : '#3a3a3a', display: 'flex', justifyContent: notifs ? 'flex-end' : 'flex-start', alignItems: 'center', flexShrink: 0 } },
+          React.createElement('span', { style: { width: 24, height: 24, borderRadius: '50%', background: '#fff', display: 'block' } })
+        )
+      ),
+      React.createElement('div', { style: sectionLabel }, 'Privacy'),
+      React.createElement('button', { style: rowBtn, onClick: handleOpenBlockedSheet },
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 15, color: '#e5e7eb' } }, 'Blocked users'),
+          React.createElement('div', { style: { fontSize: 12.5, color: '#6b7280', marginTop: 2 } }, blocked.length > 0 ? (blocked.length + ' blocked') : 'No one blocked')
+        ),
+        React.createElement('span', { style: { fontSize: 20, color: '#555', lineHeight: 1 } }, chevron)
+      ),
+      React.createElement('div', { style: sectionLabel }, 'Account'),
+      React.createElement('button', { style: rowBtn, onClick: function() { setShowPasswordSheet(true); } },
+        React.createElement('span', { style: { fontSize: 15, color: '#e5e7eb' } }, 'Change password'),
+        React.createElement('span', { style: { fontSize: 20, color: '#555', lineHeight: 1 } }, chevron)
+      ),
+      React.createElement('button', { style: rowBtn, onClick: function() { setConfirm('logout'); } },
+        React.createElement('span', { style: { fontSize: 15, color: '#e5e7eb' } }, 'Log out'),
+        React.createElement('span', { style: { fontSize: 20, color: '#555', lineHeight: 1 } }, chevron)
+      ),
+      React.createElement('button', { style: rowBtn, onClick: function() { setConfirm('delete'); } },
+        React.createElement('span', { style: { fontSize: 15, color: '#EF4444' } }, 'Delete account'),
+        React.createElement('span', { style: { fontSize: 20, color: '#555', lineHeight: 1 } }, chevron)
+      )
+    ),
+    showBlockedSheet ? React.createElement('div', { style: sheetOverlay, onClick: function() { setShowBlockedSheet(false); } },
+      React.createElement('div', { style: Object.assign({}, sheetCard, { maxHeight: '75vh', display: 'flex', flexDirection: 'column' }), onClick: function(e) { e.stopPropagation(); } },
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 } },
+          React.createElement('span', { style: { fontSize: 18, fontWeight: 700, color: '#fff' } }, 'Blocked users'),
+          React.createElement('button', { onClick: function() { setShowBlockedSheet(false); }, style: { background: 'none', border: 'none', color: '#6b7280', fontSize: 26, cursor: 'pointer', lineHeight: 1, padding: 0 } }, String.fromCharCode(215))
+        ),
+        React.createElement('div', { style: { overflowY: 'auto', flex: 1 } },
+          loadingBlocked
+            ? React.createElement('div', { style: { padding: '16px 0', color: '#6b7280', fontSize: 14 } }, String.fromCharCode(8230))
+            : blockedError
+            ? React.createElement('div', { style: { padding: '16px 0', color: '#EF4444', fontSize: 14 } }, blockedError)
+            : blocked.length === 0
+            ? React.createElement('div', { style: { padding: '16px 0', color: '#6b7280', fontSize: 14 } }, "You haven't blocked anyone.")
+            : blocked.map(function(b) {
+                return React.createElement('div', { key: b.blockId, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid #1a1a1a' } },
+                  React.createElement('div', { style: { flexShrink: 0 } },
+                    b.avatarUrl
+                      ? React.createElement('img', { src: b.avatarUrl, alt: '', style: { width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' } })
+                      : React.createElement('div', { style: { width: 44, height: 44, borderRadius: '50%', background: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 600, color: '#fff' } }, (b.name[0] || '?').toUpperCase())
+                  ),
+                  React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                    React.createElement('div', { style: { fontSize: 15, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, b.name),
+                    b.username ? React.createElement('div', { style: { fontSize: 12.5, color: '#6b7280' } }, '@' + b.username) : null
+                  ),
+                  React.createElement('button', { onClick: function() { doUnblock(b.blockId, b.id); }, style: { background: unblockSuccess === b.id ? '#16a34a' : 'transparent', border: '1px solid ' + (unblockSuccess === b.id ? '#16a34a' : '#2a2a2a'), color: unblockSuccess === b.id ? '#fff' : '#e5e7eb', fontSize: 13, fontWeight: 600, padding: '7px 14px', borderRadius: 999, cursor: 'pointer', flexShrink: 0, marginLeft: 8, transition: 'background 0.2s, border-color 0.2s' } }, unblockSuccess === b.id ? String.fromCharCode(10003) : 'Unblock')
+                );
+              })
+        )
+      )
+    ) : null,
+    showPasswordSheet ? React.createElement('div', { style: sheetOverlay, onClick: closePasswordSheet },
+      React.createElement('div', { style: sheetCard, onClick: function(e) { e.stopPropagation(); } },
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 } },
+          React.createElement('span', { style: { fontSize: 18, fontWeight: 700, color: '#fff' } }, 'Change password'),
+          React.createElement('button', { onClick: closePasswordSheet, disabled: changingPassword, style: { background: 'none', border: 'none', color: '#6b7280', fontSize: 26, cursor: 'pointer', lineHeight: 1, padding: 0 } }, String.fromCharCode(215))
+        ),
+        passwordSuccess
+          ? React.createElement('div', { style: { textAlign: 'center', padding: '24px 0' } },
+              React.createElement('div', { style: { fontSize: 44, marginBottom: 12 } }, String.fromCodePoint(9989)),
+              React.createElement('div', { style: { fontSize: 16, fontWeight: 600, color: '#4ade80' } }, 'Password changed!')
+            )
+          : React.createElement(React.Fragment, null,
+              React.createElement('input', { type: 'password', placeholder: 'New password', value: newPassword, onChange: function(e) { setNewPassword(e.target.value); }, style: { width: '100%', background: '#1f1f1f', border: '1px solid #2a2a2a', borderRadius: 12, padding: '13px 16px', fontSize: 15, color: '#e5e7eb', outline: 'none', boxSizing: 'border-box', marginBottom: 12, fontFamily: 'inherit' } }),
+              React.createElement('input', { type: 'password', placeholder: 'Confirm new password', value: confirmPassword, onChange: function(e) { setConfirmPassword(e.target.value); }, onKeyDown: function(e) { if (e.key === 'Enter') doChangePassword(); }, style: { width: '100%', background: '#1f1f1f', border: '1px solid #2a2a2a', borderRadius: 12, padding: '13px 16px', fontSize: 15, color: '#e5e7eb', outline: 'none', boxSizing: 'border-box', marginBottom: passwordError ? 10 : 16, fontFamily: 'inherit' } }),
+              passwordError ? React.createElement('div', { style: { fontSize: 13, color: '#EF4444', marginBottom: 14 } }, passwordError) : null,
+              React.createElement('button', { onClick: doChangePassword, disabled: changingPassword, style: { width: '100%', padding: 14, borderRadius: 999, background: '#2563EB', color: '#fff', fontSize: 15, fontWeight: 700, border: 'none', cursor: 'pointer', opacity: changingPassword ? 0.6 : 1 } }, changingPassword ? 'Changing' + String.fromCharCode(8230) : 'Change password')
+            )
+      )
+    ) : null,
+    confirm ? React.createElement('div', { onClick: function() { if (!busy) setConfirm(null); }, style: { position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' } },
+      React.createElement('div', { onClick: function(e) { e.stopPropagation(); }, style: { width: '100%', maxWidth: 480, background: '#161616', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: '22px 20px calc(22px + env(safe-area-inset-bottom))', boxSizing: 'border-box' } },
+        React.createElement('div', { style: { fontSize: 18, fontWeight: 700, marginBottom: 8 } }, confirm === 'logout' ? 'Log out?' : 'Delete account?'),
+        React.createElement('div', { style: { fontSize: 14, color: '#9ca3af', lineHeight: 1.5, marginBottom: 20 } }, confirm === 'logout' ? 'You can log back in anytime.' : 'This permanently deletes your profile, your messages, and any communities you created. This cannot be undone.'),
+        actionError ? React.createElement('div', { style: { fontSize: 13, color: '#EF4444', marginBottom: 12 } }, actionError) : null,
+        React.createElement('div', { style: { display: 'flex', gap: 10 } },
+          React.createElement('button', { onClick: function() { setConfirm(null); setActionError(null); }, disabled: busy, style: { flex: 1, padding: 12, borderRadius: 999, background: '#262626', color: '#e5e7eb', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' } }, 'Cancel'),
+          React.createElement('button', { onClick: confirm === 'logout' ? doLogout : doDelete, disabled: busy, style: { flex: 1, padding: 12, borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' } }, busy ? String.fromCharCode(8230) : (confirm === 'logout' ? 'Log out' : 'Delete'))
+        )
+      )
+    ) : null
+  );
+}`;

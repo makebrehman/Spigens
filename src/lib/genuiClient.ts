@@ -71,10 +71,15 @@ function buildSystemPrompt(
   storeState: UIOverrideState,
   contactNames: string[]
 ): string {
-  const sourcesText = Object.entries(storeState.componentSources || {}).map(([key, source]) => {
-    const description = COMPONENT_DESCRIPTIONS[key] || '(no description)'
-    return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${source}`
-  }).join('\n\n')
+  const sourcesText = Object.entries(storeState.componentSources || {})
+    // Only expose components that have a real description AND are actually rendered.
+    // Stale keys (e.g. a legacy `chatTile` left in a saved snapshot) are filtered out so
+    // the AI never edits a component that isn't mounted — every chat-row change goes to contactList.
+    .filter(([key]) => COMPONENT_DESCRIPTIONS[key])
+    .map(([key, source]) => {
+      const description = COMPONENT_DESCRIPTIONS[key]
+      return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${source}`
+    }).join('\n\n')
 
   const homeSlots = `
 HOME SCREEN — AVAILABLE STYLE SLOTS:

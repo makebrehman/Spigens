@@ -7,6 +7,7 @@ import { MessageStatus } from './MessageStatus'
 import { ReplyQuote } from './ReplyQuote'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
+import { NativeMediaBubble } from './NativeMediaBubble'
 
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
 const previewCache = new Map<string, any>()
@@ -94,6 +95,29 @@ export function MessageBubble(props: MessageBubbleProps) {
         useUIStore.getState().setComponentState(key, newVal)
       }
     }] as [any, (v: any) => void]
+  }
+
+  const isMedia = messageType && messageType !== 'text'
+
+  if (isMedia) {
+    return (
+      <NativeMediaBubble
+        id={id}
+        content={content}
+        messageType={messageType}
+        timestamp={timestamp}
+        isSent={isSent}
+        isRead={isRead}
+        status={status}
+        replyTo={replyTo}
+        onReplyTo={onReplyTo}
+        onJumpToReply={onJumpToReply}
+        currentUserId={currentUserId}
+        onToggleReaction={onToggleReaction}
+        onShowReactors={onShowReactors}
+        isDeleted={isDeleted}
+      />
+    )
   }
 
   return (

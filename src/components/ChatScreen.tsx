@@ -195,11 +195,34 @@ export function ChatScreen(props: ChatScreenProps) {
       const msgs: any[] = []
       data.forEach(row => msgs.push(decryptRow(row, msgs)))
 
-      cacheMessages(conversationId, msgs)
-      useUIStore.getState().setComponentState('chatMessages', msgs)
+      // Merge any still-pending offline messages so they survive the DB refresh.
+      // Without this, loadMessages overwrites realMessages and pending msgs disappear
+      // (the realtime INSERT guard filters own-sender events, so they never come back).
+      const stillPending = getPendingMessages(currentUserId!).filter(pm =>
+        pm.conversationId === conversationId || (!pm.conversationId && pm.otherUserId === otherUserId)
+      )
+      const pendingMsgs = stillPending
+        .filter(pm => !msgs.find(m => m.id === pm.id))
+        .map(pm => ({
+          id: pm.id,
+          content: pm.content,
+          messageType: (pm.messageType ?? 'text') as string,
+          metadata: null,
+          timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          createdAt: pm.createdAt,
+          isSent: true,
+          isRead: true,
+          status: 'sending' as const,
+          replyTo: null,
+          isDeleted: false,
+        }))
+      const allMsgs = [...msgs, ...pendingMsgs]
+
+      cacheMessages(conversationId, allMsgs)
+      useUIStore.getState().setComponentState('chatMessages', allMsgs)
       useUIStore.getState().setComponentState('conversationId', conversationId)
       useUIStore.getState().setComponentState('currentUserId', currentUserId)
-      setRealMessages(msgs)
+      setRealMessages(allMsgs)
     }
 
     const loadReactions = async () => {
@@ -332,6 +355,7 @@ export function ChatScreen(props: ChatScreenProps) {
         sender_id: currentUserId,
         content: pm.encryptedContent ? null : pm.content,
         encrypted_content: pm.encryptedContent,
+        message_type: pm.messageType ?? 'text',
         status: 'sent',
         reply_to: pm.replyToId,
         created_at: pm.createdAt,
@@ -340,9 +364,17 @@ export function ChatScreen(props: ChatScreenProps) {
         removePendingMessage(currentUserId, pm.id)
         setRealMessages(prev => {
           const idx = prev.findIndex(m => m.id === pm.id)
-          if (idx === -1) return prev
           const next = [...prev]
-          next[idx] = { ...next[idx], status: 'sent' }
+          if (idx === -1) {
+            next.push({
+              id: pm.id, content: pm.content, messageType: pm.messageType ?? 'text', metadata: null,
+              timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              createdAt: pm.createdAt, isSent: true, isRead: true, status: 'sent',
+              replyTo: null, isDeleted: false,
+            })
+          } else {
+            next[idx] = { ...next[idx], status: 'sent' }
+          }
           return next
         })
       }
@@ -490,20 +522,24 @@ export function ChatScreen(props: ChatScreenProps) {
       return next
     })
 
-    if (!networkIsOnline) {
+    const isOnline = useNetworkStore.getState().isOnline
+    const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+
+    if (!isOnline) {
       savePendingMessage(currentUserId, {
         id: realId,
-        conversationId,
+        conversationId: liveCid,
         otherUserId,
         content: url,
         encryptedContent: null,
         replyToId: null,
         createdAt,
+        messageType: fileType,
       })
       return
     }
 
-    let cid = conversationId
+    let cid = liveCid
     if (!cid) {
       const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
       if (data) { cid = data; setConversationId(data) } else return

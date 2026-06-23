@@ -45,6 +45,7 @@ interface PendingMsg {
   encryptedContent: string | null
   replyToId: string | null
   createdAt: string
+  messageType?: string
 }
 
 function pendingKey(userId: string) { return P + `pending_${userId}` }

@@ -87,6 +87,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<any>(null)
   const recordingCancelledRef = useRef(false)
+  const prevOtherUserIdRef = useRef<string | undefined | null>(null)
 
   // Mirror live overlay values into componentState so the GenUI sources read them
   // (RenderifyHost freezes scope at mount, so changing values must flow via componentState).
@@ -101,8 +102,17 @@ export function ChatScreen(props: ChatScreenProps) {
 
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
-    setTimeout(() => setRealMessages([]), 0)
-    useUIStore.getState().setComponentState('chatMessages', [])
+
+    // Only clear messages when the contact changes, not on every network flip
+    if (prevOtherUserIdRef.current !== otherUserId) {
+      prevOtherUserIdRef.current = otherUserId
+      setRealMessages([])
+      useUIStore.getState().setComponentState('chatMessages', [])
+      setConversationId(null)
+    }
+
+    // Offline: keep current conversationId (don't null it — Effect 2 reads cache by it)
+    if (!networkIsOnline) return
 
     const resolve = async () => {
       const { data: mine, error } = await supabase
@@ -123,11 +133,7 @@ export function ChatScreen(props: ChatScreenProps) {
       setConversationId(!sharedErr && shared?.length ? shared[0].conversation_id : null)
     }
 
-    if (networkIsOnline) {
-      resolve()
-    } else {
-      setConversationId(null)
-    }
+    resolve()
   }, [otherUserId, currentUserId, networkIsOnline])
 
   const decryptRow = (row: any, prevMessages: any[]): any => {
@@ -189,11 +195,34 @@ export function ChatScreen(props: ChatScreenProps) {
       const msgs: any[] = []
       data.forEach(row => msgs.push(decryptRow(row, msgs)))
 
-      cacheMessages(conversationId, msgs)
-      useUIStore.getState().setComponentState('chatMessages', msgs)
+      // Merge any still-pending offline messages so they survive the DB refresh.
+      // Without this, loadMessages overwrites realMessages and pending msgs disappear
+      // (the realtime INSERT guard filters own-sender events, so they never come back).
+      const stillPending = getPendingMessages(currentUserId!).filter(pm =>
+        pm.conversationId === conversationId || (!pm.conversationId && pm.otherUserId === otherUserId)
+      )
+      const pendingMsgs = stillPending
+        .filter(pm => !msgs.find(m => m.id === pm.id))
+        .map(pm => ({
+          id: pm.id,
+          content: pm.content,
+          messageType: (pm.messageType ?? 'text') as string,
+          metadata: null,
+          timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          createdAt: pm.createdAt,
+          isSent: true,
+          isRead: true,
+          status: 'sending' as const,
+          replyTo: null,
+          isDeleted: false,
+        }))
+      const allMsgs = [...msgs, ...pendingMsgs]
+
+      cacheMessages(conversationId, allMsgs)
+      useUIStore.getState().setComponentState('chatMessages', allMsgs)
       useUIStore.getState().setComponentState('conversationId', conversationId)
       useUIStore.getState().setComponentState('currentUserId', currentUserId)
-      setRealMessages(msgs)
+      setRealMessages(allMsgs)
     }
 
     const loadReactions = async () => {
@@ -326,6 +355,7 @@ export function ChatScreen(props: ChatScreenProps) {
         sender_id: currentUserId,
         content: pm.encryptedContent ? null : pm.content,
         encrypted_content: pm.encryptedContent,
+        message_type: pm.messageType ?? 'text',
         status: 'sent',
         reply_to: pm.replyToId,
         created_at: pm.createdAt,
@@ -334,9 +364,17 @@ export function ChatScreen(props: ChatScreenProps) {
         removePendingMessage(currentUserId, pm.id)
         setRealMessages(prev => {
           const idx = prev.findIndex(m => m.id === pm.id)
-          if (idx === -1) return prev
           const next = [...prev]
-          next[idx] = { ...next[idx], status: 'sent' }
+          if (idx === -1) {
+            next.push({
+              id: pm.id, content: pm.content, messageType: pm.messageType ?? 'text', metadata: null,
+              timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              createdAt: pm.createdAt, isSent: true, isRead: true, status: 'sent',
+              replyTo: null, isDeleted: false,
+            })
+          } else {
+            next[idx] = { ...next[idx], status: 'sent' }
+          }
           return next
         })
       }
@@ -484,20 +522,24 @@ export function ChatScreen(props: ChatScreenProps) {
       return next
     })
 
-    if (!networkIsOnline) {
+    const isOnline = useNetworkStore.getState().isOnline
+    const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+
+    if (!isOnline) {
       savePendingMessage(currentUserId, {
         id: realId,
-        conversationId,
+        conversationId: liveCid,
         otherUserId,
         content: url,
         encryptedContent: null,
         replyToId: null,
         createdAt,
+        messageType: fileType,
       })
       return
     }
 
-    let cid = conversationId
+    let cid = liveCid
     if (!cid) {
       const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
       if (data) { cid = data; setConversationId(data) } else return
@@ -664,6 +706,11 @@ export function ChatScreen(props: ChatScreenProps) {
       }
       if (!otherUserId || !currentUserId) return
 
+      // Read live values from stores — the scope is frozen at compile time so
+      // closed-over React state (networkIsOnline, conversationId) would be stale
+      const isOnline = useNetworkStore.getState().isOnline
+      const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+
       const newId = crypto.randomUUID()
       const replyToSnapshot = useUIStore.getState().componentState?.replyingTo ?? null
       const replyToId = replyToSnapshot?.id ?? null
@@ -687,7 +734,7 @@ export function ChatScreen(props: ChatScreenProps) {
         createdAt: new Date().toISOString(),
         isSent: true,
         isRead: true,
-        status: networkIsOnline ? 'sent' : 'sending',
+        status: isOnline ? 'sent' : 'sending',
         replyTo: replyToSnapshot ? { id: replyToSnapshot.id, content: replyToSnapshot.content, senderLabel: replyToSnapshot.senderLabel } : null,
         isDeleted: false,
       }
@@ -697,16 +744,16 @@ export function ChatScreen(props: ChatScreenProps) {
 
       setRealMessages(prev => {
         const next = [...prev, newMsg]
-        const cacheKey = conversationId ?? `pending_${otherUserId}`
+        const cacheKey = liveCid ?? `pending_${otherUserId}`
         cacheMessages(cacheKey, next)
         queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
         return next
       })
 
-      if (!networkIsOnline) {
+      if (!isOnline) {
         savePendingMessage(currentUserId, {
           id: newId,
-          conversationId,
+          conversationId: liveCid,
           otherUserId,
           content,
           encryptedContent,
@@ -716,7 +763,7 @@ export function ChatScreen(props: ChatScreenProps) {
         return
       }
 
-      let cid = conversationId
+      let cid = liveCid
       if (!cid) {
         const { data, error } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
         if (data) { cid = data; setConversationId(data) }

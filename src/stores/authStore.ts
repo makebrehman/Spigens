@@ -36,6 +36,42 @@ function clearInitialSyncDone(userId: string): void {
   try { localStorage.removeItem(initialSyncDoneKey(userId)) } catch { /* ignore */ }
 }
 
+// Durable, app-owned record of the signed-in identity. Written whenever an
+// authenticated session is established; read as the most robust offline fallback in
+// initialize(); cleared only on a real, user-initiated sign-out. This is what keeps an
+// offline reopen from depending on Supabase's session token (which can be chunked, or
+// discarded by a failed offline refresh) or on the local DB being open.
+const AUTH_SNAPSHOT_KEY = 'spigens_auth_user'
+
+interface AuthSnapshot {
+  id: string
+  email: string
+  username: string | null
+  profile: Profile | null
+}
+
+function saveAuthSnapshot(snap: AuthSnapshot): void {
+  if (typeof window === 'undefined') return
+  try { localStorage.setItem(AUTH_SNAPSHOT_KEY, JSON.stringify(snap)) } catch { /* ignore */ }
+}
+
+function loadAuthSnapshot(): AuthSnapshot | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(AUTH_SNAPSHOT_KEY)
+    return raw ? (JSON.parse(raw) as AuthSnapshot) : null
+  } catch { return null }
+}
+
+function clearAuthSnapshot(): void {
+  if (typeof window === 'undefined') return
+  try { localStorage.removeItem(AUTH_SNAPSHOT_KEY) } catch { /* ignore */ }
+}
+
+// True only while our own signOut() is running. Supabase also emits SIGNED_OUT when a
+// background token refresh fails (offline / flaky network); those must never wipe auth.
+let explicitSignOut = false
+
 interface AuthState {
   user: { id: string; email: string } | null
   profile: Profile | null
@@ -129,11 +165,17 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         if (session?.user) { userId = session.user.id; email = session.user.email! }
       } catch { /* offline — fall through */ }
 
-      // Offline fallback: read the session token Supabase stored in localStorage
+      // Offline fallback 1: read the session token Supabase stored in localStorage.
       if (!userId) {
         const local = getLocalAuthSession()
         if (local) { userId = local.userId; email = local.email }
       }
+
+      // Offline fallback 2 (most robust): our own durable snapshot. Independent of
+      // Supabase's token format — which may be chunked, or cleared by a failed offline
+      // refresh — so a logged-in user is recovered even when the token is gone.
+      const snapshot = loadAuthSnapshot()
+      if (!userId && snapshot) { userId = snapshot.id; email = snapshot.email }
 
       if (userId && email) {
         // Never let a failed network load short-circuit the cached fallback + the
@@ -141,19 +183,29 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         // sign-in screen on reopen.
         try { await get().loadProfile(userId) } catch { /* offline */ }
         let profile = get().profile
-        // If network load failed (offline), fall back to cached profile
+        // If network load failed (offline), fall back to the cached profile, then to the
+        // snapshot's copy if even the local DB read came back empty.
         if (!profile) {
           try { profile = await getCachedProfile(userId) as Profile | null } catch { /* ignore */ }
+          if (!profile && snapshot?.id === userId) profile = snapshot.profile
           if (profile) set({ profile })
         }
+        // Username is the gate for "authenticated". Resolve it from the live/cached
+        // profile, falling back to the snapshot, so neither a dead token nor a closed DB
+        // can wrongly log an offline user out.
+        const username = profile?.username ?? (snapshot?.id === userId ? snapshot.username : null)
+        const authed = !!username
         const localPk = loadPrivateKey(userId)
         set({
           user: { id: userId, email },
-          isAuthenticated: !!profile?.username,
-          privateKey: profile?.username ? localPk : null,
+          isAuthenticated: authed,
+          privateKey: authed ? localPk : null,
           // Re-run the post-login download if a previous first sync never finished.
-          needsInitialSync: !!profile?.username && !hasInitialSyncDone(userId),
+          needsInitialSync: authed && !hasInitialSyncDone(userId),
         })
+        // Keep the durable snapshot fresh (and create it for users who signed in before
+        // this record existed).
+        if (authed) saveAuthSnapshot({ id: userId, email, username, profile: profile ?? snapshot?.profile ?? null })
       }
     } finally {
       set({ isLoading: false })
@@ -174,12 +226,16 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           privateKey: profile?.username ? localPk : null,
           needsInitialSync: !!profile?.username && !hasInitialSyncDone(session.user.id),
         })
+        if (profile?.username) {
+          saveAuthSnapshot({ id: session.user.id, email: session.user.email!, username: profile.username, profile })
+        }
       } else if (event === 'SIGNED_OUT') {
-        // A SIGNED_OUT while offline is almost always a failed background token
-        // refresh, not a real sign-out (our signOut() runs online). Ignore it so an
-        // offline user is never kicked to the auth screen.
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-        set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
+        // Only a real, user-initiated signOut() should clear auth state. Supabase also
+        // emits SIGNED_OUT when a background token refresh fails (offline / flaky network,
+        // including when navigator.onLine wrongly reports true) — ignoring those is what
+        // keeps an offline user from being kicked to the sign-in screen.
+        if (!explicitSignOut) return
+        set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null, needsInitialSync: false })
       }
     })
   },
@@ -237,6 +293,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // but keeps the flow uniform and writes the "sync done" marker).
       clearInitialSyncDone(user.id)
       set({ isAuthenticated: true, needsInitialSync: true })
+      const newProfile = get().profile
+      if (newProfile?.username) {
+        saveAuthSnapshot({ id: user.id, email: user.email, username: newProfile.username, profile: newProfile })
+      }
       return { error: null }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -336,6 +396,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         needsInitialSync: !!profile?.username,
       })
 
+      // Persist the durable identity snapshot so future offline reopens never depend on
+      // Supabase's token surviving.
+      if (profile?.username) {
+        saveAuthSnapshot({ id: data.user.id, email: data.user.email!, username: profile.username, profile })
+      }
+
       return { error: null }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -343,15 +409,23 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   signOut: async () => {
-    const user = get().user
-    if (user) {
-      await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
-      await unregisterNativePush() // drop this device's FCM token so it stops getting pushes
-      await clearUserCache(user.id)
-      clearInitialSyncDone(user.id) // next sign-in must do a fresh full download
+    explicitSignOut = true // let the SIGNED_OUT handler know this one is real
+    try {
+      const user = get().user
+      if (user) {
+        await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
+        await unregisterNativePush() // drop this device's FCM token so it stops getting pushes
+        await clearUserCache(user.id)
+        clearInitialSyncDone(user.id) // next sign-in must do a fresh full download
+      }
+      clearAuthSnapshot() // forget the durable identity — this is a real, user-initiated sign-out
+      await supabase.auth.signOut()
+      set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null, needsInitialSync: false })
+    } finally {
+      // Always release the sentinel, even if a network call above threw — otherwise a
+      // later background SIGNED_OUT could be mistaken for a real sign-out.
+      explicitSignOut = false
     }
-    await supabase.auth.signOut()
-    set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null, needsInitialSync: false })
   },
 
   loadProfile: async (userId: string) => {

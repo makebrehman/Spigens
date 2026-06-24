@@ -550,7 +550,7 @@ export function ChatScreen(props: ChatScreenProps) {
       try { encContent = encryptMessage(url, otherUserPublicKey, myPrivateKey) } catch { /* send plain */ }
     }
 
-    await supabase.from('messages').insert({
+    const { error } = await supabase.from('messages').insert({
       id: realId,
       conversation_id: cid,
       sender_id: currentUserId,
@@ -560,6 +560,15 @@ export function ChatScreen(props: ChatScreenProps) {
       status: 'sent',
       reply_to: null,
     })
+
+    if (error) {
+      // Surface the failure instead of leaving a phantom "sent" media bubble that
+      // never reached the recipient (this is how the DB constraint rejection hid).
+      console.error('Failed to insert media message:', error)
+      await upsertMessage(mediaKey, { ...realMsg, status: 'failed' })
+      setAttachToast('Failed to send. Try again.')
+      setTimeout(() => setAttachToast(null), 2600)
+    }
   }
 
   const startVoiceRecording = async () => {

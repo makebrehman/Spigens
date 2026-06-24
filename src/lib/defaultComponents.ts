@@ -367,7 +367,7 @@ export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
                 )
               );
             } else {
-              bubble = React.createElement(MessageBubble, { key: msg.id + '-' + msg.status + (msg.isDeleted ? '-deleted' : ''), id: msg.id, contactId: msg.contactId, content: msg.content, timestamp: msg.timestamp, isSent: msg.isSent, isRead: msg.isRead, status: msg.status, replyTo: msg.replyTo, isDeleted: !!msg.isDeleted, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors });
+              bubble = React.createElement(MessageBubble, { key: msg.id + '-' + msg.status + (msg.isDeleted ? '-deleted' : ''), id: msg.id, contactId: msg.contactId, content: msg.content, messageType: msg.messageType, metadata: msg.metadata, timestamp: msg.timestamp, isSent: msg.isSent, isRead: msg.isRead, status: msg.status, replyTo: msg.replyTo, isDeleted: !!msg.isDeleted, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors });
             }
             return separator ? React.createElement(React.Fragment, { key: 'frag-' + msg.id }, separator, bubble) : bubble;
           }),

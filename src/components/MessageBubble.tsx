@@ -57,19 +57,35 @@ export interface MessageBubbleProps {
 
 export function MessageBubble(props: MessageBubbleProps) {
   const { id, content, messageType, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, isDeleted } = props
+
+  // Heal chat-screen sources that don't forward messageType/content. Older saved
+  // GenUI snapshots build MessageBubble with only id + content, so a media message
+  // would render as a text URL. Resolve the real type/content from the live message
+  // list by id so media renders as media regardless of the source's prop list.
+  let resolvedType = messageType
+  let resolvedContent = content
+  if (!resolvedType) {
+    const all = (useUIStore.getState().componentState as any)?.chatMessages as any[] | undefined
+    const self = all && all.find((m: any) => m.id === id)
+    if (self) {
+      resolvedType = self.messageType
+      if (self.content != null) resolvedContent = self.content
+    }
+  }
+
   const componentSources = useUIStore(state => state.componentSources)
   const messageBubbleSource = componentSources?.messageBubble ?? null
   const [linkPreview, setLinkPreview] = useState<any>(null)
 
   useEffect(() => {
-    if (isDeleted || (messageType && messageType !== 'text')) return
-    const matches = content?.match(URL_REGEX)
+    if (isDeleted || (resolvedType && resolvedType !== 'text')) return
+    const matches = resolvedContent?.match(URL_REGEX)
     if (!matches?.length) return
     const firstUrl = matches[0]
     // Skip Supabase storage and blob URLs — those are media content, not shareable links
     if (firstUrl.includes('supabase.co/storage') || firstUrl.startsWith('blob:')) return
     fetchLinkPreview(firstUrl).then(p => { if (p?.title) setLinkPreview(p) })
-  }, [content, messageType, isDeleted])
+  }, [resolvedContent, resolvedType, isDeleted])
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -97,14 +113,14 @@ export function MessageBubble(props: MessageBubbleProps) {
     }] as [any, (v: any) => void]
   }
 
-  const isMedia = messageType && messageType !== 'text'
+  const isMedia = resolvedType && resolvedType !== 'text'
 
   if (isMedia) {
     return (
       <NativeMediaBubble
         id={id}
-        content={content}
-        messageType={messageType}
+        content={resolvedContent}
+        messageType={resolvedType}
         timestamp={timestamp}
         isSent={isSent}
         isRead={isRead}

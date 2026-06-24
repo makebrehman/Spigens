@@ -133,8 +133,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        await get().loadProfile(session.user.id)
-        const profile = get().profile
+        try { await get().loadProfile(session.user.id) } catch { /* offline */ }
+        let profile = get().profile
+        if (!profile) {
+          try { profile = await getCachedProfile(session.user.id) as Profile | null } catch { /* ignore */ }
+          if (profile) set({ profile })
+        }
         const localPk = loadPrivateKey(session.user.id)
         set({
           user: { id: session.user.id, email: session.user.email! },
@@ -142,6 +146,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           privateKey: profile?.username ? localPk : null,
         })
       } else if (event === 'SIGNED_OUT') {
+        // A SIGNED_OUT while offline is almost always a failed background token
+        // refresh, not a real sign-out (our signOut() runs online). Ignore it so an
+        // offline user is never kicked to the auth screen.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return
         set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
       }
     })

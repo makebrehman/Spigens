@@ -11,6 +11,7 @@ import {
 import type { Database } from '@/lib/supabase'
 import { uploadPendingAvatar } from '@/lib/avatarUpload'
 import { cacheProfile, getCachedProfile, clearUserCache } from '@/lib/offlineCache'
+import { unregisterNativePush } from '@/lib/nativePush'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -301,6 +302,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const user = get().user
     if (user) {
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
+      await unregisterNativePush() // drop this device's FCM token so it stops getting pushes
       await clearUserCache(user.id)
     }
     await supabase.auth.signOut()

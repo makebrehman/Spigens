@@ -18,6 +18,7 @@ import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
 import { Pin, BellOff, Archive, ArchiveRestore, Trash2 as Trash, ChevronRight, ChevronLeft } from 'lucide-react'
 import { registerServiceWorker, subscribeToPush } from '@/lib/pushNotifications'
+import { registerNativePush } from '@/lib/nativePush'
 import { loadGenUIFromServer, saveGenUIToServer, saveVersionToServer } from '@/lib/genuiSync'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavStore } from '@/stores/navStore'
@@ -544,15 +545,19 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
-    // Register service worker for push notifications
-    registerServiceWorker()
+    // Web push uses a service worker; native uses FCM (registered after auth below).
+    if (!Capacitor.isNativePlatform()) registerServiceWorker()
   }, [])
 
   // Subscribe to push after auth
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return
-    // Delay slightly so the app is visible before asking for permission
-    const t = setTimeout(() => subscribeToPush(user.id), 3000)
+    // Delay slightly so the app is visible before asking for permission.
+    // Native (Android/iOS) → FCM; web/PWA → Web Push.
+    const t = setTimeout(() => {
+      if (Capacitor.isNativePlatform()) registerNativePush(user.id)
+      else subscribeToPush(user.id)
+    }, 3000)
     return () => clearTimeout(t)
   }, [isAuthenticated, user?.id])
 

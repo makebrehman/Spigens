@@ -19,6 +19,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
 import { encryptMessage } from '@/lib/encryption'
+import { makeBlurThumb } from '@/lib/thumbnails'
+import { cacheLocalBlob } from '@/lib/mediaCache'
 import imageCompression from 'browser-image-compression'
 import {
   cacheMessages,
@@ -461,7 +463,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }] as [any, (v: any) => void]
   }
 
-  const uploadChatMedia = async (file: File): Promise<string | null> => {
+  const uploadChatMedia = async (file: File): Promise<{ url: string; blob: Blob } | null> => {
     if (!currentUserId) return null
 
     if (file.type.startsWith('video/') && file.size > MAX_VIDEO_BYTES) {
@@ -496,7 +498,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     const { data } = supabase.storage.from('avatars').getPublicUrl(path)
-    return data.publicUrl
+    return { url: data.publicUrl, blob: processedFile }
   }
 
   const sendMediaOptimistic = async (file: File) => {
@@ -531,16 +533,31 @@ export function ChatScreen(props: ChatScreenProps) {
 
     await upsertMessage(mediaKey, optimisticMsg)
 
-    const url = await uploadChatMedia(file)
+    // Generate the blur preview (images only) in parallel with the upload so it
+    // never delays the optimistic bubble — the sender already sees the full local
+    // image; this preview is what the recipient (and offline reloads) render first.
+    const thumbP: Promise<string | null> = fileType === 'image'
+      ? makeBlurThumb(file).catch(() => null)
+      : Promise.resolve(null)
+
+    const uploaded = await uploadChatMedia(file)
     URL.revokeObjectURL(localUrl)
 
-    if (!url) {
+    if (!uploaded) {
       await deleteCachedMessage(mediaKey, tempId)
       return
     }
+    const { url, blob } = uploaded
+    const thumb = await thumbP
+
+    // Keep an offline copy of our own media without re-downloading it later.
+    cacheLocalBlob(url, blob, fileType).catch(() => {})
 
     const realId = crypto.randomUUID()
-    const realMsg: LocalMessage = { ...optimisticMsg, id: realId, content: url, status: 'sent' }
+    const realMsg: LocalMessage = {
+      ...optimisticMsg, id: realId, content: url, status: 'sent',
+      metadata: thumb ? { thumb } : null,
+    }
 
     // swap the temp row for the real one
     await deleteCachedMessage(mediaKey, tempId)
@@ -570,8 +587,14 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     let encContent: string | null = null
+    let metaForDb: any = null
     if (myPrivateKey && otherUserPublicKey) {
       try { encContent = encryptMessage(url, otherUserPublicKey, myPrivateKey) } catch { /* send plain */ }
+      // Encrypt the blur preview exactly like the body so the server never sees
+      // even a low-res version of the photo (enc:true tells the reader to decrypt).
+      if (thumb) {
+        try { metaForDb = { thumb: encryptMessage(thumb, otherUserPublicKey, myPrivateKey), enc: true } } catch { /* drop preview */ }
+      }
     }
 
     const { error } = await supabase.from('messages').insert({
@@ -581,6 +604,7 @@ export function ChatScreen(props: ChatScreenProps) {
       content: encContent ? null : url,
       encrypted_content: encContent,
       message_type: fileType,
+      metadata: metaForDb,
       status: 'sent',
       reply_to: null,
     })

@@ -42,6 +42,7 @@ export interface MessageBubbleProps {
   contactId?: string
   content: string
   messageType?: string
+  metadata?: any | null
   timestamp: string
   isSent: boolean
   isRead: boolean
@@ -56,20 +57,25 @@ export interface MessageBubbleProps {
 }
 
 export function MessageBubble(props: MessageBubbleProps) {
-  const { id, content, messageType, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, isDeleted } = props
+  const { id, content, messageType, metadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, isDeleted } = props
 
-  // Heal chat-screen sources that don't forward messageType/content. Older saved
-  // GenUI snapshots build MessageBubble with only id + content, so a media message
-  // would render as a text URL. Resolve the real type/content from the live message
-  // list by id so media renders as media regardless of the source's prop list.
+  // Heal chat-screen sources that don't forward messageType/content/metadata. Saved
+  // GenUI snapshots build MessageBubble with only a subset of props, so a media
+  // message would render as a text URL and the blur preview (which lives in
+  // metadata) would be lost. Resolve the real type/content/metadata from the live
+  // message list by id so media renders correctly regardless of the source's props.
   let resolvedType = messageType
   let resolvedContent = content
-  if (!resolvedType) {
+  let resolvedMetadata = metadata ?? null
+  {
     const all = (useUIStore.getState().componentState as any)?.chatMessages as any[] | undefined
     const self = all && all.find((m: any) => m.id === id)
     if (self) {
-      resolvedType = self.messageType
-      if (self.content != null) resolvedContent = self.content
+      if (!resolvedType) {
+        resolvedType = self.messageType
+        if (self.content != null) resolvedContent = self.content
+      }
+      if (resolvedMetadata == null && self.metadata != null) resolvedMetadata = self.metadata
     }
   }
 
@@ -121,6 +127,7 @@ export function MessageBubble(props: MessageBubbleProps) {
         id={id}
         content={resolvedContent}
         messageType={resolvedType as string}
+        metadata={resolvedMetadata}
         timestamp={timestamp}
         isSent={isSent}
         isRead={isRead}

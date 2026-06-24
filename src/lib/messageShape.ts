@@ -9,6 +9,18 @@
 
 import { decryptMessage } from '@/lib/encryption'
 
+// Media messages carry a tiny blur preview in metadata.thumb. It is encrypted
+// exactly like the message body (and flagged enc:true), so here — the one place
+// raw rows become display-ready — we decrypt it back into a plain data URL. Older
+// rows with a plaintext thumb (no enc flag) pass through unchanged.
+function decryptThumb(metadata: any, ctx: ToLocalMessageCtx): any {
+  if (!metadata || !metadata.thumb) return metadata
+  if (!metadata.enc) return metadata
+  if (!ctx.myPrivateKey || !ctx.otherPublicKey) return { ...metadata, thumb: null }
+  const dec = decryptMessage(metadata.thumb, ctx.otherPublicKey, ctx.myPrivateKey)
+  return { ...metadata, thumb: dec ?? null, enc: false }
+}
+
 export interface LocalMessage {
   id: string
   content: string
@@ -62,7 +74,7 @@ export function toLocalMessage(row: any, ctx: ToLocalMessageCtx): LocalMessage {
     id: row.id,
     content,
     messageType: row.message_type || 'text',
-    metadata: row.metadata ?? null,
+    metadata: row.deleted_at ? null : decryptThumb(row.metadata ?? null, ctx),
     timestamp: fmtTime(row.created_at),
     createdAt: row.created_at,
     isSent,

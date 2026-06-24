@@ -4,6 +4,7 @@
 
 import { dbRun, dbQuery, clearDbForUser, isUsingFallback } from '@/lib/localDb'
 import { emitDb, topics } from '@/lib/dbEvents'
+import { clearMediaCache } from '@/lib/mediaCache'
 import type { LocalMessage } from '@/lib/messageShape'
 
 // ── localStorage fallback helpers (web/dev only) ─────────────────────────────
@@ -288,6 +289,9 @@ export async function removePendingCommunityMessage(userId: string, msgId: strin
 export async function clearUserCache(userId: string): Promise<void> {
   // SQLite
   await clearDbForUser(userId)
+
+  // On-device media files (downloaded photos/avatars)
+  try { await clearMediaCache() } catch { /* non-fatal */ }
 
   // localStorage (both native fallback keys and any legacy keys)
   if (typeof window === 'undefined') return

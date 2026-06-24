@@ -12,8 +12,23 @@ import {
   cacheProfile,
 } from '@/lib/offlineCache'
 import { markInitialSyncDone, hasInitialSyncDone } from '@/stores/authStore'
+import { cacheRemoteMedia } from '@/lib/mediaCache'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import type { Contact } from '@/types'
+
+// Warm the on-device media cache with a bounded number of parallel downloads, so
+// sign-in stays responsive while photos/avatars become available offline.
+async function warmMediaCache(urls: string[], kind: string, concurrency = 4): Promise<void> {
+  const unique = Array.from(new Set(urls.filter(Boolean)))
+  let i = 0
+  const worker = async () => {
+    while (i < unique.length) {
+      const u = unique[i++]
+      try { await cacheRemoteMedia(u, kind) } catch { /* best-effort */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, worker))
+}
 
 interface Props {
   userId: string
@@ -68,6 +83,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
 
         // Step 2 — last 50 messages for every conversation (25 → 65 %)
         setLabel('syncing messages...')
+        const imageUrls: string[] = []
         for (let i = 0; i < conversations.length; i++) {
           if (!active) return
           const conv = conversations[i]
@@ -94,6 +110,11 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
               }))
             }
             await cacheMessages(conv.conversationId, local)
+            for (const m of local) {
+              if (m.messageType === 'image' && typeof m.content === 'string' && m.content.startsWith('http')) {
+                imageUrls.push(m.content)
+              }
+            }
           }
           setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
         }
@@ -154,6 +175,18 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         }
 
         if (!active) return
+
+        // Warm the media cache in the background — never block sign-in on it. We pull
+        // contact + community avatars and the most recent chat photos so they're
+        // available offline; the rest download lazily on first view. Fire-and-forget:
+        // these promises keep resolving even after this screen unmounts.
+        const avatarUrls = [
+          ...contacts.map(c => c.avatarUrl).filter((u): u is string => !!u),
+          ...myComms.map((c: any) => c.avatar_url).filter((u: any): u is string => !!u),
+        ]
+        void warmMediaCache(avatarUrls, 'image')
+        void warmMediaCache(imageUrls.slice(-30), 'image')
+
         // Record completion durably BEFORE the cosmetic delay/unmount, so finishing the
         // download is never lost even if this screen unmounts a moment later.
         markInitialSyncDone(userId)

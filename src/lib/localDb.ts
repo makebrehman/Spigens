@@ -143,21 +143,39 @@ export async function initLocalDb(): Promise<void> {
   if (_initPromise) return _initPromise
   _initPromise = (async () => {
     if (!Capacitor.isNativePlatform()) {
-      // Web / Storybook / dev build — use localStorage shim
+      // Web / Storybook / dev build only — there is no native SQLite in a browser,
+      // so fall back to the localStorage shim. This branch never runs on device.
       _usingFallback = true
       return
     }
-    try {
-      await openSQLite()
-    } catch (e) {
-      console.warn('[localDb] SQLite init failed, falling back to localStorage', e)
-      _usingFallback = true
+    // NATIVE (Android / iOS): use real native SQLite ONLY. Never silently demote to
+    // localStorage ("the typical cache") on a device — that hides data loss and is
+    // exactly what we don't want. Retry transient init failures a few times instead.
+    const MAX_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await openSQLite()
+        return // native SQLite is live — _usingFallback stays false
+      } catch (e) {
+        console.warn(`[localDb] native SQLite init failed (attempt ${attempt}/${MAX_ATTEMPTS})`, e)
+        if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, 400 * attempt))
+      }
     }
+    // Persistent failure on device: keep _usingFallback === false so reads/writes
+    // stay on the SQLite path (writes no-op, reads return empty) rather than routing
+    // to localStorage. The device uses native SQLite or no cache at all — never the
+    // typical browser cache. A later initLocalDb() retry can still bring SQLite up.
+    _initPromise = null
+    console.error('[localDb] native SQLite unavailable after retries — offline cache disabled (NOT falling back to localStorage)')
   })()
   return _initPromise
 }
 
 export function isUsingFallback() { return _usingFallback }
+
+// True only when genuine native SQLite is open and serving reads/writes.
+// Useful for diagnostics / a settings "storage: native SQLite" indicator.
+export function isNativeSqliteActive() { return !_usingFallback && _db !== null }
 
 /** Run a write statement (INSERT / UPDATE / DELETE). */
 export async function dbRun(sql: string, params: any[] = []): Promise<void> {

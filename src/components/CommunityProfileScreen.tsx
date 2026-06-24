@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
-import { getCachedCommunityList } from '@/lib/offlineCache'
+import { getCachedCommunityList, getCachedCommunityMembers, cacheCommunityMembers } from '@/lib/offlineCache'
 import { ProfileImage } from '@/components/ProfileImage'
 import { BackButton } from '@/components/BackButton'
 export interface CommunityProfileScreenProps {
@@ -77,9 +77,17 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
         useUIStore.getState().setComponentState('communityProfileData', found)
       }
     })
+    // SQLite-first members: show the cached member list instantly (works offline).
+    getCachedCommunityMembers(communityId).then((cached: any[] | null) => {
+      if (active && cached && cached.length) useUIStore.getState().setComponentState('communityProfileMembers', cached)
+    })
     supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (active && data) useUIStore.getState().setComponentState('communityProfileData', data) })
     supabase.from('community_members').select('user_id, role, profiles(display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active').limit(30).then(({ data }: any) => {
-      if (active && data) useUIStore.getState().setComponentState('communityProfileMembers', data.map((m: any) => ({ user_id: m.user_id, role: m.role, display_name: m.profiles?.display_name, username: m.profiles?.username, avatar_url: m.profiles?.avatar_url })))
+      if (active && data) {
+        const members = data.map((m: any) => ({ user_id: m.user_id, role: m.role, display_name: m.profiles?.display_name, username: m.profiles?.username, avatar_url: m.profiles?.avatar_url }))
+        useUIStore.getState().setComponentState('communityProfileMembers', members)
+        cacheCommunityMembers(communityId, members).catch(() => {})
+      }
       loadPendingRequests()
     })
     return () => { active = false; useUIStore.getState().setComponentState('communityProfileData', null); useUIStore.getState().setComponentState('communityProfileMembers', []); useUIStore.getState().setComponentState('pendingRequests', []) }

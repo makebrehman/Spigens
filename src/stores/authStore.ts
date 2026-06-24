@@ -110,11 +110,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
 
       if (userId && email) {
-        await get().loadProfile(userId)
+        // Never let a failed network load short-circuit the cached fallback + the
+        // isAuthenticated set below — that's what was kicking offline users to the
+        // sign-in screen on reopen.
+        try { await get().loadProfile(userId) } catch { /* offline */ }
         let profile = get().profile
         // If network load failed (offline), fall back to cached profile
         if (!profile) {
-          profile = await getCachedProfile(userId) as Profile | null
+          try { profile = await getCachedProfile(userId) as Profile | null } catch { /* ignore */ }
           if (profile) set({ profile })
         }
         const localPk = loadPrivateKey(userId)
@@ -310,7 +313,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   loadProfile: async (userId: string) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    if (data) { set({ profile: data }); await cacheProfile(userId, data) }
+    // Must never throw: when offline the Supabase call rejects, and callers
+    // (especially initialize) rely on falling back to the cached profile.
+    try {
+      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+      if (data) { set({ profile: data }); await cacheProfile(userId, data) }
+    } catch { /* offline — caller falls back to getCachedProfile */ }
   },
 }))

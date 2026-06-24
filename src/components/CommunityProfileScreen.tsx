@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
+import { getCachedCommunityList } from '@/lib/offlineCache'
 import { ProfileImage } from '@/components/ProfileImage'
 import { BackButton } from '@/components/BackButton'
 export interface CommunityProfileScreenProps {
@@ -66,12 +67,22 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
     }
   }
   useEffect(() => {
-    supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (data) useUIStore.getState().setComponentState('communityProfileData', data) })
+    let active = true
+    // SQLite-first: the community-list cache already holds the full community row, so
+    // show it instantly (works offline). The server fetch below refreshes it.
+    getCachedCommunityList(currentUserId || '').then((list: any[] | null) => {
+      if (!active || !list) return
+      const found = list.find((c: any) => c.id === communityId)
+      if (found && !useUIStore.getState().componentState?.communityProfileData) {
+        useUIStore.getState().setComponentState('communityProfileData', found)
+      }
+    })
+    supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (active && data) useUIStore.getState().setComponentState('communityProfileData', data) })
     supabase.from('community_members').select('user_id, role, profiles(display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active').limit(30).then(({ data }: any) => {
-      if (data) useUIStore.getState().setComponentState('communityProfileMembers', data.map((m: any) => ({ user_id: m.user_id, role: m.role, display_name: m.profiles?.display_name, username: m.profiles?.username, avatar_url: m.profiles?.avatar_url })))
+      if (active && data) useUIStore.getState().setComponentState('communityProfileMembers', data.map((m: any) => ({ user_id: m.user_id, role: m.role, display_name: m.profiles?.display_name, username: m.profiles?.username, avatar_url: m.profiles?.avatar_url })))
       loadPendingRequests()
     })
-    return () => { useUIStore.getState().setComponentState('communityProfileData', null); useUIStore.getState().setComponentState('communityProfileMembers', []); useUIStore.getState().setComponentState('pendingRequests', []) }
+    return () => { active = false; useUIStore.getState().setComponentState('communityProfileData', null); useUIStore.getState().setComponentState('communityProfileMembers', []); useUIStore.getState().setComponentState('pendingRequests', []) }
   }, [communityId])
   const onUpdateCommunityImage = async (file: File) => {
     setCommunityImageUploading(true)

@@ -28,18 +28,28 @@ function lsLoad<T>(key: string): T | null {
 
 export async function cacheProfile(userId: string, profile: any): Promise<void> {
   if (isUsingFallback()) { lsSave(`profile_${userId}`, profile); return }
+  // Store the WHOLE profile row as JSON in `data` (so bio and every other field
+  // survive offline), alongside the broken-out columns we query/sort on.
   await dbRun(
-    `INSERT OR REPLACE INTO profiles (id, username, display_name, avatar_url, public_key, is_online, last_seen, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO profiles (id, username, display_name, avatar_url, public_key, is_online, last_seen, updated_at, data)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [userId, profile.username ?? null, profile.display_name ?? null, profile.avatar_url ?? null,
-     profile.public_key ?? null, profile.is_online ? 1 : 0, profile.last_seen ?? null, profile.updated_at ?? null]
+     profile.public_key ?? null, profile.is_online ? 1 : 0, profile.last_seen ?? null, profile.updated_at ?? null,
+     JSON.stringify(profile)]
   )
 }
 
 export async function getCachedProfile(userId: string): Promise<any | null> {
   if (isUsingFallback()) return lsLoad<any>(`profile_${userId}`)
   const rows = await dbQuery<any>('SELECT * FROM profiles WHERE id = ? LIMIT 1', [userId])
-  return rows[0] ?? null
+  const row = rows[0]
+  if (!row) return null
+  // Prefer the full JSON snapshot; fall back to the columns for rows written before
+  // the `data` column existed.
+  if (row.data) {
+    try { return JSON.parse(row.data) } catch { /* fall through to columns */ }
+  }
+  return row
 }
 
 // ── Contacts ─────────────────────────────────────────────────────────────────

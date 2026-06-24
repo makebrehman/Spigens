@@ -5,6 +5,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
+import { getCachedProfile, cacheProfile } from '@/lib/offlineCache'
 import { ProfileImage } from '@/components/ProfileImage'
 import { BackButton } from '@/components/BackButton'
 
@@ -73,12 +74,23 @@ export function ContactProfileScreen(props: ContactProfileScreenProps) {
   const reasonBtn: any = { width: '100%', textAlign: 'left', padding: '14px 16px', borderRadius: 12, background: '#1f1f1f', color: '#e5e7eb', fontSize: 15, fontWeight: 500, border: 'none', cursor: 'pointer', marginBottom: 8 }
 
   useEffect(() => {
+    let active = true
+    // SQLite-first: show the cached profile immediately (works offline), then refresh
+    // from the server and write the fresh copy back into SQLite.
+    getCachedProfile(userId).then((cached: any) => {
+      if (active && cached) { setProfile(cached); useUIStore.getState().setComponentState('contactProfileData', cached) }
+    })
     supabase.from('profiles')
-      .select('id, display_name, username, avatar_url, bio, is_online, last_seen')
+      .select('*')
       .eq('id', userId)
       .single()
-      .then(({ data }: any) => { if (data) { setProfile(data); useUIStore.getState().setComponentState('contactProfileData', data) } })
-    return () => { useUIStore.getState().setComponentState('contactProfileData', null) }
+      .then(({ data }: any) => {
+        if (!active || !data) return
+        setProfile(data)
+        useUIStore.getState().setComponentState('contactProfileData', data)
+        cacheProfile(userId, data).catch(() => {})
+      })
+    return () => { active = false; useUIStore.getState().setComponentState('contactProfileData', null) }
   }, [userId])
 
   useEffect(() => {

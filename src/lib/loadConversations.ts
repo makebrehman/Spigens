@@ -16,7 +16,7 @@ export async function loadConversations(currentUserId: string, myPrivateKey: str
     .select(`
       conversation_id,
       user_id,
-      profiles:user_id ( id, username, display_name, avatar_url, is_online, public_key, last_seen )
+      profiles:user_id ( id, username, display_name, avatar_url, is_online, public_key, last_seen, bio )
     `)
     .in('conversation_id', myConversationIds)
     .neq('user_id', currentUserId)

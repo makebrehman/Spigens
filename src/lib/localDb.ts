@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   public_key TEXT,
   is_online INTEGER DEFAULT 0,
   last_seen TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  data TEXT
 );
 
 -- Contacts stored as one JSON blob per row (full display-ready Contact). The pos
@@ -116,6 +117,15 @@ async function openSQLite(): Promise<void> {
   // Create / migrate tables
   for (const stmt of SCHEMA.split(';').map(s => s.trim()).filter(Boolean)) {
     await db.run(stmt + ';')
+  }
+
+  // Lightweight, idempotent column migrations (added after v1). Each ALTER throws if
+  // the column already exists — that's expected on upgraded installs, so we swallow it.
+  const migrations = [
+    `ALTER TABLE profiles ADD COLUMN data TEXT`,
+  ]
+  for (const m of migrations) {
+    try { await db.run(m) } catch { /* column already present — fine */ }
   }
 
   _db = db

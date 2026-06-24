@@ -120,7 +120,7 @@ export function MessageBubble(props: MessageBubbleProps) {
       <NativeMediaBubble
         id={id}
         content={resolvedContent}
-        messageType={resolvedType}
+        messageType={resolvedType as string}
         timestamp={timestamp}
         isSent={isSent}
         isRead={isRead}

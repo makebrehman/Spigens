@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TEXT
 );
 
--- Contacts stored as one JSON blob per row (full display-ready Contact). `pos`
--- preserves the server's ordering (most-recent first) so the list never scrambles.
+-- Contacts stored as one JSON blob per row (full display-ready Contact). The pos
+-- column preserves the server ordering (most-recent first) so the list never scrambles.
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
   pos INTEGER,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 
 -- DM messages are stored as one canonical JSON blob per row (see messageShape.ts).
 -- Only the columns we query on (id, conversation_id, created_at) are broken out;
--- the full decrypted, display-ready LocalMessage lives in `data`. This avoids the
+-- the full decrypted, display-ready LocalMessage lives in the data column. This avoids the
 -- old lossy fixed-column schema that dropped derived fields (isSent/timestamp).
 CREATE TABLE IF NOT EXISTS dm_messages (
   id TEXT PRIMARY KEY,

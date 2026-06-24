@@ -6,6 +6,7 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
 import { cacheCommunityList, getCachedCommunityList } from '@/lib/offlineCache'
+import { subscribeDb, topics } from '@/lib/dbEvents'
 export interface CommunityListScreenProps {
   onBack: () => void
   onOpenCommunity: (community: any) => void
@@ -24,16 +25,22 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
     useEffect(() => { const unsub = useUIStore.subscribe((state: any, prevState: any) => { const next = state.componentState?.[key]; const prev = prevState.componentState?.[key]; if (next !== prev) setValue(next ?? defaultValue) }); return unsub }, [key, defaultValue])
     return [value, (newVal: any) => { if (typeof newVal === 'function') { setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r }) } else { setValue(newVal); useUIStore.getState().setComponentState(key, newVal) } }] as [any, (v: any) => void]
   }
+  // LOCAL-FIRST community list — render from SQLite, re-read on any DB change.
+  useEffect(() => {
+    if (!currentUserId) return
+    let active = true
+    const reload = async () => {
+      const cached = await getCachedCommunityList(currentUserId)
+      if (active && cached) useUIStore.getState().setComponentState('communityList', cached)
+    }
+    reload()
+    const unsub = subscribeDb(topics.communities(), reload)
+    return () => { active = false; unsub() }
+  }, [currentUserId])
+
   useEffect(() => {
     let cancelled = false
     let debounceTimer: any = null
-
-    // Seed from cache immediately so the list shows without waiting for the network
-    if (currentUserId) {
-      getCachedCommunityList(currentUserId).then(cached => {
-        if (cached?.length) useUIStore.getState().setComponentState('communityList', cached)
-      })
-    }
 
     const load = async () => {
       try {
@@ -67,9 +74,9 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
           last_message: lastMsgMap[c.id] || null,
           unreadCount: unreadMap[c.id] || 0,
         }))
-        if (!cancelled) {
-          useUIStore.getState().setComponentState('communityList', withLastMsgs)
-          if (currentUserId) void cacheCommunityList(currentUserId, withLastMsgs)
+        if (!cancelled && currentUserId) {
+          // Write to the DB → emit → the local-first effect re-reads and renders.
+          await cacheCommunityList(currentUserId, withLastMsgs)
         }
       } catch (e) {
         console.error('Communities load exception:', e)

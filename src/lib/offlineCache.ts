@@ -43,31 +43,26 @@ export async function getCachedProfile(userId: string): Promise<any | null> {
 
 // ── Contacts ─────────────────────────────────────────────────────────────────
 
+// Replace the whole contact list (callers always pass the full ordered set), then
+// announce the change so the home feed re-reads SQLite and re-renders.
 export async function cacheContacts(userId: string, contacts: any[]): Promise<void> {
-  if (isUsingFallback()) { lsSave(`contacts_${userId}`, contacts); return }
-  for (const c of contacts) {
-    await dbRun(
-      `INSERT OR REPLACE INTO contacts (id, conversation_id, name, avatar_url, last_message, last_message_time, unread_count, raw_profile)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [c.id, c.conversationId ?? null, c.name ?? null, c.avatarUrl ?? null,
-       c.lastMessage ?? null, c.lastMessageTime ?? null, c.unreadCount ?? 0,
-       c.rawProfile ? JSON.stringify(c.rawProfile) : null]
-    )
+  if (isUsingFallback()) {
+    lsSave(`contacts_${userId}`, contacts)
+  } else {
+    await dbRun('DELETE FROM contacts')
+    for (let i = 0; i < contacts.length; i++) {
+      await dbRun('INSERT OR REPLACE INTO contacts (id, pos, data) VALUES (?, ?, ?)',
+        [contacts[i].id, i, JSON.stringify(contacts[i])])
+    }
   }
+  emitDb(topics.contacts())
 }
 
 export async function getCachedContacts(userId: string): Promise<any[] | null> {
   if (isUsingFallback()) return lsLoad<any[]>(`contacts_${userId}`)
-  const rows = await dbQuery<any>('SELECT * FROM contacts ORDER BY last_message_time DESC')
+  const rows = await dbQuery<{ data: string }>('SELECT data FROM contacts ORDER BY pos ASC')
   if (!rows.length) return null
-  return rows.map(r => ({
-    ...r,
-    avatarUrl: r.avatar_url,
-    lastMessageTime: r.last_message_time,
-    lastMessage: r.last_message,
-    unreadCount: r.unread_count ?? 0,
-    rawProfile: r.raw_profile ? JSON.parse(r.raw_profile) : null,
-  }))
+  return rows.map(r => JSON.parse(r.data))
 }
 
 // ── DM Messages ──────────────────────────────────────────────────────────────
@@ -116,16 +111,21 @@ export async function deleteCachedMessage(conversationId: string, id: string): P
 // ── Community List ────────────────────────────────────────────────────────────
 
 export async function cacheCommunityList(userId: string, list: any[]): Promise<void> {
-  if (isUsingFallback()) { lsSave(`community_list_${userId}`, list); return }
-  for (const c of list) {
-    await dbRun(
-      `INSERT OR REPLACE INTO community_list (id, name, description, type, avatar_url, member_count, user_role, raw_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [c.id, c.name ?? null, c.description ?? null, c.type ?? 'public',
-       c.avatar_url ?? null, c.member_count ?? 0, c.userRole ?? c.user_role ?? null,
-       JSON.stringify(c)]
-    )
+  if (isUsingFallback()) {
+    lsSave(`community_list_${userId}`, list)
+  } else {
+    await dbRun('DELETE FROM community_list')
+    for (const c of list) {
+      await dbRun(
+        `INSERT OR REPLACE INTO community_list (id, name, description, type, avatar_url, member_count, user_role, raw_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [c.id, c.name ?? null, c.description ?? null, c.type ?? 'public',
+         c.avatar_url ?? null, c.member_count ?? 0, c.userRole ?? c.user_role ?? null,
+         JSON.stringify(c)]
+      )
+    }
   }
+  emitDb(topics.communities())
 }
 
 export async function getCachedCommunityList(userId: string): Promise<any[] | null> {
@@ -137,42 +137,43 @@ export async function getCachedCommunityList(userId: string): Promise<any[] | nu
 
 // ── Community Messages ────────────────────────────────────────────────────────
 
+// Store canonical (formatMsg-shaped) community messages as JSON blobs, then announce.
 export async function cacheCommunityMessages(communityId: string, messages: any[]): Promise<void> {
-  if (isUsingFallback()) { lsSave(`cmsgs_${communityId}`, messages); return }
-  for (const m of messages) {
-    const profiles = m.profiles ?? {}
-    await dbRun(
-      `INSERT OR REPLACE INTO community_messages
-       (id, community_id, sender_id, content, message_type, metadata, created_at, reply_to, deleted_at, sender_name, sender_username, sender_avatar)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [m.id, communityId, m.sender_id ?? null, m.content ?? null,
-       m.message_type ?? 'text',
-       m.metadata ? (typeof m.metadata === 'string' ? m.metadata : JSON.stringify(m.metadata)) : null,
-       m.created_at ?? null, m.reply_to ?? null, m.deleted_at ?? null,
-       profiles.display_name ?? m.sender_name ?? null,
-       profiles.username ?? m.sender_username ?? null,
-       profiles.avatar_url ?? m.sender_avatar ?? null]
-    )
+  if (isUsingFallback()) {
+    lsSave(`cmsgs_${communityId}`, messages)
+  } else {
+    for (const m of messages) {
+      await dbRun(
+        `INSERT OR REPLACE INTO community_messages (id, community_id, created_at, data) VALUES (?, ?, ?, ?)`,
+        [m.id, communityId, m.createdAt ?? m.created_at ?? null, JSON.stringify(m)]
+      )
+    }
   }
+  emitDb(topics.communityMessages(communityId))
 }
 
 export async function getCachedCommunityMessages(communityId: string): Promise<any[] | null> {
   if (isUsingFallback()) return lsLoad<any[]>(`cmsgs_${communityId}`)
-  const rows = await dbQuery<any>(
-    'SELECT * FROM community_messages WHERE community_id = ? ORDER BY created_at ASC',
+  const rows = await dbQuery<{ data: string }>(
+    'SELECT data FROM community_messages WHERE community_id = ? ORDER BY created_at ASC',
     [communityId]
   )
   if (!rows.length) return null
-  return rows.map(r => ({
-    ...r,
-    message_type: r.message_type,
-    metadata: r.metadata ? JSON.parse(r.metadata) : null,
-    profiles: { display_name: r.sender_name, username: r.sender_username, avatar_url: r.sender_avatar },
-  }))
+  return rows.map(r => JSON.parse(r.data))
 }
 
 export async function upsertCommunityMessage(communityId: string, msg: any): Promise<void> {
   await cacheCommunityMessages(communityId, [msg])
+}
+
+export async function deleteCachedCommunityMessage(communityId: string, id: string): Promise<void> {
+  if (isUsingFallback()) {
+    const list = (lsLoad<any[]>(`cmsgs_${communityId}`) ?? []).filter(m => m.id !== id)
+    lsSave(`cmsgs_${communityId}`, list)
+  } else {
+    await dbRun('DELETE FROM community_messages WHERE id = ?', [id])
+  }
+  emitDb(topics.communityMessages(communityId))
 }
 
 // ── Pending DM Messages ───────────────────────────────────────────────────────

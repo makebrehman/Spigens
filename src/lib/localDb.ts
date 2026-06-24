@@ -18,15 +18,12 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TEXT
 );
 
+-- Contacts stored as one JSON blob per row (full display-ready Contact). `pos`
+-- preserves the server's ordering (most-recent first) so the list never scrambles.
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
-  conversation_id TEXT,
-  name TEXT,
-  avatar_url TEXT,
-  last_message TEXT,
-  last_message_time TEXT,
-  unread_count INTEGER DEFAULT 0,
-  raw_profile TEXT
+  pos INTEGER,
+  data TEXT
 );
 
 -- DM messages are stored as one canonical JSON blob per row (see messageShape.ts).
@@ -52,19 +49,12 @@ CREATE TABLE IF NOT EXISTS community_list (
   raw_data TEXT
 );
 
+-- Community messages stored as one canonical JSON blob per row (formatMsg shape).
 CREATE TABLE IF NOT EXISTS community_messages (
   id TEXT PRIMARY KEY,
   community_id TEXT NOT NULL,
-  sender_id TEXT,
-  content TEXT,
-  message_type TEXT DEFAULT 'text',
-  metadata TEXT,
   created_at TEXT,
-  reply_to TEXT,
-  deleted_at TEXT,
-  sender_name TEXT,
-  sender_username TEXT,
-  sender_avatar TEXT
+  data TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_comm_msgs ON community_messages(community_id, created_at);
 

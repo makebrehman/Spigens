@@ -114,7 +114,29 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             .eq('community_id', myComms[i].id)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) await cacheCommunityMessages(myComms[i].id, [...data].reverse())
+          if (data?.length) {
+            // Format into the SAME canonical shape CommunityChatScreen stores, so the
+            // cache is display-ready offline right after sign-in.
+            const formatted = [...data].reverse().map((row: any) => {
+              const sp = row.profiles
+              const name = sp?.display_name || sp?.username || 'Unknown'
+              return {
+                id: row.id,
+                content: row.content || '',
+                messageType: row.message_type || 'text',
+                senderId: row.sender_id,
+                senderName: name,
+                senderAvatar: sp?.avatar_url ?? null,
+                senderInitials: (sp?.display_name || sp?.username || '?').charAt(0).toUpperCase(),
+                timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                createdAt: row.created_at,
+                isMine: row.sender_id === userId,
+                isDeleted: !!row.deleted_at,
+                replyTo: row.reply_to || null,
+              }
+            })
+            await cacheCommunityMessages(myComms[i].id, formatted)
+          }
           setProgress(80 + Math.round(((i + 1) / Math.max(myComms.length, 1)) * 17))
         }
 

@@ -26,6 +26,7 @@ import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
 import { cacheContacts, getCachedContacts } from '@/lib/offlineCache'
+import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb } from '@/lib/localDb'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
@@ -217,15 +218,8 @@ export default function Home() {
   const fetchConversations = useCallback(async () => {
     if (!isAuthenticated || !user?.id || activeChatUser) return
 
-    // Show cached contacts immediately while network loads
-    if (user?.id) {
-      const cached = await getCachedContacts(user.id)
-      if (cached?.length) {
-        useContactStore.getState().setContacts(cached)
-        useUIStore.getState().setComponentState('feedContacts', cached)
-      }
-    }
-
+    // Cached contacts already render via the local-first effect below; this only
+    // refreshes the DB from the network.
     if (!isOnline) { setLoadingContacts(false); return } // offline: cached contacts are enough
 
     const [conversations, unreadRes, blocksRes] = await Promise.all([
@@ -259,8 +253,9 @@ export default function Home() {
         rawProfile: c.otherProfile
       }
     })
-    useContactStore.getState().setContacts(mappedContacts)
-    useUIStore.getState().setComponentState('feedContacts', mappedContacts)
+    // Write fresh contacts to the DB → emit → the local-first effect re-renders.
+    // (We do not setContacts here directly — the DB is the single source of truth.)
+    // Guard against wiping the cache on a transient empty/error result.
     if (user?.id && mappedContacts.length) await cacheContacts(user.id, mappedContacts)
     setLoadingContacts(false)
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
@@ -269,15 +264,9 @@ export default function Home() {
     fetchConversations()
   }, [fetchConversations])
 
-  // Seed cached contacts instantly + load archived/pinned prefs as soon as user is known
+  // Load archived/pinned/muted prefs as soon as the user is known
   useEffect(() => {
     if (!user?.id) return
-    getCachedContacts(user.id).then(cached => {
-      if (cached?.length) {
-        useContactStore.getState().setContacts(cached)
-        useUIStore.getState().setComponentState('feedContacts', cached)
-      }
-    })
     try {
       const arch: string[] = JSON.parse(localStorage.getItem(`spigens_archived_${user.id}`) || '[]')
       setArchivedIds(new Set(arch))
@@ -286,6 +275,25 @@ export default function Home() {
       const muted: string[] = JSON.parse(localStorage.getItem(`spigens_muted_${user.id}`) || '[]')
       setMutedIds(new Set(muted))
     } catch {}
+  }, [user?.id])
+
+  // LOCAL-FIRST contacts — the home feed renders from SQLite. Read on mount and
+  // re-read whenever a write announces a change (live presence is overlaid on top,
+  // since online/offline is ephemeral and not part of the durable DB row).
+  useEffect(() => {
+    if (!user?.id) return
+    let active = true
+    const reload = async () => {
+      const cached = await getCachedContacts(user.id)
+      if (!active || !cached) return
+      const online = useContactStore.getState().onlineUserIds
+      const withPresence = cached.map((c: any) => ({ ...c, isOnline: online.has(c.id) }))
+      useContactStore.getState().setContacts(withPresence)
+      useUIStore.getState().setComponentState('feedContacts', withPresence)
+    }
+    reload()
+    const unsub = subscribeDb(topics.contacts(), reload)
+    return () => { active = false; unsub() }
   }, [user?.id])
 
   // presence effect
@@ -1134,8 +1142,8 @@ export default function Home() {
                 setPinnedIds(new Set(next))
                 const nextSet = new Set(next)
                 const sorted = [...useContactStore.getState().contacts].sort((a, b) => (nextSet.has(b.id) ? 1 : 0) - (nextSet.has(a.id) ? 1 : 0))
-                useContactStore.getState().setContacts(sorted)
-                useUIStore.getState().setComponentState('feedContacts', sorted)
+                if (user?.id) void cacheContacts(user.id, sorted) // persist order → emit → local-first re-read
+
               } else if (option.id === 'archive') {
                 const archived: string[] = JSON.parse(localStorage.getItem(archivedKey) || '[]')
                 if (!archived.includes(contact.id)) {
@@ -1204,9 +1212,7 @@ export default function Home() {
                 onClick={() => {
                   const c = pendingDeleteContact
                   const filtered = useContactStore.getState().contacts.filter(x => x.id !== c.id)
-                  useContactStore.getState().setContacts(filtered)
-                  useUIStore.getState().setComponentState('feedContacts', filtered)
-                  if (user?.id) void cacheContacts(user.id, filtered)
+                  if (user?.id) void cacheContacts(user.id, filtered) // emit → local-first re-read updates the list
                   setPendingDeleteContact(null)
                 }}
                 style={{ flex: 1, padding: 12, borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer' }}

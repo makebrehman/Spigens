@@ -9,6 +9,7 @@ import {
   cacheMessages,
   cacheCommunityList,
   cacheCommunityMessages,
+  cacheCommunityMembers,
   cacheProfile,
 } from '@/lib/offlineCache'
 import { markInitialSyncDone, hasInitialSyncDone } from '@/stores/authStore'
@@ -170,6 +171,20 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
               }
             })
             await cacheCommunityMessages(myComms[i].id, formatted)
+          }
+          // Cache this community's members so the member list works offline and
+          // "mutual communities" can be computed locally from the DB.
+          const { data: mem } = await supabase
+            .from('community_members')
+            .select('user_id, role, profiles(display_name, username, avatar_url)')
+            .eq('community_id', myComms[i].id)
+            .eq('status', 'active')
+            .limit(100)
+          if (mem?.length) {
+            await cacheCommunityMembers(myComms[i].id, mem.map((m: any) => ({
+              user_id: m.user_id, role: m.role,
+              display_name: (m.profiles as any)?.display_name, username: (m.profiles as any)?.username, avatar_url: (m.profiles as any)?.avatar_url,
+            })))
           }
           setProgress(80 + Math.round(((i + 1) / Math.max(myComms.length, 1)) * 17))
         }

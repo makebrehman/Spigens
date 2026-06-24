@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS community_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_comm_msgs ON community_messages(community_id, created_at);
 
+-- Community members (per community), so the community-profile member list and
+-- "mutual communities" can be computed locally instead of from the server.
+CREATE TABLE IF NOT EXISTS community_members (
+  community_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  data TEXT,
+  PRIMARY KEY (community_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_comm_members_user ON community_members(user_id);
+
 CREATE TABLE IF NOT EXISTS pending_messages (
   id TEXT PRIMARY KEY,
   conversation_id TEXT,
@@ -207,7 +217,7 @@ export function getLocalDbDiagnostics() {
 
 // Row counts per table. -1 means the query failed / the DB isn't serving reads.
 export async function getTableCounts(): Promise<Record<string, number>> {
-  const tables = ['profiles', 'contacts', 'community_list', 'dm_messages', 'community_messages', 'media_cache']
+  const tables = ['profiles', 'contacts', 'community_list', 'dm_messages', 'community_messages', 'community_members', 'media_cache']
   const out: Record<string, number> = {}
   for (const t of tables) {
     try {
@@ -237,7 +247,7 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
 /** Delete all user data from every table (called on logout). */
 export async function clearDbForUser(_userId: string): Promise<void> {
   if (_usingFallback) return
-  for (const t of ['dm_messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages', 'media_cache']) {
+  for (const t of ['dm_messages', 'community_messages', 'community_members', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages', 'media_cache']) {
     await dbRun(`DELETE FROM ${t}`)
   }
 }

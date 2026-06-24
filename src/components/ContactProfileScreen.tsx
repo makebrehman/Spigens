@@ -5,7 +5,7 @@ import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
-import { getCachedProfile, cacheProfile } from '@/lib/offlineCache'
+import { getCachedProfile, cacheProfile, getCachedCommunityList, getCachedCommunityIdsForMember } from '@/lib/offlineCache'
 import { ProfileImage } from '@/components/ProfileImage'
 import { BackButton } from '@/components/BackButton'
 
@@ -95,25 +95,44 @@ export function ContactProfileScreen(props: ContactProfileScreenProps) {
 
   useEffect(() => {
     if (!userId || !currentUserId) return
+    let active = true
+    // Mutual communities computed LOCALLY first: my communities ∩ the communities
+    // where this contact is a cached member. Instant + works offline. (Member lists
+    // are cached at sign-in sync and when a community profile is opened.)
+    const applyMutual = (list: any[]) => {
+      if (!active) return
+      setMutualCommunities(list)
+      useUIStore.getState().setComponentState('contactMutualCommunities', list)
+    }
+    ;(async () => {
+      const [myList, theirIds] = await Promise.all([
+        getCachedCommunityList(currentUserId),
+        getCachedCommunityIdsForMember(userId),
+      ])
+      if (!active) return
+      const theirSet = new Set(theirIds)
+      applyMutual((myList || []).filter((c: any) => theirSet.has(c.id)))
+    })()
+    // Background server refresh (online) keeps it accurate even before members have
+    // been cached locally; the local result above is what shows offline/instantly.
     supabase.from('community_members')
       .select('community_id, communities(id, name, avatar_url, type)')
       .eq('user_id', userId)
       .eq('status', 'active')
       .then(({ data: theirData }: any) => {
-        if (!theirData?.length) return
-        const theirIds = theirData.map((m: any) => m.community_id)
+        if (!active || !theirData?.length) return
+        const theirCommIds = theirData.map((m: any) => m.community_id)
         supabase.from('community_members')
           .select('community_id')
           .eq('user_id', currentUserId)
           .eq('status', 'active')
-          .in('community_id', theirIds)
+          .in('community_id', theirCommIds)
           .then(({ data: myData }: any) => {
             const mySet = new Set((myData || []).map((m: any) => m.community_id))
-            const _mutual = theirData.filter((m: any) => mySet.has(m.community_id)).map((m: any) => m.communities).filter(Boolean)
-            setMutualCommunities(_mutual)
-            useUIStore.getState().setComponentState('contactMutualCommunities', _mutual)
+            applyMutual(theirData.filter((m: any) => mySet.has(m.community_id)).map((m: any) => m.communities).filter(Boolean))
           })
       })
+    return () => { active = false }
   }, [userId, currentUserId])
 
   useEffect(() => {

@@ -187,6 +187,36 @@ export async function deleteCachedCommunityMessage(communityId: string, id: stri
   emitDb(topics.communityMessages(communityId))
 }
 
+// ── Community Members ─────────────────────────────────────────────────────────
+
+// Replace the cached member list for a community. Stored so the community-profile
+// member list works offline AND so "mutual communities" can be derived locally.
+export async function cacheCommunityMembers(communityId: string, members: any[]): Promise<void> {
+  if (isUsingFallback()) { lsSave(`cmembers_${communityId}`, members); return }
+  await dbRun('DELETE FROM community_members WHERE community_id = ?', [communityId])
+  for (const m of members) {
+    if (!m?.user_id) continue
+    await dbRun('INSERT OR REPLACE INTO community_members (community_id, user_id, data) VALUES (?, ?, ?)',
+      [communityId, m.user_id, JSON.stringify(m)])
+  }
+}
+
+export async function getCachedCommunityMembers(communityId: string): Promise<any[] | null> {
+  if (isUsingFallback()) return lsLoad<any[]>(`cmembers_${communityId}`)
+  const rows = await dbQuery<{ data: string }>('SELECT data FROM community_members WHERE community_id = ?', [communityId])
+  if (!rows.length) return null
+  return rows.map(r => JSON.parse(r.data))
+}
+
+// Community ids (among the ones we've cached members for — i.e. our own) where the
+// given user is a member. Used to compute mutual communities entirely locally.
+export async function getCachedCommunityIdsForMember(userId: string): Promise<string[]> {
+  if (isUsingFallback()) return []
+  const rows = await dbQuery<{ community_id: string }>(
+    'SELECT DISTINCT community_id FROM community_members WHERE user_id = ?', [userId])
+  return rows.map(r => r.community_id)
+}
+
 // ── Pending DM Messages ───────────────────────────────────────────────────────
 
 export interface PendingMsg {

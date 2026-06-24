@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS media_cache (
 let _db: SQLiteDBConnection | null = null
 let _initPromise: Promise<void> | null = null
 let _usingFallback = false
+let _lastInitError: string | null = null
 
 // ── SQLite helpers ───────────────────────────────────────────────────────────
 
@@ -166,6 +167,7 @@ export async function initLocalDb(): Promise<void> {
         await openSQLite()
         return // native SQLite is live — _usingFallback stays false
       } catch (e) {
+        _lastInitError = String((e as any)?.message ?? e)
         console.warn(`[localDb] native SQLite init failed (attempt ${attempt}/${MAX_ATTEMPTS})`, e)
         if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, 400 * attempt))
       }
@@ -185,6 +187,34 @@ export function isUsingFallback() { return _usingFallback }
 // True only when genuine native SQLite is open and serving reads/writes.
 // Useful for diagnostics / a settings "storage: native SQLite" indicator.
 export function isNativeSqliteActive() { return !_usingFallback && _db !== null }
+
+// ── Diagnostics (temporary, for debugging offline storage on-device) ──────────
+
+export function getLocalDbDiagnostics() {
+  return {
+    native: Capacitor.isNativePlatform(),
+    sqlitePluginAvailable: Capacitor.isPluginAvailable('CapacitorSQLite'),
+    filesystemPluginAvailable: Capacitor.isPluginAvailable('Filesystem'),
+    sqliteActive: !_usingFallback && _db !== null,
+    usingFallback: _usingFallback,
+    dbOpen: _db !== null,
+    lastInitError: _lastInitError,
+  }
+}
+
+// Row counts per table. -1 means the query failed / the DB isn't serving reads.
+export async function getTableCounts(): Promise<Record<string, number>> {
+  const tables = ['profiles', 'contacts', 'community_list', 'dm_messages', 'community_messages', 'media_cache']
+  const out: Record<string, number> = {}
+  for (const t of tables) {
+    try {
+      if (_usingFallback || !_db) { out[t] = -1; continue }
+      const { values } = await _db.query(`SELECT COUNT(*) AS c FROM ${t};`)
+      out[t] = Number((values?.[0] as any)?.c ?? -1)
+    } catch { out[t] = -1 }
+  }
+  return out
+}
 
 /** Run a write statement (INSERT / UPDATE / DELETE). */
 export async function dbRun(sql: string, params: any[] = []): Promise<void> {

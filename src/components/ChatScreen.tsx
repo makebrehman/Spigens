@@ -10,6 +10,7 @@ import { ProfileImage } from './ProfileImage'
 import { ChatName } from './ChatName'
 import { OnlineStatus } from './OnlineStatus'
 import { TypingIndicator } from './TypingIndicator'
+import { ScreenLoader } from './ScreenLoader'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { useMessageStore } from '@/stores/messageStore'
 import { useUIStore } from '@/stores/uiStore'
@@ -74,6 +75,11 @@ export function ChatScreen(props: ChatScreenProps) {
   // Always-current mirror of the rendered messages, for read-side logic inside async
   // realtime/send handlers (they must not depend on a stale render closure).
   const messagesRef = useRef<LocalMessage[]>([])
+
+  // GenUI-safe loading gate: true once this chat's messages have resolved (cache,
+  // network, offline, or a brand-new empty chat). While false a plain React loader
+  // covers the screen so the GenUI source's "no messages yet" never shows mid-load.
+  const [loaded, setLoaded] = useState(false)
   const [replyingTo, setReplyingTo] = useState<any>(null)
   const [encWarning, setEncWarning] = useState(false)
   const [attachToast, setAttachToast] = useState<string | null>(null)
@@ -120,7 +126,7 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     // Offline: keep current conversationId (don't null it — Effect 2 reads cache by it)
-    if (!networkIsOnline) return
+    if (!networkIsOnline) { setLoaded(true); return }
 
     const resolve = async () => {
       const { data: mine, error } = await supabase
@@ -128,7 +134,7 @@ export function ChatScreen(props: ChatScreenProps) {
         .select('conversation_id')
         .eq('user_id', currentUserId)
 
-      if (error || !mine?.length) { setConversationId(null); return }
+      if (error || !mine?.length) { setConversationId(null); setLoaded(true); return }
 
       const myIds = mine.map(r => r.conversation_id)
       const { data: shared, error: sharedErr } = await supabase
@@ -138,11 +144,24 @@ export function ChatScreen(props: ChatScreenProps) {
         .in('conversation_id', myIds)
         .limit(1)
 
-      setConversationId(!sharedErr && shared?.length ? shared[0].conversation_id : null)
+      const cid = !sharedErr && shared?.length ? shared[0].conversation_id : null
+      setConversationId(cid)
+      // No existing conversation → brand-new empty chat; nothing to load, reveal now.
+      if (!cid) setLoaded(true)
     }
 
     resolve()
   }, [otherUserId, currentUserId, networkIsOnline])
+
+  // Reset the loading gate when the contact changes; safety timeout guarantees the
+  // loader can never hang even if a fetch stalls. (Legacy contactId path has no async
+  // message load, so it reveals immediately.)
+  useEffect(() => {
+    if (!otherUserId) { setLoaded(true); return }
+    setLoaded(false)
+    const t = setTimeout(() => setLoaded(true), 5000)
+    return () => clearTimeout(t)
+  }, [otherUserId])
 
   // Thin wrapper over the shared canonical transform (messageShape.ts) so the
   // bulk-download path (DataSyncScreen) and this screen produce identical rows.
@@ -183,6 +202,10 @@ export function ChatScreen(props: ChatScreenProps) {
       messagesRef.current = merged
       setRealMessages(merged)
       useUIStore.getState().setComponentState('chatMessages', merged)
+      // Reveal the screen once we actually have cached messages (or we're offline and
+      // this is all we'll get). An online empty cache keeps the loader until the
+      // network load below settles, so "no messages yet" isn't shown prematurely.
+      if (merged.length > 0 || !useNetworkStore.getState().isOnline) setLoaded(true)
     }
 
     reload()
@@ -205,7 +228,7 @@ export function ChatScreen(props: ChatScreenProps) {
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true })
 
-      if (error || !data) { console.error('Failed to load messages:', error); return }
+      if (error || !data) { console.error('Failed to load messages:', error); setLoaded(true); return }
 
       const msgs: any[] = []
       data.forEach(row => msgs.push(decryptRow(row, msgs)))
@@ -239,6 +262,7 @@ export function ChatScreen(props: ChatScreenProps) {
       await cacheMessages(conversationId, allMsgs)
       useUIStore.getState().setComponentState('conversationId', conversationId)
       useUIStore.getState().setComponentState('currentUserId', currentUserId)
+      setLoaded(true) // network settled → reveal (the emit above already rendered messages)
     }
 
     const loadReactions = async () => {
@@ -864,6 +888,8 @@ export function ChatScreen(props: ChatScreenProps) {
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
+
+      {!loaded && <ScreenLoader />}
 
       {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}
 

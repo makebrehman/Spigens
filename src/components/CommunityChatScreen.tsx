@@ -10,6 +10,7 @@ import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
+import { ScreenLoader } from './ScreenLoader'
 import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
 import { MessageReactions } from './MessageReactions'
 import { DateSeparator } from './DateSeparator'
@@ -31,6 +32,8 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const [memberCount, setMemberCount] = useState(props.memberCount)
   const [isMember, setIsMember] = useState(props.isMember)
   const [communityAvatarUrl, setCommunityAvatarUrl] = useState<string | null>(props.communityAvatarUrl ?? null)
+  // GenUI-safe loading gate (see ScreenLoader): covers the screen until messages resolve.
+  const [loaded, setLoaded] = useState(false)
   const currentUserId = useAuthStore(state => state.user?.id)
   const profile = useAuthStore(state => state.profile)
   const networkIsOnline = useNetworkStore(state => state.isOnline)
@@ -104,6 +107,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
               })
           }
         }
+        setLoaded(true) // network settled → reveal
       })
     channelRef.current = supabase.channel('comm-chat:' + communityId)
       .on('broadcast', { event: 'typing' }, (msg: any) => {
@@ -174,11 +178,21 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     let active = true
     const reload = async () => {
       const cached = await getCachedCommunityMessages(communityId)
-      if (active && cached) useUIStore.getState().setComponentState('communityMessages', cached)
+      if (!active) return
+      if (cached) useUIStore.getState().setComponentState('communityMessages', cached)
+      if ((cached && cached.length > 0) || !useNetworkStore.getState().isOnline) setLoaded(true)
     }
     reload()
     const unsub = subscribeDb(topics.communityMessages(communityId), reload)
     return () => { active = false; unsub() }
+  }, [communityId])
+
+  // Reset the loading gate when the community changes; safety timeout never hangs it.
+  useEffect(() => {
+    if (!communityId) { setLoaded(true); return }
+    setLoaded(false)
+    const t = setTimeout(() => setLoaded(true), 5000)
+    return () => clearTimeout(t)
   }, [communityId])
 
   useEffect(() => {
@@ -296,7 +310,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const url = await uploadCommunityImage(communityId, file)
     if (url) setCommunityAvatarUrl(url)
   }
-  return <RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
+  return <>{!loaded && <ScreenLoader />}<RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
       const key = 'reactions:' + messageId
       const reactions = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       if (!reactions.length) return
@@ -307,5 +321,5 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       const enriched = reactions.map((r: any) => ({ emoji: r.emoji, name: nameMap[r.user_id] || 'Unknown', isMe: r.user_id === currentUserId }))
       useUIStore.getState().setComponentState('reactionDetail', { messageId, reactions: enriched })
     },
-    useComponentState }} />
+    useComponentState }} /></>
 }

@@ -255,9 +255,17 @@ export default function Home() {
       }
     })
     // Write fresh contacts to the DB → emit → the local-first effect re-renders.
-    // (We do not setContacts here directly — the DB is the single source of truth.)
+    // Also populate the store from this same data synchronously BEFORE clearing the
+    // loading flag, so the list never flashes its empty state during the async
+    // DB read-back (the live-read still handles later realtime updates).
     // Guard against wiping the cache on a transient empty/error result.
-    if (user?.id && mappedContacts.length) await cacheContacts(user.id, mappedContacts)
+    if (user?.id && mappedContacts.length) {
+      await cacheContacts(user.id, mappedContacts)
+      const online = useContactStore.getState().onlineUserIds
+      const withPresence = mappedContacts.map(c => ({ ...c, isOnline: online.has(c.id) }))
+      useContactStore.getState().setContacts(withPresence)
+      useUIStore.getState().setComponentState('feedContacts', withPresence)
+    }
     setLoadingContacts(false)
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
 

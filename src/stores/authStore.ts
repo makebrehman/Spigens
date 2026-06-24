@@ -15,6 +15,27 @@ import { unregisterNativePush } from '@/lib/nativePush'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
+// Per-user marker that the one-time post-login full download has completed at least
+// once on this device. Persisted (not just in memory) so an interrupted first sync
+// resumes on the next launch instead of being silently skipped, and a completed one
+// never re-blocks the user. Cleared on sign-out (which also wipes the local cache).
+function initialSyncDoneKey(userId: string) { return `spigens_initial_sync_done_${userId}` }
+
+export function hasInitialSyncDone(userId: string): boolean {
+  if (typeof window === 'undefined') return false
+  try { return localStorage.getItem(initialSyncDoneKey(userId)) === '1' } catch { return false }
+}
+
+export function markInitialSyncDone(userId: string): void {
+  if (typeof window === 'undefined') return
+  try { localStorage.setItem(initialSyncDoneKey(userId), '1') } catch { /* ignore */ }
+}
+
+function clearInitialSyncDone(userId: string): void {
+  if (typeof window === 'undefined') return
+  try { localStorage.removeItem(initialSyncDoneKey(userId)) } catch { /* ignore */ }
+}
+
 interface AuthState {
   user: { id: string; email: string } | null
   profile: Profile | null
@@ -22,8 +43,10 @@ interface AuthState {
   isAuthenticated: boolean
   privateKey: string | null
   _tempPassword: string | null
+  needsInitialSync: boolean
 
   initialize: () => Promise<void>
+  clearNeedsInitialSync: () => void
   signUp: (email: string, password: string) => Promise<{ error: string | null; needsConfirmation?: boolean }>
   completeProfile: (username: string, displayName: string) => Promise<{ error: string | null }>
   verifyEmailCode: (email: string, code: string) => Promise<{ error: string | null; userId?: string }>
@@ -91,6 +114,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   isAuthenticated: false,
   privateKey: null,
   _tempPassword: null,
+  needsInitialSync: false,
+
+  clearNeedsInitialSync: () => set({ needsInitialSync: false }),
 
   initialize: async () => {
     set({ isLoading: true })
@@ -125,6 +151,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           user: { id: userId, email },
           isAuthenticated: !!profile?.username,
           privateKey: profile?.username ? localPk : null,
+          // Re-run the post-login download if a previous first sync never finished.
+          needsInitialSync: !!profile?.username && !hasInitialSyncDone(userId),
         })
       }
     } finally {
@@ -144,6 +172,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           user: { id: session.user.id, email: session.user.email! },
           isAuthenticated: !!profile?.username,
           privateKey: profile?.username ? localPk : null,
+          needsInitialSync: !!profile?.username && !hasInitialSyncDone(session.user.id),
         })
       } else if (event === 'SIGNED_OUT') {
         // A SIGNED_OUT while offline is almost always a failed background token
@@ -204,7 +233,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       try { await uploadPendingAvatar(user.id) } catch { /* non-fatal */ }
 
       await get().loadProfile(user.id)
-      set({ isAuthenticated: true })
+      // New account: run the post-login DataSyncScreen too (fast for a fresh account,
+      // but keeps the flow uniform and writes the "sync done" marker).
+      clearInitialSyncDone(user.id)
+      set({ isAuthenticated: true, needsInitialSync: true })
       return { error: null }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -292,15 +324,16 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         try { await uploadPendingAvatar(data.user.id) } catch { /* non-fatal */ }
       }
 
-      // Signal page.tsx to show the post-login DataSyncScreen exactly once
-      if (typeof window !== 'undefined' && profile?.username) {
-        localStorage.setItem('spigens_just_signed_in', data.user.id)
-      }
+      // A successful sign-in always means a fresh full download: sign-out wipes the
+      // local cache, so clear the "sync done" marker and flag that the post-login
+      // DataSyncScreen must run.
+      if (profile?.username) clearInitialSyncDone(data.user.id)
 
       set({
         user: { id: data.user.id, email: data.user.email! },
         isAuthenticated: !!profile?.username,
         privateKey,
+        needsInitialSync: !!profile?.username,
       })
 
       return { error: null }
@@ -315,9 +348,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
       await unregisterNativePush() // drop this device's FCM token so it stops getting pushes
       await clearUserCache(user.id)
+      clearInitialSyncDone(user.id) // next sign-in must do a fresh full download
     }
     await supabase.auth.signOut()
-    set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null })
+    set({ user: null, profile: null, isAuthenticated: false, privateKey: null, _tempPassword: null, needsInitialSync: false })
   },
 
   loadProfile: async (userId: string) => {

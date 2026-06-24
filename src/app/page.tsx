@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { useContactStore } from '@/stores/contactStore'
 import { useUIStore } from '@/stores/uiStore'
@@ -102,10 +102,6 @@ function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQ
 }
 
 export default function Home() {
-  // tracks which userIds have completed the post-login data sync in this session
-  const syncedUsers = useRef<Set<string>>(new Set())
-  const [syncPhase, setSyncPhase] = useState<'pending' | 'syncing' | 'done'>('pending')
-
   const [showSearch, setShowSearch] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [hydrated, setHydrated] = useState(false)
@@ -147,21 +143,8 @@ export default function Home() {
     initLocalDb().finally(() => useAuthStore.getState().initialize())
   }, [])
 
-  const { isAuthenticated, isLoading: authLoading, user, profile, privateKey } = useAuthStore()
+  const { isAuthenticated, isLoading: authLoading, user, profile, privateKey, needsInitialSync, clearNeedsInitialSync } = useAuthStore()
   const { isOnline, setOnline } = useNetworkStore()
-
-  // Trigger post-login sync only on a fresh sign-in (flag set by authStore.signIn)
-  useEffect(() => {
-    if (!isAuthenticated || !user?.id || !profile?.username) return
-    if (syncedUsers.current.has(user.id)) { setSyncPhase('done'); return }
-    const justSignedIn = typeof window !== 'undefined' && localStorage.getItem('spigens_just_signed_in') === user.id
-    if (justSignedIn) {
-      setSyncPhase('syncing')
-    } else {
-      syncedUsers.current.add(user.id)
-      setSyncPhase('done')
-    }
-  }, [isAuthenticated, user?.id, profile?.username])
 
   // Track online/offline state globally
   useEffect(() => {
@@ -815,18 +798,17 @@ export default function Home() {
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
 
-  // Post-login data sync — runs once per user per session
-  if (syncPhase === 'syncing' && user?.id) {
+  // Post-login data sync — one full download after sign-in. Driven by the auth store's
+  // needsInitialSync (set on sign-in / profile creation). DataSyncScreen writes a durable
+  // per-user "done" marker when it finishes, so an interrupted first sync resumes on the
+  // next launch instead of being skipped, and a completed one never re-blocks the user.
+  if (needsInitialSync && user?.id) {
     return (
       <DataSyncScreen
         userId={user.id}
         privateKey={privateKey}
         isOnline={isOnline}
-        onDone={() => {
-          syncedUsers.current.add(user.id)
-          if (typeof window !== 'undefined') localStorage.removeItem('spigens_just_signed_in')
-          setSyncPhase('done')
-        }}
+        onDone={() => clearNeedsInitialSync()}
       />
     )
   }

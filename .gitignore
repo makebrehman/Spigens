@@ -7,3 +7,8 @@ coverage/
 !.env.example
 tsconfig.tsbuildinfo
 out/
+
+# Never commit Firebase service-account / admin SDK keys
+*firebase-adminsdk*
+*service-account*.json
+spigens-*-firebase-adminsdk-*

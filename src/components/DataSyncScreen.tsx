@@ -9,7 +9,9 @@ import {
   cacheMessages,
   cacheCommunityList,
   cacheCommunityMessages,
+  cacheProfile,
 } from '@/lib/offlineCache'
+import { markInitialSyncDone, hasInitialSyncDone } from '@/stores/authStore'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import type { Contact } from '@/types'
 
@@ -31,6 +33,10 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
 
     const sync = async () => {
       try {
+        // Already fully synced once on this device (e.g. this screen remounted
+        // mid-flight) — don't re-download, just release the screen.
+        if (hasInitialSyncDone(userId)) { onDone(); return }
+
         // Step 1 — conversations (0 → 25 %)
         setLabel('fetching your chats...')
         setProgress(5)
@@ -52,6 +58,13 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
           rawProfile: c.otherProfile,
         }))
         if (contacts.length) await cacheContacts(userId, contacts)
+
+        // Cache each chat partner's profile too, so their profile screen works offline.
+        for (const c of conversations) {
+          if (c.otherProfile?.id) {
+            try { await cacheProfile(c.otherProfile.id, c.otherProfile) } catch { /* non-fatal */ }
+          }
+        }
 
         // Step 2 — last 50 messages for every conversation (25 → 65 %)
         setLabel('syncing messages...')
@@ -141,11 +154,16 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         }
 
         if (!active) return
+        // Record completion durably BEFORE the cosmetic delay/unmount, so finishing the
+        // download is never lost even if this screen unmounts a moment later.
+        markInitialSyncDone(userId)
         setProgress(100)
         setLabel('ready!')
-        setTimeout(() => { if (active) onDone() }, 600)
+        // onDone() clears needsInitialSync (a store action — safe to call post-unmount).
+        setTimeout(() => onDone(), 600)
       } catch {
-        if (active) onDone()
+        // Failed/partial sync: do NOT mark done, so it retries on the next launch.
+        onDone()
       }
     }
 

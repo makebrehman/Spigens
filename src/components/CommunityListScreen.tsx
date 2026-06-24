@@ -6,6 +6,8 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
 import { cacheCommunityList, getCachedCommunityList } from '@/lib/offlineCache'
+import { subscribeDb, topics } from '@/lib/dbEvents'
+import { ScreenLoader } from './ScreenLoader'
 export interface CommunityListScreenProps {
   onBack: () => void
   onOpenCommunity: (community: any) => void
@@ -19,21 +21,33 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
   const currentUserId = useAuthStore(state => state.user?.id)
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.communityListScreen ?? null
+  // GenUI-safe loading gate (see ScreenLoader): covers the list until it resolves.
+  const [loaded, setLoaded] = useState(false)
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)
     useEffect(() => { const unsub = useUIStore.subscribe((state: any, prevState: any) => { const next = state.componentState?.[key]; const prev = prevState.componentState?.[key]; if (next !== prev) setValue(next ?? defaultValue) }); return unsub }, [key, defaultValue])
     return [value, (newVal: any) => { if (typeof newVal === 'function') { setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r }) } else { setValue(newVal); useUIStore.getState().setComponentState(key, newVal) } }] as [any, (v: any) => void]
   }
+  // LOCAL-FIRST community list — render from SQLite, re-read on any DB change.
+  useEffect(() => {
+    if (!currentUserId) return
+    let active = true
+    const reload = async () => {
+      const cached = await getCachedCommunityList(currentUserId)
+      if (!active) return
+      if (cached) useUIStore.getState().setComponentState('communityList', cached)
+      if (cached && cached.length > 0) setLoaded(true) // have data → reveal
+    }
+    reload()
+    const unsub = subscribeDb(topics.communities(), reload)
+    // Safety: never hang the loader even if the network never settles.
+    const t = setTimeout(() => { if (active) setLoaded(true) }, 5000)
+    return () => { active = false; unsub(); clearTimeout(t) }
+  }, [currentUserId])
+
   useEffect(() => {
     let cancelled = false
     let debounceTimer: any = null
-
-    // Seed from cache immediately so the list shows without waiting for the network
-    if (currentUserId) {
-      getCachedCommunityList(currentUserId).then(cached => {
-        if (cached?.length) useUIStore.getState().setComponentState('communityList', cached)
-      })
-    }
 
     const load = async () => {
       try {
@@ -67,12 +81,14 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
           last_message: lastMsgMap[c.id] || null,
           unreadCount: unreadMap[c.id] || 0,
         }))
-        if (!cancelled) {
-          useUIStore.getState().setComponentState('communityList', withLastMsgs)
-          if (currentUserId) void cacheCommunityList(currentUserId, withLastMsgs)
+        if (!cancelled && currentUserId) {
+          // Write to the DB → emit → the local-first effect re-reads and renders.
+          await cacheCommunityList(currentUserId, withLastMsgs)
         }
       } catch (e) {
         console.error('Communities load exception:', e)
+      } finally {
+        setLoaded(true) // network settled (or failed) → reveal
       }
     }
     const scheduleReload = () => { if (debounceTimer) clearTimeout(debounceTimer); debounceTimer = setTimeout(() => { load() }, 600) }
@@ -101,11 +117,11 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
     const current = (useUIStore.getState().componentState?.['communityList'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityList', current.map((c: any) => c.id === communityId ? { ...c, isMember: true, userRole: 'member', member_count: (c.member_count || 0) + 1 } : c))
   }
-  return <RenderifyHost code={source} storeActions={{ onBack, onOpenCommunity, onOpenCommunityProfile: (c: any) => onOpenCommunityProfile?.(c), onAvatarTap: (c: any) => onCommunityAvatarTap?.(c), onCreateCommunity, onJoinCommunity, onRequestCommunity: async (communityId: string) => {
+  return <>{!loaded && <ScreenLoader />}<RenderifyHost code={source} storeActions={{ onBack, onOpenCommunity, onOpenCommunityProfile: (c: any) => onOpenCommunityProfile?.(c), onAvatarTap: (c: any) => onCommunityAvatarTap?.(c), onCreateCommunity, onJoinCommunity, onRequestCommunity: async (communityId: string) => {
     if (!currentUserId) return
     const current = (useUIStore.getState().componentState?.['communityList'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityList', current.map((c: any) => c.id === communityId ? { ...c, joinState: 'loading' } : c))
     await supabase.from('community_members').insert({ community_id: communityId, user_id: currentUserId, role: 'member', status: 'pending' })
     useUIStore.getState().setComponentState('communityList', (useUIStore.getState().componentState?.['communityList'] ?? []).map((c: any) => c.id === communityId ? { ...c, joinState: 'requested' } : c))
-  }, BackButton, useComponentState, hideHeader: hideHeader ?? false }} />
+  }, BackButton, useComponentState, hideHeader: hideHeader ?? false }} /></>
 }

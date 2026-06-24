@@ -18,32 +18,25 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TEXT
 );
 
+-- Contacts stored as one JSON blob per row (full display-ready Contact). `pos`
+-- preserves the server's ordering (most-recent first) so the list never scrambles.
 CREATE TABLE IF NOT EXISTS contacts (
   id TEXT PRIMARY KEY,
-  conversation_id TEXT,
-  name TEXT,
-  avatar_url TEXT,
-  last_message TEXT,
-  last_message_time TEXT,
-  unread_count INTEGER DEFAULT 0,
-  raw_profile TEXT
+  pos INTEGER,
+  data TEXT
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+-- DM messages are stored as one canonical JSON blob per row (see messageShape.ts).
+-- Only the columns we query on (id, conversation_id, created_at) are broken out;
+-- the full decrypted, display-ready LocalMessage lives in `data`. This avoids the
+-- old lossy fixed-column schema that dropped derived fields (isSent/timestamp).
+CREATE TABLE IF NOT EXISTS dm_messages (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
-  sender_id TEXT,
-  content TEXT,
-  encrypted_content TEXT,
-  message_type TEXT DEFAULT 'text',
-  metadata TEXT,
-  status TEXT DEFAULT 'sent',
-  reply_to TEXT,
   created_at TEXT,
-  updated_at TEXT,
-  deleted_at TEXT
+  data TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_conv ON dm_messages(conversation_id, created_at);
 
 CREATE TABLE IF NOT EXISTS community_list (
   id TEXT PRIMARY KEY,
@@ -56,19 +49,12 @@ CREATE TABLE IF NOT EXISTS community_list (
   raw_data TEXT
 );
 
+-- Community messages stored as one canonical JSON blob per row (formatMsg shape).
 CREATE TABLE IF NOT EXISTS community_messages (
   id TEXT PRIMARY KEY,
   community_id TEXT NOT NULL,
-  sender_id TEXT,
-  content TEXT,
-  message_type TEXT DEFAULT 'text',
-  metadata TEXT,
   created_at TEXT,
-  reply_to TEXT,
-  deleted_at TEXT,
-  sender_name TEXT,
-  sender_username TEXT,
-  sender_avatar TEXT
+  data TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_comm_msgs ON community_messages(community_id, created_at);
 
@@ -143,21 +129,39 @@ export async function initLocalDb(): Promise<void> {
   if (_initPromise) return _initPromise
   _initPromise = (async () => {
     if (!Capacitor.isNativePlatform()) {
-      // Web / Storybook / dev build — use localStorage shim
+      // Web / Storybook / dev build only — there is no native SQLite in a browser,
+      // so fall back to the localStorage shim. This branch never runs on device.
       _usingFallback = true
       return
     }
-    try {
-      await openSQLite()
-    } catch (e) {
-      console.warn('[localDb] SQLite init failed, falling back to localStorage', e)
-      _usingFallback = true
+    // NATIVE (Android / iOS): use real native SQLite ONLY. Never silently demote to
+    // localStorage ("the typical cache") on a device — that hides data loss and is
+    // exactly what we don't want. Retry transient init failures a few times instead.
+    const MAX_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await openSQLite()
+        return // native SQLite is live — _usingFallback stays false
+      } catch (e) {
+        console.warn(`[localDb] native SQLite init failed (attempt ${attempt}/${MAX_ATTEMPTS})`, e)
+        if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, 400 * attempt))
+      }
     }
+    // Persistent failure on device: keep _usingFallback === false so reads/writes
+    // stay on the SQLite path (writes no-op, reads return empty) rather than routing
+    // to localStorage. The device uses native SQLite or no cache at all — never the
+    // typical browser cache. A later initLocalDb() retry can still bring SQLite up.
+    _initPromise = null
+    console.error('[localDb] native SQLite unavailable after retries — offline cache disabled (NOT falling back to localStorage)')
   })()
   return _initPromise
 }
 
 export function isUsingFallback() { return _usingFallback }
+
+// True only when genuine native SQLite is open and serving reads/writes.
+// Useful for diagnostics / a settings "storage: native SQLite" indicator.
+export function isNativeSqliteActive() { return !_usingFallback && _db !== null }
 
 /** Run a write statement (INSERT / UPDATE / DELETE). */
 export async function dbRun(sql: string, params: any[] = []): Promise<void> {
@@ -177,7 +181,7 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
 /** Delete all user data from every table (called on logout). */
 export async function clearDbForUser(_userId: string): Promise<void> {
   if (_usingFallback) return
-  for (const t of ['messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages']) {
+  for (const t of ['dm_messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages']) {
     await dbRun(`DELETE FROM ${t}`)
   }
 }

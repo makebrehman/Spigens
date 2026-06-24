@@ -11,6 +11,7 @@ import {
 import type { Database } from '@/lib/supabase'
 import { uploadPendingAvatar } from '@/lib/avatarUpload'
 import { cacheProfile, getCachedProfile, clearUserCache } from '@/lib/offlineCache'
+import { unregisterNativePush } from '@/lib/nativePush'
 
 type Profile = Database['public']['Tables']['profiles']['Row']
 
@@ -148,6 +149,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) return { error: error.message }
       if (!data.user) return { error: 'Sign up failed' }
+      // Stash the password so completeProfile() can wrap the freshly-generated
+      // private key and back it up to the server (encrypted_private_key) — exactly
+      // like the sign-in path does. Without this the new account's key would live
+      // only in localStorage and be lost permanently on uninstall/reinstall,
+      // making all past E2E messages undecryptable.
+      set({ _tempPassword: password })
       return { error: null, needsConfirmation: true }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }
@@ -295,6 +302,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const user = get().user
     if (user) {
       await supabase.rpc('set_user_online', { p_user_id: user.id, p_online: false })
+      await unregisterNativePush() // drop this device's FCM token so it stops getting pushes
       await clearUserCache(user.id)
     }
     await supabase.auth.signOut()

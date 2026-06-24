@@ -40,6 +40,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Push notifications (FCM). Android 13+ requires runtime POST_NOTIFICATIONS. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Voice typing (speech-recognition plugin) — Android 11+ needs to see recognizers -->
     <queries>
         <intent>

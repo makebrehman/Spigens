@@ -5,10 +5,12 @@ import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
-import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
+import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, deleteCachedCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
+import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
+import { ScreenLoader } from './ScreenLoader'
 import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
 import { MessageReactions } from './MessageReactions'
 import { DateSeparator } from './DateSeparator'
@@ -30,6 +32,8 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const [memberCount, setMemberCount] = useState(props.memberCount)
   const [isMember, setIsMember] = useState(props.isMember)
   const [communityAvatarUrl, setCommunityAvatarUrl] = useState<string | null>(props.communityAvatarUrl ?? null)
+  // GenUI-safe loading gate (see ScreenLoader): covers the screen until messages resolve.
+  const [loaded, setLoaded] = useState(false)
   const currentUserId = useAuthStore(state => state.user?.id)
   const profile = useAuthStore(state => state.profile)
   const networkIsOnline = useNetworkStore(state => state.isOnline)
@@ -72,12 +76,8 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     })
     supabase.from('community_members').select('user_id, profiles(id, display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active')
       .then(({ data }: any) => { const map: Record<string,any> = {}; data?.forEach((m: any) => { if (m.profiles) map[m.user_id] = m.profiles }); memberProfilesRef.current = map })
-    getCachedCommunityMessages(communityId).then(cachedMsgs => {
-      if (cachedMsgs?.length) {
-        useUIStore.getState().setComponentState('communityMessages', cachedMsgs)
-      }
-    })
-
+    // Cached messages render via the local-first effect below; this only pulls
+    // fresh data into the DB and wires realtime.
     if (!networkIsOnline) return
 
     supabase.from('community_messages').select('id, community_id, sender_id, content, message_type, metadata, created_at, reply_to, deleted_at, profiles!sender_id(display_name, username, avatar_url)').eq('community_id', communityId).order('created_at', { ascending: true }).limit(100)
@@ -93,8 +93,8 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
             }
           })
           const formatted = data.map(formatMsg)
+          // Write to the DB → emit → the local-first effect re-reads and renders.
           await cacheCommunityMessages(communityId, formatted)
-          useUIStore.getState().setComponentState('communityMessages', formatted)
           if (data && data.length > 0) {
             const msgIds = data.map((r: any) => r.id)
             supabase.from('community_message_reactions').select('message_id, user_id, emoji').in('message_id', msgIds)
@@ -107,6 +107,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
               })
           }
         }
+        setLoaded(true) // network settled → reveal
       })
     channelRef.current = supabase.channel('comm-chat:' + communityId)
       .on('broadcast', { event: 'typing' }, (msg: any) => {
@@ -138,23 +139,18 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
           const { data: p } = await supabase.from('profiles').select('id, display_name, username, avatar_url').eq('id', row.sender_id).single()
           if (p) senderCacheRef.current[p.id] = { displayName: p.display_name, username: p.username, avatarUrl: p.avatar_url }
         }
-        const msg = formatMsg(row)
+        const msg = formatMsg(row) // canonical shape (NOT the raw row)
         const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-        if (!current.some((m: any) => m.id === msg.id)) {
-          void upsertCommunityMessage(communityId, row)
-          useUIStore.getState().setComponentState('communityMessages', [...current, msg])
-        }
+        if (current.some((m: any) => m.id === msg.id)) return // already shown (e.g. our own optimistic row)
+        await upsertCommunityMessage(communityId, msg) // emit → local-first re-read renders it
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'community_messages', filter: 'community_id=eq.' + communityId }, (payload: any) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'community_messages', filter: 'community_id=eq.' + communityId }, async (payload: any) => {
         const row = payload.new
         if (!row.deleted_at) return
         const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-        const idx = current.findIndex((m: any) => m.id === row.id)
-        if (idx === -1) return
-        if (current[idx].isDeleted) return
-        const next = [...current]
-        next[idx] = { ...next[idx], isDeleted: true, content: '' }
-        useUIStore.getState().setComponentState('communityMessages', next)
+        const existing = current.find((m: any) => m.id === row.id)
+        if (!existing || existing.isDeleted) return
+        await upsertCommunityMessage(communityId, { ...existing, isDeleted: true, content: '' })
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'community_message_reactions', filter: 'community_id=eq.' + communityId }, async () => {
         const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
@@ -176,6 +172,29 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       .subscribe()
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); supabase.removeChannel(kickChannel); useUIStore.getState().setComponentState('communityMessages', []); useUIStore.getState().setComponentState('communityTypingUsers', []); Object.values(typingExpireRef.current).forEach(clearTimeout); useUIStore.getState().setComponentState('activeMessageActions', null); useUIStore.getState().setComponentState('reactionDetail', null); useUIStore.getState().setComponentState('communityReplyingTo', null) }
   }, [communityId, currentUserId])
+  // LOCAL-FIRST community messages — render from SQLite, re-read on any DB change.
+  useEffect(() => {
+    if (!communityId) return
+    let active = true
+    const reload = async () => {
+      const cached = await getCachedCommunityMessages(communityId)
+      if (!active) return
+      if (cached) useUIStore.getState().setComponentState('communityMessages', cached)
+      if ((cached && cached.length > 0) || !useNetworkStore.getState().isOnline) setLoaded(true)
+    }
+    reload()
+    const unsub = subscribeDb(topics.communityMessages(communityId), reload)
+    return () => { active = false; unsub() }
+  }, [communityId])
+
+  // Reset the loading gate when the community changes; safety timeout never hangs it.
+  useEffect(() => {
+    if (!communityId) { setLoaded(true); return }
+    setLoaded(false)
+    const t = setTimeout(() => setLoaded(true), 5000)
+    return () => clearTimeout(t)
+  }, [communityId])
+
   useEffect(() => {
     if (!communityId) return
     const fetchCommunityAvatar = () => {
@@ -210,9 +229,9 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const replyingTo = (useUIStore.getState().componentState?.['communityReplyingTo'] ?? null) as any
     const newId = crypto.randomUUID()
     const createdAt = new Date().toISOString()
-    const optimistic = { id: newId, content: content.trim(), senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt, isMine: true, replyTo: replyingTo?.id || null }
-    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-    useUIStore.getState().setComponentState('communityMessages', [...current, optimistic])
+    const optimistic = { id: newId, content: content.trim(), senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt, isMine: true, isDeleted: false, replyTo: replyingTo?.id || null }
+    // optimistic write → DB → emit → local-first re-read shows it
+    await upsertCommunityMessage(communityId, optimistic)
     useUIStore.getState().setComponentState('communityReplyingTo', null)
     if (!networkIsOnline) {
       await savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: content.trim(), replyToId: replyingTo?.id || null, createdAt })
@@ -220,8 +239,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     }
     const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })
     if (error) {
-      const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-      useUIStore.getState().setComponentState('communityMessages', msgs.filter((m: any) => m.id !== newId))
+      await deleteCachedCommunityMessage(communityId, newId)
       useUIStore.getState().setComponentState('communityError', 'Failed to send message. Please try again.')
     }
   }
@@ -229,12 +247,9 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const onDeleteMessage = async (messageId: string) => {
     const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
     const snapshot = current.find((m: any) => m.id === messageId)
-    useUIStore.getState().setComponentState('communityMessages', current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
+    if (snapshot) await upsertCommunityMessage(communityId, { ...snapshot, isDeleted: true, content: '' })
     const { error } = await supabase.from('community_messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
-    if (error && snapshot) {
-      const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-      useUIStore.getState().setComponentState('communityMessages', msgs.map((m: any) => m.id === messageId ? snapshot : m))
-    }
+    if (error && snapshot) await upsertCommunityMessage(communityId, snapshot) // revert
   }
 
   const onToggleCommunityReaction = async (messageId: string, emoji: string) => {
@@ -295,7 +310,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const url = await uploadCommunityImage(communityId, file)
     if (url) setCommunityAvatarUrl(url)
   }
-  return <RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
+  return <>{!loaded && <ScreenLoader />}<RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
       const key = 'reactions:' + messageId
       const reactions = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       if (!reactions.length) return
@@ -306,5 +321,5 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       const enriched = reactions.map((r: any) => ({ emoji: r.emoji, name: nameMap[r.user_id] || 'Unknown', isMe: r.user_id === currentUserId }))
       useUIStore.getState().setComponentState('reactionDetail', { messageId, reactions: enriched })
     },
-    useComponentState }} />
+    useComponentState }} /></>
 }

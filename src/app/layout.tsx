@@ -1,6 +1,7 @@
 import type {Metadata} from 'next';
 import './globals.css'; // Global styles
 import { Unbounded, Inter, Poppins, Sora, Space_Grotesk, Outfit, DM_Serif_Display, Bricolage_Grotesque } from 'next/font/google'
+import { StorageDiagnostics } from '@/components/StorageDiagnostics'
 
 const unbounded = Unbounded({
   subsets: ['latin'],
@@ -31,6 +32,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
       </head>
       <body className={`${unbounded.className} ${poppins.variable} ${sora.variable} ${spaceGrotesk.variable} ${outfit.variable} ${dmSerif.variable} ${bricolage.variable} bg-[#0a0a0a] text-white overscroll-none overflow-hidden`} suppressHydrationWarning>
         {children}
+        <StorageDiagnostics />
       </body>
     </html>
   );

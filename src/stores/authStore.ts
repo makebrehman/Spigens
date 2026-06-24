@@ -148,6 +148,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) return { error: error.message }
       if (!data.user) return { error: 'Sign up failed' }
+      // Stash the password so completeProfile() can wrap the freshly-generated
+      // private key and back it up to the server (encrypted_private_key) — exactly
+      // like the sign-in path does. Without this the new account's key would live
+      // only in localStorage and be lost permanently on uninstall/reinstall,
+      // making all past E2E messages undecryptable.
+      set({ _tempPassword: password })
       return { error: null, needsConfirmation: true }
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Unknown error' }

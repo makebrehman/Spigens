@@ -29,6 +29,9 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
     return [value, (newVal: any) => { if (typeof newVal === 'function') { setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r }) } else { setValue(newVal); useUIStore.getState().setComponentState(key, newVal) } }] as [any, (v: any) => void]
   }
   // LOCAL-FIRST community list — render from SQLite, re-read on any DB change.
+  // SQLite is the single source of truth: reveal the screen as soon as we've read it
+  // (even if empty), so the chrome shows instantly instead of a network-gated spinner.
+  // The server fetch below is only a background refresh that writes into SQLite.
   useEffect(() => {
     if (!currentUserId) return
     let active = true
@@ -36,13 +39,11 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
       const cached = await getCachedCommunityList(currentUserId)
       if (!active) return
       if (cached) useUIStore.getState().setComponentState('communityList', cached)
-      if (cached && cached.length > 0) setLoaded(true) // have data → reveal
+      setLoaded(true) // local read done → reveal immediately (don't wait for network)
     }
     reload()
     const unsub = subscribeDb(topics.communities(), reload)
-    // Safety: never hang the loader even if the network never settles.
-    const t = setTimeout(() => { if (active) setLoaded(true) }, 5000)
-    return () => { active = false; unsub(); clearTimeout(t) }
+    return () => { active = false; unsub() }
   }, [currentUserId])
 
   useEffect(() => {
@@ -81,8 +82,9 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
           last_message: lastMsgMap[c.id] || null,
           unreadCount: unreadMap[c.id] || 0,
         }))
-        if (!cancelled && currentUserId) {
+        if (!cancelled && currentUserId && withLastMsgs.length > 0) {
           // Write to the DB → emit → the local-first effect re-reads and renders.
+          // Only when non-empty: never let a transient empty reply wipe the saved list.
           await cacheCommunityList(currentUserId, withLastMsgs)
         }
       } catch (e) {

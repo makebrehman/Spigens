@@ -176,11 +176,20 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
 
         if (!active) return
 
+        // Make sure the signed-in user's OWN profile (incl. bio + avatar) is in SQLite,
+        // so their own profile screen — and photo — work offline.
+        let ownAvatar: string | null = null
+        try {
+          const { data: me } = await supabase.from('profiles').select('*').eq('id', userId).single()
+          if (me) { await cacheProfile(userId, me); ownAvatar = (me as any).avatar_url ?? null }
+        } catch { /* offline / non-fatal */ }
+
         // Warm the media cache in the background — never block sign-in on it. We pull
-        // contact + community avatars and the most recent chat photos so they're
-        // available offline; the rest download lazily on first view. Fire-and-forget:
-        // these promises keep resolving even after this screen unmounts.
+        // the user's own avatar + contact/community avatars and the most recent chat
+        // photos so they're available offline; the rest download lazily on first view.
+        // Fire-and-forget: these promises keep resolving even after this screen unmounts.
         const avatarUrls = [
+          ...(ownAvatar ? [ownAvatar] : []),
           ...contacts.map(c => c.avatarUrl).filter((u): u is string => !!u),
           ...myComms.map((c: any) => c.avatar_url).filter((u: any): u is string => !!u),
         ]

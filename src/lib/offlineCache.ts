@@ -3,6 +3,8 @@
 // On web/dev: falls back to localStorage transparently.
 
 import { dbRun, dbQuery, clearDbForUser, isUsingFallback } from '@/lib/localDb'
+import { emitDb, topics } from '@/lib/dbEvents'
+import type { LocalMessage } from '@/lib/messageShape'
 
 // ── localStorage fallback helpers (web/dev only) ─────────────────────────────
 
@@ -70,43 +72,45 @@ export async function getCachedContacts(userId: string): Promise<any[] | null> {
 
 // ── DM Messages ──────────────────────────────────────────────────────────────
 
-export async function cacheMessages(conversationId: string, messages: any[]): Promise<void> {
-  if (isUsingFallback()) { lsSave(`msgs_${conversationId}`, messages); return }
-  for (const m of messages) {
-    await dbRun(
-      `INSERT OR REPLACE INTO messages
-       (id, conversation_id, sender_id, content, encrypted_content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [m.id, conversationId, m.sender_id ?? m.senderId ?? null,
-       m.content ?? null, m.encrypted_content ?? m.encryptedContent ?? null,
-       m.message_type ?? m.messageType ?? 'text',
-       m.metadata ? (typeof m.metadata === 'string' ? m.metadata : JSON.stringify(m.metadata)) : null,
-       m.status ?? 'sent', m.reply_to ?? m.replyTo ?? null,
-       m.created_at ?? m.createdAt ?? null, m.updated_at ?? m.updatedAt ?? null,
-       m.deleted_at ?? m.deletedAt ?? null]
-    )
+// Persist canonical LocalMessage rows for a conversation, then announce the change
+// so any screen showing this conversation re-reads SQLite and re-renders.
+export async function cacheMessages(conversationId: string, messages: LocalMessage[]): Promise<void> {
+  if (isUsingFallback()) {
+    lsSave(`msgs_${conversationId}`, messages)
+  } else {
+    for (const m of messages) {
+      await dbRun(
+        `INSERT OR REPLACE INTO dm_messages (id, conversation_id, created_at, data) VALUES (?, ?, ?, ?)`,
+        [m.id, conversationId, m.createdAt ?? null, JSON.stringify(m)]
+      )
+    }
   }
+  emitDb(topics.messages(conversationId))
 }
 
-export async function getCachedMessages(conversationId: string): Promise<any[] | null> {
-  if (isUsingFallback()) return lsLoad<any[]>(`msgs_${conversationId}`)
-  const rows = await dbQuery<any>(
-    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC',
+export async function getCachedMessages(conversationId: string): Promise<LocalMessage[] | null> {
+  if (isUsingFallback()) return lsLoad<LocalMessage[]>(`msgs_${conversationId}`)
+  const rows = await dbQuery<{ data: string }>(
+    'SELECT data FROM dm_messages WHERE conversation_id = ? ORDER BY created_at ASC',
     [conversationId]
   )
   if (!rows.length) return null
-  return rows.map(r => ({
-    ...r,
-    messageType: r.message_type,
-    metadata: r.metadata ? JSON.parse(r.metadata) : null,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    deletedAt: r.deleted_at,
-  }))
+  return rows.map(r => JSON.parse(r.data) as LocalMessage)
 }
 
-export async function upsertMessage(conversationId: string, msg: any): Promise<void> {
+export async function upsertMessage(conversationId: string, msg: LocalMessage): Promise<void> {
   await cacheMessages(conversationId, [msg])
+}
+
+// Remove a single message (e.g. a failed optimistic send) and announce the change.
+export async function deleteCachedMessage(conversationId: string, id: string): Promise<void> {
+  if (isUsingFallback()) {
+    const list = (lsLoad<LocalMessage[]>(`msgs_${conversationId}`) ?? []).filter(m => m.id !== id)
+    lsSave(`msgs_${conversationId}`, list)
+  } else {
+    await dbRun('DELETE FROM dm_messages WHERE id = ?', [id])
+  }
+  emitDb(topics.messages(conversationId))
 }
 
 // ── Community List ────────────────────────────────────────────────────────────

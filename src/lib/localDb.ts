@@ -29,21 +29,17 @@ CREATE TABLE IF NOT EXISTS contacts (
   raw_profile TEXT
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+-- DM messages are stored as one canonical JSON blob per row (see messageShape.ts).
+-- Only the columns we query on (id, conversation_id, created_at) are broken out;
+-- the full decrypted, display-ready LocalMessage lives in `data`. This avoids the
+-- old lossy fixed-column schema that dropped derived fields (isSent/timestamp).
+CREATE TABLE IF NOT EXISTS dm_messages (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
-  sender_id TEXT,
-  content TEXT,
-  encrypted_content TEXT,
-  message_type TEXT DEFAULT 'text',
-  metadata TEXT,
-  status TEXT DEFAULT 'sent',
-  reply_to TEXT,
   created_at TEXT,
-  updated_at TEXT,
-  deleted_at TEXT
+  data TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_dm_messages_conv ON dm_messages(conversation_id, created_at);
 
 CREATE TABLE IF NOT EXISTS community_list (
   id TEXT PRIMARY KEY,
@@ -195,7 +191,7 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
 /** Delete all user data from every table (called on logout). */
 export async function clearDbForUser(_userId: string): Promise<void> {
   if (_usingFallback) return
-  for (const t of ['messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages']) {
+  for (const t of ['dm_messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages']) {
     await dbRun(`DELETE FROM ${t}`)
   }
 }

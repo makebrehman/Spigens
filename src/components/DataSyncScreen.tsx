@@ -10,6 +10,7 @@ import {
   cacheCommunityList,
   cacheCommunityMessages,
 } from '@/lib/offlineCache'
+import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import type { Contact } from '@/types'
 
 interface Props {
@@ -56,13 +57,31 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         setLabel('syncing messages...')
         for (let i = 0; i < conversations.length; i++) {
           if (!active) return
+          const conv = conversations[i]
           const { data } = await supabase
             .from('messages')
             .select('id, conversation_id, sender_id, content, encrypted_content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at')
-            .eq('conversation_id', conversations[i].conversationId)
+            .eq('conversation_id', conv.conversationId)
             .order('created_at', { ascending: false })
             .limit(50)
-          if (data?.length) await cacheMessages(conversations[i].conversationId, [...data].reverse())
+          if (data?.length) {
+            // Decrypt + convert to the SAME canonical shape ChatScreen stores, so the
+            // cache is display-ready and readable offline right after sign-in.
+            const otherPublicKey = conv.otherProfile?.public_key
+            const contactName = conv.otherProfile?.display_name || conv.otherProfile?.username || 'Unknown'
+            const ordered = [...data].reverse() // ascending by created_at
+            const local: LocalMessage[] = []
+            for (const row of ordered) {
+              local.push(toLocalMessage(row, {
+                currentUserId: userId,
+                otherPublicKey,
+                myPrivateKey: privateKey,
+                contactName,
+                prev: local,
+              }))
+            }
+            await cacheMessages(conv.conversationId, local)
+          }
           setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
         }
 

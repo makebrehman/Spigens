@@ -17,16 +17,19 @@ import { useContactStore } from '@/stores/contactStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
-import { encryptMessage, decryptMessage } from '@/lib/encryption'
+import { encryptMessage } from '@/lib/encryption'
 import imageCompression from 'browser-image-compression'
 import {
   cacheMessages,
   getCachedMessages,
   upsertMessage,
+  deleteCachedMessage,
   savePendingMessage,
   getPendingMessages,
   removePendingMessage,
 } from '@/lib/offlineCache'
+import { subscribeDb, topics } from '@/lib/dbEvents'
+import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
@@ -68,6 +71,9 @@ export function ChatScreen(props: ChatScreenProps) {
   const [showAttachSheet, setShowAttachSheet] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [realMessages, setRealMessages] = useState<any[]>([])
+  // Always-current mirror of the rendered messages, for read-side logic inside async
+  // realtime/send handlers (they must not depend on a stale render closure).
+  const messagesRef = useRef<LocalMessage[]>([])
   const [replyingTo, setReplyingTo] = useState<any>(null)
   const [encWarning, setEncWarning] = useState(false)
   const [attachToast, setAttachToast] = useState<string | null>(null)
@@ -107,6 +113,7 @@ export function ChatScreen(props: ChatScreenProps) {
     // Only clear messages when the contact changes, not on every network flip
     if (prevOtherUserIdRef.current !== otherUserId) {
       prevOtherUserIdRef.current = otherUserId
+      messagesRef.current = []
       setRealMessages([])
       useUIStore.getState().setComponentState('chatMessages', [])
       setConversationId(null)
@@ -137,51 +144,57 @@ export function ChatScreen(props: ChatScreenProps) {
     resolve()
   }, [otherUserId, currentUserId, networkIsOnline])
 
-  const decryptRow = (row: any, prevMessages: any[]): any => {
-    let content = ''
-    if (row.deleted_at) {
-      content = ''
-    } else if (row.encrypted_content && myPrivateKey && otherUserPublicKey) {
-      content = decryptMessage(row.encrypted_content, otherUserPublicKey, myPrivateKey) ?? row.content ?? '🔒 encrypted'
-    } else {
-      content = row.content ?? ''
-    }
+  // Thin wrapper over the shared canonical transform (messageShape.ts) so the
+  // bulk-download path (DataSyncScreen) and this screen produce identical rows.
+  const decryptRow = (row: any, prevMessages: LocalMessage[]): LocalMessage =>
+    toLocalMessage(row, {
+      currentUserId,
+      otherPublicKey: otherUserPublicKey,
+      myPrivateKey,
+      contactName,
+      prev: prevMessages,
+    })
 
-    const isSent = row.sender_id === currentUserId
-    let replyTo = null
-    if (row.reply_to) {
-      const orig = prevMessages.find(m => m.id === row.reply_to)
-      if (orig) {
-        replyTo = { id: row.reply_to, content: orig.content, senderLabel: orig.isSent ? 'You' : contactName }
+  // ── LOCAL-FIRST READ ──────────────────────────────────────────────────────
+  // The UI renders from componentState.chatMessages. Keep that (and realMessages)
+  // as a pure reflection of local SQLite: read on mount, then re-read whenever a
+  // write announces a change for this conversation. Every writer below goes to the
+  // DB and emits — so DB write → this re-read → UI update. (Architecture A.)
+  useEffect(() => {
+    if (!otherUserId) return
+    const convKey = conversationId ?? `pending_${otherUserId}`
+    const pendKey = `pending_${otherUserId}`
+    let active = true
+
+    const reload = async () => {
+      const primary = (await getCachedMessages(convKey)) ?? []
+      let merged = primary
+      // During the brief window after a conversation id resolves, optimistic msgs
+      // may still sit under the pending key — fold them in so nothing flickers out.
+      if (conversationId) {
+        const pend = (await getCachedMessages(pendKey)) ?? []
+        if (pend.length) {
+          const seen = new Set(primary.map(m => m.id))
+          merged = [...primary, ...pend.filter(m => !seen.has(m.id))]
+            .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+        }
       }
+      if (!active) return
+      messagesRef.current = merged
+      setRealMessages(merged)
+      useUIStore.getState().setComponentState('chatMessages', merged)
     }
 
-    return {
-      id: row.id,
-      content,
-      messageType: row.message_type || 'text',
-      metadata: row.metadata || null,
-      timestamp: new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      createdAt: row.created_at,
-      isSent,
-      isRead: true,
-      status: row.status,
-      replyTo,
-      isDeleted: !!row.deleted_at,
-    }
-  }
+    reload()
+    const unsubA = subscribeDb(topics.messages(convKey), reload)
+    const unsubB = convKey !== pendKey ? subscribeDb(topics.messages(pendKey), reload) : () => {}
+    return () => { active = false; unsubA(); unsubB() }
+  }, [otherUserId, conversationId])
 
   useEffect(() => {
     if (!otherUserId) return
-
-    const cacheKey = conversationId ?? `pending_${otherUserId}`
-    getCachedMessages(cacheKey).then(cached => {
-      if (cached?.length) {
-        setRealMessages(cached as any[])
-        useUIStore.getState().setComponentState('chatMessages', cached)
-      }
-    })
-
+    // Messages are read by the local-first effect above; this effect only pulls
+    // fresh data from the network into the DB and wires realtime.
     if (!conversationId || !currentUserId || !myPublicKey) return
     if (!networkIsOnline) return
 
@@ -221,11 +234,11 @@ export function ChatScreen(props: ChatScreenProps) {
         }))
       const allMsgs = [...msgs, ...pendingMsgs]
 
+      // Write the fresh server state to the DB — the local-first effect re-reads
+      // and re-renders. We do NOT setRealMessages here (single source of truth = DB).
       await cacheMessages(conversationId, allMsgs)
-      useUIStore.getState().setComponentState('chatMessages', allMsgs)
       useUIStore.getState().setComponentState('conversationId', conversationId)
       useUIStore.getState().setComponentState('currentUserId', currentUserId)
-      setRealMessages(allMsgs)
     }
 
     const loadReactions = async () => {
@@ -261,34 +274,23 @@ export function ChatScreen(props: ChatScreenProps) {
           supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
         }
 
-        setRealMessages(prev => {
-          if (prev.some(m => m.id === row.id)) return prev
-          const msg = decryptRow(row, prev)
-          msg.status = row.status === 'sent' ? 'delivered' : row.status
-          const next = [...prev, msg]
-          void upsertMessage(conversationId, msg)
-          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-          return next
-        })
+        if (messagesRef.current.some(m => m.id === row.id)) return
+        const msg = decryptRow(row, messagesRef.current)
+        msg.status = row.status === 'sent' ? 'delivered' : row.status
+        await upsertMessage(conversationId, msg) // emit → local-first re-read renders it
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
         const row = payload.new as any
-        setRealMessages(prev => {
-          const idx = prev.findIndex(m => m.id === row.id)
-          if (idx === -1) return prev
-          const existing = prev[idx]
-          const next = [...prev]
-          if (row.deleted_at && !existing.isDeleted) {
-            next[idx] = { ...existing, isDeleted: true, content: '' }
-          } else if (row.sender_id === currentUserId && existing.status !== row.status) {
-            next[idx] = { ...existing, status: row.status }
-          } else {
-            return prev
-          }
-          void upsertMessage(conversationId, next[idx])
-          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-          return next
-        })
+        const existing = messagesRef.current.find(m => m.id === row.id)
+        if (!existing) return
+        let updated: LocalMessage | null = null
+        if (row.deleted_at && !existing.isDeleted) {
+          updated = { ...existing, isDeleted: true, content: '' }
+        } else if (row.sender_id === currentUserId && existing.status !== row.status) {
+          updated = { ...existing, status: row.status }
+        }
+        if (!updated) return
+        await upsertMessage(conversationId, updated)
       })
       .on('broadcast', { event: 'typing' }, (msg) => {
         const p = (msg as any).payload
@@ -368,21 +370,16 @@ export function ChatScreen(props: ChatScreenProps) {
         })
         if (!error) {
           await removePendingMessage(currentUserId, pm.id)
-          setRealMessages(prev => {
-            const idx = prev.findIndex(m => m.id === pm.id)
-            const next = [...prev]
-            if (idx === -1) {
-              next.push({
+          const existing = messagesRef.current.find(m => m.id === pm.id)
+          const msg: LocalMessage = existing
+            ? { ...existing, status: 'sent' }
+            : {
                 id: pm.id, content: pm.content, messageType: pm.messageType ?? 'text', metadata: null,
                 timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 createdAt: pm.createdAt, isSent: true, isRead: true, status: 'sent',
                 replyTo: null, isDeleted: false,
-              })
-            } else {
-              next[idx] = { ...next[idx], status: 'sent' }
-            }
-            return next
-          })
+              }
+          await upsertMessage(cid, msg) // store under the now-resolved conversation key
         }
       }
     }
@@ -490,7 +487,11 @@ export function ChatScreen(props: ChatScreenProps) {
     const tempId = `temp_${Date.now()}`
     const createdAt = new Date().toISOString()
 
-    const optimisticMsg = {
+    // Key the optimistic row under the active conversation (or the pending key if
+    // the conversation isn't created yet). All writes go through the DB → emit.
+    const mediaKey = ((useUIStore.getState().componentState as any)?.conversationId as string | null) ?? `pending_${otherUserId}`
+
+    const optimisticMsg: LocalMessage = {
       id: tempId,
       content: localUrl,
       messageType: fileType,
@@ -499,37 +500,27 @@ export function ChatScreen(props: ChatScreenProps) {
       createdAt,
       isSent: true,
       isRead: true,
-      status: 'sending' as const,
+      status: 'sending',
       replyTo: null,
       isDeleted: false,
     }
 
-    setRealMessages(prev => {
-      const next = [...prev, optimisticMsg]
-      queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-      return next
-    })
+    await upsertMessage(mediaKey, optimisticMsg)
 
     const url = await uploadChatMedia(file)
     URL.revokeObjectURL(localUrl)
 
     if (!url) {
-      setRealMessages(prev => {
-        const next = prev.filter(m => m.id !== tempId)
-        queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-        return next
-      })
+      await deleteCachedMessage(mediaKey, tempId)
       return
     }
 
     const realId = crypto.randomUUID()
-    const realMsg = { ...optimisticMsg, id: realId, content: url, status: 'sent' as const }
+    const realMsg: LocalMessage = { ...optimisticMsg, id: realId, content: url, status: 'sent' }
 
-    setRealMessages(prev => {
-      const next = prev.map(m => m.id === tempId ? realMsg : m)
-      queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-      return next
-    })
+    // swap the temp row for the real one
+    await deleteCachedMessage(mediaKey, tempId)
+    await upsertMessage(mediaKey, realMsg)
 
     const isOnline = useNetworkStore.getState().isOnline
     const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
@@ -734,7 +725,8 @@ export function ChatScreen(props: ChatScreenProps) {
         }
       }
 
-      const newMsg = {
+      const cacheKey = liveCid ?? `pending_${otherUserId}`
+      const newMsg: LocalMessage = {
         id: newId,
         content,
         messageType: 'text',
@@ -751,13 +743,8 @@ export function ChatScreen(props: ChatScreenProps) {
       setReplyingTo(null)
       useUIStore.getState().setComponentState('replyingTo', null)
 
-      setRealMessages(prev => {
-        const next = [...prev, newMsg]
-        const cacheKey = liveCid ?? `pending_${otherUserId}`
-        void upsertMessage(cacheKey, newMsg)
-        queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', next))
-        return next
-      })
+      // optimistic write → DB → emit → local-first re-read shows it instantly
+      await upsertMessage(cacheKey, newMsg)
 
       if (!isOnline) {
         await savePendingMessage(currentUserId, {
@@ -791,11 +778,8 @@ export function ChatScreen(props: ChatScreenProps) {
 
       if (error) {
         console.error('Failed to insert message:', error)
-        setRealMessages(prev => {
-          const failed = prev.map(m => m.id === newId ? { ...m, status: 'failed', content: '🔒 failed to send' } : m)
-          queueMicrotask(() => useUIStore.getState().setComponentState('chatMessages', failed))
-          return failed
-        })
+        const existing = messagesRef.current.find(m => m.id === newId)
+        if (existing) await upsertMessage(cacheKey, { ...existing, status: 'failed', content: '🔒 failed to send' })
       }
     },
     LucideReply: CornerUpLeft,
@@ -804,11 +788,10 @@ export function ChatScreen(props: ChatScreenProps) {
     LucideForward: Forward,
     onForwardMessage: (content: string) => { forwardContentRef.current = content; setShowForwardPicker(true) },
     onDeleteMessage: async (messageId: string) => {
-      const current = (useUIStore.getState().componentState?.['chatMessages'] ?? []) as any[]
-      const next = current.map((m: any) => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m)
-      useUIStore.getState().setComponentState('chatMessages', next)
-      setRealMessages(prev => prev.map(m => m.id === messageId ? { ...m, isDeleted: true, content: '' } : m))
-      if (conversationId) void cacheMessages(conversationId, next)
+      // optimistic local delete → DB → emit → re-read; then persist to server
+      const existing = messagesRef.current.find(m => m.id === messageId)
+      const key = conversationId ?? (otherUserId ? `pending_${otherUserId}` : null)
+      if (existing && key) await upsertMessage(key, { ...existing, isDeleted: true, content: '' })
       await supabase.from('messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
     },
     onShowReactors: async (messageId: string) => {

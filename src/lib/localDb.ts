@@ -115,18 +115,21 @@ async function openSQLite(): Promise<void> {
 
   await db.open()
 
-  // Create / migrate tables
-  for (const stmt of SCHEMA.split(';').map(s => s.trim()).filter(Boolean)) {
-    await db.run(stmt + ';')
-  }
+  // Create tables/indexes. Use execute() — NOT run() — for DDL. In
+  // @capacitor-community/sqlite, run() is for INSERT/UPDATE/DELETE; calling it on a
+  // CREATE/ALTER (which reports no row changes) throws "Run: not an error (code 0)"
+  // and was killing init on device. execute() runs the whole multi-statement script.
+  // Strip `--` comment lines so the script is clean SQL.
+  const ddl = SCHEMA.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
+  await db.execute(ddl)
 
-  // Lightweight, idempotent column migrations (added after v1). Each ALTER throws if
-  // the column already exists — that's expected on upgraded installs, so we swallow it.
+  // Lightweight, idempotent column migrations (added after v1). execute() throws if
+  // the column already exists on upgraded installs — expected, so we swallow it.
   const migrations = [
-    `ALTER TABLE profiles ADD COLUMN data TEXT`,
+    `ALTER TABLE profiles ADD COLUMN data TEXT;`,
   ]
   for (const m of migrations) {
-    try { await db.run(m) } catch { /* column already present — fine */ }
+    try { await db.execute(m) } catch { /* column already present — fine */ }
   }
 
   _db = db

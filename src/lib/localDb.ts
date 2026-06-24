@@ -76,6 +76,19 @@ CREATE TABLE IF NOT EXISTS pending_community_messages (
   reply_to_id TEXT,
   created_at TEXT
 );
+
+-- On-device media cache index (see mediaCache.ts). The bytes live as real files
+-- on the Filesystem; this table just maps a remote URL → the local file path so
+-- full-res images/avatars render offline and survive app restarts. If the file is
+-- later deleted from the device, the row is dropped and the media re-downloads.
+CREATE TABLE IF NOT EXISTS media_cache (
+  url TEXT PRIMARY KEY,
+  path TEXT NOT NULL,
+  kind TEXT,
+  size INTEGER DEFAULT 0,
+  created_at TEXT,
+  last_access TEXT
+);
 `
 
 let _db: SQLiteDBConnection | null = null
@@ -181,7 +194,7 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
 /** Delete all user data from every table (called on logout). */
 export async function clearDbForUser(_userId: string): Promise<void> {
   if (_usingFallback) return
-  for (const t of ['dm_messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages']) {
+  for (const t of ['dm_messages', 'community_messages', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages', 'media_cache']) {
     await dbRun(`DELETE FROM ${t}`)
   }
 }

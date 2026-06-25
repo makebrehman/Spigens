@@ -283,16 +283,16 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
         >
           {thumb && (
             <img
-              src={thumb} alt="" aria-hidden
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(12px)', transform: 'scale(1.08)', opacity: loaded ? 0 : 1, transition: 'opacity 0.35s ease' }}
+              src={thumb} alt="" aria-hidden draggable={false}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(12px)', transform: 'scale(1.08)', opacity: loaded ? 0 : 1, transition: 'opacity 0.35s ease', pointerEvents: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
             />
           )}
           {fullSrc && (
             <img
-              src={fullSrc} alt="image"
+              src={fullSrc} alt="image" draggable={false}
               onLoad={() => setLoaded(true)}
               onError={() => { setLoaded(false); setMissing(true) }}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: loaded ? 1 : 0, transition: 'opacity 0.35s ease' }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: loaded ? 1 : 0, transition: 'opacity 0.35s ease', pointerEvents: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
             />
           )}
           {downloading && !loaded && (
@@ -328,7 +328,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           }}
         >
           {thumb ? (
-            <img src={thumb} alt="video" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img src={thumb} alt="video" draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }} />
           ) : (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.25)' }}>
               <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
@@ -423,7 +423,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           transition: drag ? 'none' : 'transform 0.2s ease',
           touchAction: 'pan-y',
           cursor: 'pointer',
-          userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
+          userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent', WebkitTouchCallout: 'none',
         }}
       >
         {renderMedia()}

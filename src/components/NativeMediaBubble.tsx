@@ -178,6 +178,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   // ── Tap vs. long-press vs. swipe-to-reply ───────────────────────────────────
   const [drag, setDrag] = useState(0)
   const press = useRef<{ t: any; active: boolean; startX: number; startY: number; dx: number; moved: boolean; long: boolean }>({ t: null, active: false, startX: 0, startY: 0, dx: 0, moved: false, long: false })
+  // The tap action runs from onClick (reliable on touch) — a pointercancel from a
+  // scroll gesture can swallow pointerup. This guards the click the browser still
+  // fires right after a long-press or a swipe so it doesn't also trigger the tap.
+  const suppressClick = useRef(false)
 
   const openActions = () => {
     if (isDeleted) return
@@ -197,8 +201,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   }
 
   const beginPress = (e: React.PointerEvent) => {
+    suppressClick.current = false
     press.current = { t: null, active: true, startX: e.clientX, startY: e.clientY, dx: 0, moved: false, long: false }
-    press.current.t = setTimeout(() => { press.current.t = null; press.current.long = true; setDrag(0); openActions() }, 480)
+    press.current.t = setTimeout(() => { press.current.t = null; press.current.long = true; suppressClick.current = true; setDrag(0); openActions() }, 480)
   }
   const movePress = (e: React.PointerEvent) => {
     if (!press.current.active) return
@@ -206,6 +211,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     const dy = e.clientY - press.current.startY
     if (!press.current.moved && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
       press.current.moved = true
+      suppressClick.current = true
       if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
     }
     // Horizontal drag → swipe-to-reply (ignore mostly-vertical scrolls).
@@ -219,12 +225,11 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     if (!press.current.active) return
     press.current.active = false
     if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
-    const { dx, long, moved } = press.current
+    const { dx, long } = press.current
     press.current.dx = 0
     setDrag(0)
     if (long) { press.current.long = false; return }
-    if (Math.abs(dx) > 45) { onReplyTo?.({ id, content: mediaLabel(), isSent }); return }
-    if (!moved) primaryAction()
+    if (Math.abs(dx) > 45) { suppressClick.current = true; onReplyTo?.({ id, content: mediaLabel(), isSent }) }
   }
   const cancelPress = () => {
     press.current.active = false
@@ -232,10 +237,16 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     press.current.dx = 0
     setDrag(0)
   }
+  // Genuine tap → primary action (open viewer / file / profile).
+  const onBubbleClick = () => {
+    if (suppressClick.current) { suppressClick.current = false; return }
+    primaryAction()
+  }
   const gestureProps = {
     onPointerDown: beginPress,
     onPointerMove: movePress,
     onPointerUp: endPress,
+    onClick: onBubbleClick,
     onPointerLeave: cancelPress,
     onPointerCancel: cancelPress,
   }
@@ -297,6 +308,11 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
               <span style={{ fontSize: 11, lineHeight: 1.2 }}>Tap to download</span>
             </div>
           )}
+          {isSent && status === 'sending' && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.32)' }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{spinner(28)}</div>
+            </div>
+          )}
         </div>
       )
     }
@@ -320,7 +336,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           )}
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.18)' }} />
           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {resolving ? spinner(26) : (
+            {resolving || (isSent && status === 'sending') ? spinner(26) : (
               <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" style={{ marginLeft: 3 }}><path d="M8 5v14l11-7z" /></svg>
             )}
           </div>

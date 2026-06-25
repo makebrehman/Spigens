@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageBubble } from './MessageBubble'
 import { DateSeparator } from './DateSeparator'
@@ -32,16 +32,11 @@ import {
 } from '@/lib/offlineCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
+import { dmMirror as msgCache } from '@/lib/messageMirror'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
-
-// Hot in-memory mirror of the last messages read from SQLite, keyed by other-user id.
-// Survives screen remounts (we key chat screens by id), so reopening a chat renders
-// its messages instantly — no async gap, no loader, no "no messages yet" flash.
-// SQLite is still the source of truth; this is just a synchronous read-through cache.
-const msgCache = new Map<string, LocalMessage[]>()
 
 export interface ChatScreenProps {
   contactId?: string
@@ -120,6 +115,15 @@ export function ChatScreen(props: ChatScreenProps) {
   const networkIsOnline = useNetworkStore(state => state.isOnline)
   const contacts = useContactStore(state => state.contacts)
 
+  // Seed chatMessages DURING render — before RenderifyHost mounts and snapshots it —
+  // so opening a chat shows its messages instantly and never flashes the previous
+  // chat's. An effect runs too late (the GenUI has already mounted with stale state).
+  const seededRef = useRef<string | undefined>(undefined)
+  if (otherUserId && seededRef.current !== otherUserId) {
+    seededRef.current = otherUserId
+    useUIStore.getState().setComponentState('chatMessages', msgCache.get(otherUserId) ?? [])
+  }
+
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
 
@@ -163,19 +167,6 @@ export function ChatScreen(props: ChatScreenProps) {
 
     resolve()
   }, [otherUserId, currentUserId, networkIsOnline])
-
-  // Seed messages from the in-memory mirror BEFORE paint, so opening a chat shows its
-  // messages instantly (and clears any previous chat's messages) — no loader, no flash.
-  // The async SQLite read below then confirms/updates. Only the otherUserId path uses
-  // this; the legacy contactId path seeds from the message store.
-  useLayoutEffect(() => {
-    if (!otherUserId) return
-    const seed = msgCache.get(otherUserId) ?? []
-    messagesRef.current = seed
-    setRealMessages(seed)
-    useUIStore.getState().setComponentState('chatMessages', seed)
-    if (seed.length) setLoaded(true)
-  }, [otherUserId])
 
   // Reset the loading gate when the contact changes; safety timeout guarantees the
   // loader can never hang even if a fetch stalls. (Legacy contactId path has no async

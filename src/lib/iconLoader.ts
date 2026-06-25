@@ -63,6 +63,39 @@ export async function fetchLucideIcon(name: string): Promise<string | null> {
   return fetchPromise
 }
 
+// Core chrome icons we always want available offline (back/send/etc.), in case the
+// source scan misses them or runs before sources hydrate.
+const CORE_ICONS = [
+  'arrow-left', 'chevron-left', 'chevron-right', 'arrow-up', 'arrow-right',
+  'send', 'send-horizontal', 'search', 'plus', 'x', 'check', 'check-check',
+  'paperclip', 'mic', 'smile', 'image', 'camera', 'file', 'trash-2', 'copy',
+  'corner-up-left', 'more-vertical', 'more-horizontal', 'settings', 'users',
+  'user', 'phone', 'video', 'reply', 'forward', 'download', 'play', 'pause',
+]
+
+/**
+ * Warm lucide icons into the offline (localStorage) cache so they render with no
+ * network. Scans GenUI component sources for icon names + the CORE list. Online-only,
+ * best-effort; over-matching is harmless (a non-existent icon just returns null).
+ */
+export async function warmIconsFromSources(sources: Record<string, string> | null | undefined): Promise<void> {
+  const names = new Set<string>(CORE_ICONS)
+  if (sources) {
+    const re = /name\s*[:=]\s*["'`]([a-z][a-z0-9-]{1,40})["'`]/g
+    for (const src of Object.values(sources)) {
+      if (typeof src !== 'string') continue
+      let m: RegExpExecArray | null
+      while ((m = re.exec(src))) names.add(m[1])
+    }
+  }
+  const list = [...names].slice(0, 200)
+  let i = 0
+  const worker = async () => {
+    while (i < list.length) { const n = list[i++]; try { await fetchLucideIcon(n) } catch { /* ignore */ } }
+  }
+  await Promise.all(Array.from({ length: Math.min(6, list.length) }, worker))
+}
+
 /**
  * react hook to use a lucide icon by name.
  * initialises synchronously from cache so there is no flash on reload.

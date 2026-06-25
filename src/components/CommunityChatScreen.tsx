@@ -1,11 +1,12 @@
 'use client'
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
 import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, deleteCachedCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
+import { communityMirror as commMsgCache } from '@/lib/messageMirror'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
@@ -14,10 +15,6 @@ import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
 import { MessageReactions } from './MessageReactions'
 import { DateSeparator } from './DateSeparator'
 import { ReactionPicker } from './ReactionPicker'
-
-// Hot in-memory mirror of the last community messages read from SQLite, keyed by
-// community id — survives remounts so reopening a community renders instantly.
-const commMsgCache = new Map<string, any[]>()
 
 export interface CommunityChatScreenProps {
   communityId: string
@@ -177,14 +174,14 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); supabase.removeChannel(kickChannel); useUIStore.getState().setComponentState('communityMessages', []); useUIStore.getState().setComponentState('communityTypingUsers', []); Object.values(typingExpireRef.current).forEach(clearTimeout); useUIStore.getState().setComponentState('activeMessageActions', null); useUIStore.getState().setComponentState('reactionDetail', null); useUIStore.getState().setComponentState('communityReplyingTo', null) }
   }, [communityId, currentUserId])
   // LOCAL-FIRST community messages — render from SQLite, re-read on any DB change.
-  // Seed from the in-memory mirror BEFORE paint so reopening a community shows its
-  // messages instantly and clears the previous one's — no loader, no flash.
-  useLayoutEffect(() => {
-    if (!communityId) return
-    const seed = commMsgCache.get(communityId) ?? []
-    useUIStore.getState().setComponentState('communityMessages', seed)
-    if (seed.length) setLoaded(true)
-  }, [communityId])
+  // Seed the (global) message state DURING render — before RenderifyHost mounts and
+  // snapshots it — so switching communities never flashes the previous one's messages.
+  // An effect runs too late: the GenUI has already mounted with the stale value.
+  const seededRef = useRef<string | null>(null)
+  if (seededRef.current !== communityId) {
+    seededRef.current = communityId
+    useUIStore.getState().setComponentState('communityMessages', commMsgCache.get(communityId) ?? [])
+  }
 
   useEffect(() => {
     if (!communityId) return

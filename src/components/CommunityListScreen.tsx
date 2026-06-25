@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
@@ -7,7 +7,10 @@ import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
 import { cacheCommunityList, getCachedCommunityList } from '@/lib/offlineCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
-import { ScreenLoader } from './ScreenLoader'
+
+// Hot in-memory mirror of the cached community list, so reopening the tab is instant.
+const commListCache = new Map<string, any[]>()
+
 export interface CommunityListScreenProps {
   onBack: () => void
   onOpenCommunity: (community: any) => void
@@ -32,13 +35,20 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
   // SQLite is the single source of truth: reveal the screen as soon as we've read it
   // (even if empty), so the chrome shows instantly instead of a network-gated spinner.
   // The server fetch below is only a background refresh that writes into SQLite.
+  // Seed from the in-memory mirror before paint so the list shows instantly.
+  useLayoutEffect(() => {
+    if (!currentUserId) return
+    const seed = commListCache.get(currentUserId)
+    if (seed) { useUIStore.getState().setComponentState('communityList', seed); setLoaded(true) }
+  }, [currentUserId])
+
   useEffect(() => {
     if (!currentUserId) return
     let active = true
     const reload = async () => {
       const cached = await getCachedCommunityList(currentUserId)
       if (!active) return
-      if (cached) useUIStore.getState().setComponentState('communityList', cached)
+      if (cached) { commListCache.set(currentUserId, cached); useUIStore.getState().setComponentState('communityList', cached) }
       setLoaded(true) // local read done → reveal immediately (don't wait for network)
     }
     reload()
@@ -123,7 +133,7 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
     const current = (useUIStore.getState().componentState?.['communityList'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityList', current.map((c: any) => c.id === communityId ? { ...c, isMember: true, userRole: 'member', member_count: (c.member_count || 0) + 1 } : c))
   }
-  return <>{!loaded && <ScreenLoader />}<RenderifyHost code={source} storeActions={{ onBack, onOpenCommunity, onOpenCommunityProfile: (c: any) => onOpenCommunityProfile?.(c), onAvatarTap: (c: any) => onCommunityAvatarTap?.(c), onCreateCommunity, onJoinCommunity, onRequestCommunity: async (communityId: string) => {
+  return <><RenderifyHost code={source} storeActions={{ onBack, onOpenCommunity, onOpenCommunityProfile: (c: any) => onOpenCommunityProfile?.(c), onAvatarTap: (c: any) => onCommunityAvatarTap?.(c), onCreateCommunity, onJoinCommunity, onRequestCommunity: async (communityId: string) => {
     if (!currentUserId) return
     const current = (useUIStore.getState().componentState?.['communityList'] ?? []) as any[]
     useUIStore.getState().setComponentState('communityList', current.map((c: any) => c.id === communityId ? { ...c, joinState: 'loading' } : c))

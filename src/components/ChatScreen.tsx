@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageBubble } from './MessageBubble'
 import { DateSeparator } from './DateSeparator'
@@ -10,7 +10,6 @@ import { ProfileImage } from './ProfileImage'
 import { ChatName } from './ChatName'
 import { OnlineStatus } from './OnlineStatus'
 import { TypingIndicator } from './TypingIndicator'
-import { ScreenLoader } from './ScreenLoader'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { useMessageStore } from '@/stores/messageStore'
 import { useUIStore } from '@/stores/uiStore'
@@ -37,6 +36,12 @@ import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-reac
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
+
+// Hot in-memory mirror of the last messages read from SQLite, keyed by other-user id.
+// Survives screen remounts (we key chat screens by id), so reopening a chat renders
+// its messages instantly — no async gap, no loader, no "no messages yet" flash.
+// SQLite is still the source of truth; this is just a synchronous read-through cache.
+const msgCache = new Map<string, LocalMessage[]>()
 
 export interface ChatScreenProps {
   contactId?: string
@@ -118,12 +123,10 @@ export function ChatScreen(props: ChatScreenProps) {
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
 
-    // Only clear messages when the contact changes, not on every network flip
+    // Reset the conversation id when the contact changes (message state is seeded
+    // synchronously, before paint, by the useLayoutEffect below).
     if (prevOtherUserIdRef.current !== otherUserId) {
       prevOtherUserIdRef.current = otherUserId
-      messagesRef.current = []
-      setRealMessages([])
-      useUIStore.getState().setComponentState('chatMessages', [])
       setConversationId(null)
     }
 
@@ -160,6 +163,19 @@ export function ChatScreen(props: ChatScreenProps) {
 
     resolve()
   }, [otherUserId, currentUserId, networkIsOnline])
+
+  // Seed messages from the in-memory mirror BEFORE paint, so opening a chat shows its
+  // messages instantly (and clears any previous chat's messages) — no loader, no flash.
+  // The async SQLite read below then confirms/updates. Only the otherUserId path uses
+  // this; the legacy contactId path seeds from the message store.
+  useLayoutEffect(() => {
+    if (!otherUserId) return
+    const seed = msgCache.get(otherUserId) ?? []
+    messagesRef.current = seed
+    setRealMessages(seed)
+    useUIStore.getState().setComponentState('chatMessages', seed)
+    if (seed.length) setLoaded(true)
+  }, [otherUserId])
 
   // Reset the loading gate when the contact changes; safety timeout guarantees the
   // loader can never hang even if a fetch stalls. (Legacy contactId path has no async
@@ -207,6 +223,7 @@ export function ChatScreen(props: ChatScreenProps) {
         }
       }
       if (!active) return
+      if (otherUserId) msgCache.set(otherUserId, merged) // keep the hot mirror fresh
       messagesRef.current = merged
       setRealMessages(merged)
       useUIStore.getState().setComponentState('chatMessages', merged)
@@ -918,8 +935,6 @@ export function ChatScreen(props: ChatScreenProps) {
   return (
     <>
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
-
-      {!loaded && <ScreenLoader />}
 
       {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}
 

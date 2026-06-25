@@ -402,6 +402,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
         style={{
           background: bubbleBg, borderRadius: bubbleRadius, padding: pad, maxWidth: 280,
           position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+          display: 'flex', flexDirection: 'column',
           transform: drag ? `translateX(${drag}px)` : undefined,
           transition: drag ? 'none' : 'transform 0.2s ease',
           touchAction: 'pan-y',
@@ -411,21 +412,20 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       >
         {renderMedia()}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 4, paddingRight: 2 }}>
-          <span style={{ fontSize: 10, color: isSent ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.8)' }}>{timestamp}</span>
-          {isSent && <MessageStatus status={status} isSent={isSent} />}
-        </div>
-      </div>
-
-      {/* Reaction pill / picker tray — aligned under the bubble on the message's side
-          (the tray itself is hardcoded alignSelf:flex-start, so it needs this wrapper). */}
-      <div style={{ width: '100%', display: 'flex', justifyContent: isSent ? 'flex-end' : 'flex-start' }}>
+        {/* Reactions live INSIDE the bubble, between the media and the date row —
+            exactly like text messages. MessageReactions hardcodes alignSelf:flex-start,
+            so in this flex column it stays left-aligned within the bubble. */}
         <MessageReactions
           messageId={id}
           currentUserId={currentUserId}
           onToggleReaction={onToggleReaction}
           onShowReactors={onShowReactors}
         />
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 4, paddingRight: 2 }}>
+          <span style={{ fontSize: 10, color: isSent ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.8)' }}>{timestamp}</span>
+          {isSent && <MessageStatus status={status} isSent={isSent} />}
+        </div>
       </div>
 
       {showLightbox && typeof document !== 'undefined' && createPortal(

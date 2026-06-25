@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
@@ -10,11 +10,15 @@ import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
-import { ScreenLoader } from './ScreenLoader'
 import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
 import { MessageReactions } from './MessageReactions'
 import { DateSeparator } from './DateSeparator'
 import { ReactionPicker } from './ReactionPicker'
+
+// Hot in-memory mirror of the last community messages read from SQLite, keyed by
+// community id — survives remounts so reopening a community renders instantly.
+const commMsgCache = new Map<string, any[]>()
+
 export interface CommunityChatScreenProps {
   communityId: string
   communityName: string
@@ -173,15 +177,22 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); supabase.removeChannel(kickChannel); useUIStore.getState().setComponentState('communityMessages', []); useUIStore.getState().setComponentState('communityTypingUsers', []); Object.values(typingExpireRef.current).forEach(clearTimeout); useUIStore.getState().setComponentState('activeMessageActions', null); useUIStore.getState().setComponentState('reactionDetail', null); useUIStore.getState().setComponentState('communityReplyingTo', null) }
   }, [communityId, currentUserId])
   // LOCAL-FIRST community messages — render from SQLite, re-read on any DB change.
+  // Seed from the in-memory mirror BEFORE paint so reopening a community shows its
+  // messages instantly and clears the previous one's — no loader, no flash.
+  useLayoutEffect(() => {
+    if (!communityId) return
+    const seed = commMsgCache.get(communityId) ?? []
+    useUIStore.getState().setComponentState('communityMessages', seed)
+    if (seed.length) setLoaded(true)
+  }, [communityId])
+
   useEffect(() => {
     if (!communityId) return
     let active = true
-    // Drop any previous community's messages immediately so they can't flash before
-    // this community's cached rows are read.
-    useUIStore.getState().setComponentState('communityMessages', [])
     const reload = async () => {
       const cached = await getCachedCommunityMessages(communityId)
       if (!active) return
+      commMsgCache.set(communityId, cached ?? []) // keep the hot mirror fresh
       if (cached) useUIStore.getState().setComponentState('communityMessages', cached)
       if ((cached && cached.length > 0) || !useNetworkStore.getState().isOnline) setLoaded(true)
     }
@@ -313,7 +324,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const url = await uploadCommunityImage(communityId, file)
     if (url) setCommunityAvatarUrl(url)
   }
-  return <>{!loaded && <ScreenLoader />}<RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
+  return <><RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
       const key = 'reactions:' + messageId
       const reactions = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       if (!reactions.length) return

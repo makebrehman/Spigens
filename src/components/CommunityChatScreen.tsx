@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
 import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, deleteCachedCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
 import { communityMirror as commMsgCache } from '@/lib/messageMirror'
+import { getMirroredMediaUri, warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
@@ -182,6 +183,15 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     seededRef.current = communityId
     useUIStore.getState().setComponentState('communityMessages', commMsgCache.get(communityId) ?? [])
   }
+
+  // Resolve the header community photo to its cached on-device file so it shows offline.
+  useEffect(() => {
+    const url = props.communityAvatarUrl
+    if (!url) return
+    const local = getMirroredMediaUri(url)
+    if (local) { setCommunityAvatarUrl(local); return }
+    warmMediaMirror([url]).then(() => { const l = getMirroredMediaUri(url); if (l) setCommunityAvatarUrl(l) })
+  }, [props.communityAvatarUrl])
 
   useEffect(() => {
     if (!communityId) return

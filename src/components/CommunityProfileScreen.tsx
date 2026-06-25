@@ -6,6 +6,7 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
 import { getCachedCommunityList, getCachedCommunityMembers, cacheCommunityMembers } from '@/lib/offlineCache'
+import { warmMediaMirror, withMirroredAvatar } from '@/lib/mediaCache'
 import { ProfileImage } from '@/components/ProfileImage'
 import { BackButton } from '@/components/BackButton'
 export interface CommunityProfileScreenProps {
@@ -74,14 +75,21 @@ export function CommunityProfileScreen(props: CommunityProfileScreenProps) {
       if (!active || !list) return
       const found = list.find((c: any) => c.id === communityId)
       if (found && !useUIStore.getState().componentState?.communityProfileData) {
-        useUIStore.getState().setComponentState('communityProfileData', found)
+        // Resolve the community photo to its cached on-device file so it shows offline.
+        useUIStore.getState().setComponentState('communityProfileData', withMirroredAvatar(found))
+        warmMediaMirror([found.avatar_url]).then(() => {
+          if (active) {
+            const cur = useUIStore.getState().componentState?.communityProfileData
+            if (cur && cur.id === communityId) useUIStore.getState().setComponentState('communityProfileData', withMirroredAvatar(cur))
+          }
+        })
       }
     })
     // SQLite-first members: show the cached member list instantly (works offline).
     getCachedCommunityMembers(communityId).then((cached: any[] | null) => {
       if (active && cached && cached.length) useUIStore.getState().setComponentState('communityProfileMembers', cached)
     })
-    supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (active && data) useUIStore.getState().setComponentState('communityProfileData', data) })
+    supabase.from('communities').select('*').eq('id', communityId).single().then(({ data }: any) => { if (active && data) useUIStore.getState().setComponentState('communityProfileData', withMirroredAvatar(data)) })
     supabase.from('community_members').select('user_id, role, profiles(display_name, username, avatar_url)').eq('community_id', communityId).eq('status', 'active').limit(30).then(({ data }: any) => {
       if (active && data) {
         const members = data.map((m: any) => ({ user_id: m.user_id, role: m.role, display_name: m.profiles?.display_name, username: m.profiles?.username, avatar_url: m.profiles?.avatar_url }))

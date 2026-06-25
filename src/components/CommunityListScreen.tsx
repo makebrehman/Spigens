@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
 import { cacheCommunityList, getCachedCommunityList, getCachedCommunityMessages } from '@/lib/offlineCache'
 import { communityMirror } from '@/lib/messageMirror'
+import { warmMediaMirror, withMirroredAvatar } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 
 // Hot in-memory mirror of the cached community list, so reopening the tab is instant.
@@ -42,7 +43,7 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
   if (currentUserId && seededRef.current !== currentUserId) {
     seededRef.current = currentUserId
     const seed = commListCache.get(currentUserId)
-    if (seed) useUIStore.getState().setComponentState('communityList', seed)
+    if (seed) useUIStore.getState().setComponentState('communityList', seed.map(withMirroredAvatar))
   }
 
   useEffect(() => {
@@ -51,7 +52,15 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
     const reload = async () => {
       const cached = await getCachedCommunityList(currentUserId)
       if (!active) return
-      if (cached) { commListCache.set(currentUserId, cached); useUIStore.getState().setComponentState('communityList', cached) }
+      if (cached) {
+        commListCache.set(currentUserId, cached)
+        useUIStore.getState().setComponentState('communityList', cached.map(withMirroredAvatar))
+        // Warm avatars into the sync mirror, then re-map so cached community photos
+        // resolve to their on-device file (works offline, no broken-image flash).
+        warmMediaMirror(cached.map((c: any) => c.avatar_url)).then(() => {
+          if (active) useUIStore.getState().setComponentState('communityList', (commListCache.get(currentUserId) ?? []).map(withMirroredAvatar))
+        })
+      }
       setLoaded(true) // local read done → reveal immediately (don't wait for network)
       // Pre-warm the community message mirror so opening a community is instant.
       if (cached) for (const c of cached) {

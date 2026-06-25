@@ -26,8 +26,9 @@ import { useNetworkStore } from '@/stores/networkStore'
 import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
-import { cacheContacts, getCachedContacts, getCachedMessages } from '@/lib/offlineCache'
+import { cacheContacts, getCachedContacts, getCachedMessages, getCachedCommunityList } from '@/lib/offlineCache'
 import { dmMirror } from '@/lib/messageMirror'
+import { warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb } from '@/lib/localDb'
 import { warmIconsFromSources } from '@/lib/iconLoader'
@@ -299,6 +300,9 @@ export default function Home() {
           getCachedMessages(c.conversationId).then(m => { if (m) dmMirror.set(c.id, m) }).catch(() => {})
         }
       }
+      // Pre-warm community avatars into the media mirror so community photos resolve
+      // to their on-device file the moment the Communities tab/profile opens.
+      if (user?.id) getCachedCommunityList(user.id).then(list => { if (list) warmMediaMirror(list.map((c: any) => c.avatar_url)) }).catch(() => {})
     }
     reload()
     const unsub = subscribeDb(topics.contacts(), reload)

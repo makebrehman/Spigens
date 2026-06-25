@@ -58,6 +58,7 @@ type Snapshot = {
   interactions: any
   customComponents: any
   componentSources: any
+  sourcesVersion?: number
 }
 
 // a named, restorable point in the customization timeline
@@ -84,6 +85,7 @@ function captureSnapshot(state: any): Snapshot {
     interactions: state.interactions,
     customComponents: state.customComponents,
     componentSources: state.componentSources,
+    sourcesVersion: SOURCES_SCHEMA_VERSION,
   }
 }
 
@@ -181,11 +183,42 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
   return { ...DEFAULT_COMPONENT_SOURCES, ...(componentSources && typeof componentSources === 'object' ? componentSources : {}) }
 }
 
+// When a built-in default component source is FIXED in code, bump this version and
+// list the keys to force back to their new default. Without this, a copy of the old
+// source cached on-device (or saved on the server from a previous run) keeps winning
+// over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
+// Real, user-made customizations to OTHER components are left untouched, and once a
+// device is migrated it can be customized again normally.
+const SOURCES_SCHEMA_VERSION = 1
+const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
+  // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
+  // any stale cached/saved copy so the send button actually works.
+  { version: 1, reset: ['composerBar', 'chatScreen'] },
+]
+
+function migrateComponentSources(sources: Record<string, string>, fromVersion: number): Record<string, string> {
+  let out = sources
+  for (const m of SOURCES_MIGRATIONS) {
+    if (m.version > fromVersion) {
+      out = { ...out }
+      for (const key of m.reset) {
+        if (DEFAULT_COMPONENT_SOURCES[key]) out[key] = DEFAULT_COMPONENT_SOURCES[key]
+      }
+    }
+  }
+  return out
+}
+
 // normalize any snapshot before it is applied to the live store: guarantees its
 // componentSources contains every key the app renders.
 function normalizeSnapshot(snapshot: any): any {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
-  return { ...snapshot, componentSources: mergeWithDefaultSources(snapshot.componentSources) }
+  const fromV = typeof snapshot.sourcesVersion === 'number' ? snapshot.sourcesVersion : 0
+  return {
+    ...snapshot,
+    componentSources: migrateComponentSources(mergeWithDefaultSources(snapshot.componentSources), fromV),
+    sourcesVersion: SOURCES_SCHEMA_VERSION,
+  }
 }
 
 const defaultState = {
@@ -413,6 +446,7 @@ export const useUIStore = create<UIStoreState>()(
           interactions: state.interactions,
           customComponents: state.customComponents,
           componentSources: state.componentSources,
+          sourcesVersion: SOURCES_SCHEMA_VERSION,
         }
         // cap at 30, drop oldest
         const newHistory = [...state.history, snapshot].slice(-30)
@@ -506,7 +540,9 @@ export const useUIStore = create<UIStoreState>()(
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Record<string, any>
         const merged = { ...current, ...p } as any
-        merged.componentSources = mergeWithDefaultSources(p.componentSources)
+        const fromV = typeof p.sourcesVersion === 'number' ? p.sourcesVersion : 0
+        merged.componentSources = migrateComponentSources(mergeWithDefaultSources(p.componentSources), fromV)
+        merged.sourcesVersion = SOURCES_SCHEMA_VERSION
         return merged
       },
       // persist only the data fields, NOT the functions
@@ -524,6 +560,7 @@ export const useUIStore = create<UIStoreState>()(
         interactions: state.interactions,
         customComponents: state.customComponents,
         componentSources: state.componentSources,
+        sourcesVersion: SOURCES_SCHEMA_VERSION,
         history: state.history,
         componentState: filterPersistentComponentState(state.componentState),
         versions: state.versions,

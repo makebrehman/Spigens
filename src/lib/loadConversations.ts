@@ -9,6 +9,7 @@ function mediaPreviewLabel(type: string): string | null {
     case 'video': return '🎥 Video'
     case 'audio': return '🎤 Voice message'
     case 'file': return '📎 File'
+    case 'contact': return '👤 Contact'
     case 'invite': return '📩 Community invite'
     default: return null
   }

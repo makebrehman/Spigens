@@ -943,6 +943,12 @@ export default function Home() {
           lastSeen={activeChatUser.last_seen}
           onBack={() => { setActiveChatUser(null); if (returnToProfile) { setActiveCommunityProfile(returnToProfile); setReturnToProfile(null); } else if (returnToCommunity) { setActiveCommunity(returnToCommunity); setReturnToCommunity(null); } }}
           onViewContactProfile={() => setContactProfileUser(activeChatUser)}
+          onOpenUserProfile={(user) => setContactProfileUser({
+            id: user.id,
+            display_name: user.display_name || user.username || '',
+            username: user.username || '',
+            avatar_url: user.avatar_url || null,
+          } as any)}
           onOpenCommunityInvite={(meta: any, msgId: string) => { setActiveCommunityProfile({ id: meta.communityId, name: meta.communityName, type: meta.communityType || 'public', avatar_url: meta.avatarUrl || null, description: meta.description || null, member_count: meta.memberCount || 0, isMember: false, userRole: null, _inviteMessageId: msgId }) }}
         />
         <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />

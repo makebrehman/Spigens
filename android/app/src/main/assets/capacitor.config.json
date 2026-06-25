@@ -1,6 +1,6 @@
 {
 	"appId": "com.spigens.app",
-	"appName": "ChatApp",
+	"appName": "Spigens",
 	"webDir": "out",
 	"server": {
 		"androidScheme": "https"

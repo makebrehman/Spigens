@@ -9,16 +9,38 @@
 
 import { decryptMessage } from '@/lib/encryption'
 
-// Media messages carry a tiny blur preview in metadata.thumb. It is encrypted
-// exactly like the message body (and flagged enc:true), so here — the one place
-// raw rows become display-ready — we decrypt it back into a plain data URL. Older
-// rows with a plaintext thumb (no enc flag) pass through unchanged.
-function decryptThumb(metadata: any, ctx: ToLocalMessageCtx): any {
-  if (!metadata || !metadata.thumb) return metadata
-  if (!metadata.enc) return metadata
-  if (!ctx.myPrivateKey || !ctx.otherPublicKey) return { ...metadata, thumb: null }
-  const dec = decryptMessage(metadata.thumb, ctx.otherPublicKey, ctx.myPrivateKey)
-  return { ...metadata, thumb: dec ?? null, enc: false }
+// Media messages carry sensitive display bits in metadata: a blur/poster preview
+// (metadata.thumb) and, for documents, the original filename (metadata.name). Both
+// are encrypted exactly like the message body (and flagged enc:true), so here — the
+// one place raw rows become display-ready — we decrypt them back into plain values.
+// Non-sensitive fields (dur, size, w, h) ride along in plaintext. Older rows with a
+// plaintext thumb (no enc flag) pass through unchanged.
+function decryptMeta(metadata: any, ctx: ToLocalMessageCtx): any {
+  if (!metadata || !metadata.enc) return metadata
+  const canDecrypt = !!(ctx.myPrivateKey && ctx.otherPublicKey)
+  const out: any = { ...metadata, enc: false }
+  if (metadata.thumb) {
+    out.thumb = canDecrypt ? (decryptMessage(metadata.thumb, ctx.otherPublicKey!, ctx.myPrivateKey!) ?? null) : null
+  }
+  if (metadata.name) {
+    out.name = canDecrypt ? (decryptMessage(metadata.name, ctx.otherPublicKey!, ctx.myPrivateKey!) ?? null) : null
+  }
+  return out
+}
+
+// Short, human label for a message used as a reply preview (so replying to a photo
+// shows "📷 Photo", not a raw storage URL).
+export function messagePreview(m: { messageType: string; content: string; metadata?: any | null }): string {
+  switch (m.messageType) {
+    case 'image': return '📷 Photo'
+    case 'video': return '🎥 Video'
+    case 'audio': return '🎙️ Voice message'
+    case 'file': return m.metadata && m.metadata.name ? '📄 ' + m.metadata.name : '📄 Document'
+    case 'contact': {
+      try { const c = JSON.parse(m.content); return '👤 ' + (c.name || 'Contact') } catch { return '👤 Contact' }
+    }
+    default: return m.content
+  }
 }
 
 export interface LocalMessage {
@@ -66,7 +88,8 @@ export function toLocalMessage(row: any, ctx: ToLocalMessageCtx): LocalMessage {
   if (row.reply_to) {
     const orig = ctx.prev.find(m => m.id === row.reply_to)
     if (orig) {
-      replyTo = { id: row.reply_to, content: orig.content, senderLabel: orig.isSent ? 'You' : ctx.contactName }
+      const preview = orig.messageType && orig.messageType !== 'text' ? messagePreview(orig) : orig.content
+      replyTo = { id: row.reply_to, content: preview, senderLabel: orig.isSent ? 'You' : ctx.contactName }
     }
   }
 
@@ -74,7 +97,7 @@ export function toLocalMessage(row: any, ctx: ToLocalMessageCtx): LocalMessage {
     id: row.id,
     content,
     messageType: row.message_type || 'text',
-    metadata: row.deleted_at ? null : decryptThumb(row.metadata ?? null, ctx),
+    metadata: row.deleted_at ? null : decryptMeta(row.metadata ?? null, ctx),
     timestamp: fmtTime(row.created_at),
     createdAt: row.created_at,
     isSent,

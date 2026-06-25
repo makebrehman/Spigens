@@ -18,7 +18,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
 import { encryptMessage } from '@/lib/encryption'
-import { makeBlurThumb } from '@/lib/thumbnails'
+import { makeBlurThumb, makeVideoThumb, getAudioDuration } from '@/lib/thumbnails'
 import { cacheLocalBlob } from '@/lib/mediaCache'
 import imageCompression from 'browser-image-compression'
 import {
@@ -50,6 +50,7 @@ export interface ChatScreenProps {
   lastSeen?: string
   onBack?: () => void
   onViewContactProfile?: () => void
+  onOpenUserProfile?: (user: { id: string; display_name?: string; username?: string; avatar_url?: string | null }) => void
   onOpenCommunityInvite?: (meta: any, msgId: string) => void
 }
 
@@ -57,7 +58,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const {
     contactId, otherUserId, otherUserPublicKey, avatarUrl,
     contactName, contactInitials, contactAvatarColor,
-    isOnline, lastSeen, onBack, onViewContactProfile, onOpenCommunityInvite,
+    isOnline, lastSeen, onBack, onViewContactProfile, onOpenUserProfile, onOpenCommunityInvite,
   } = props
 
   const storeMessages = useMessageStore(state => (contactId ? state.messagesByContact[contactId] : undefined)) ?? EMPTY_MESSAGES
@@ -102,6 +103,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<any>(null)
   const recordingCancelledRef = useRef(false)
+  const recordingStartRef = useRef<number>(0)
   const prevOtherUserIdRef = useRef<string | undefined | null>(null)
 
   // Mirror live overlay values into componentState so the GenUI sources read them
@@ -515,7 +517,7 @@ export function ChatScreen(props: ChatScreenProps) {
     return { url: data.publicUrl, blob: processedFile }
   }
 
-  const sendMediaOptimistic = async (file: File) => {
+  const sendMediaOptimistic = async (file: File, knownDuration?: number) => {
     if (!currentUserId || !otherUserId) return
 
     const fileType = file.type.startsWith('image/') ? 'image'
@@ -530,6 +532,31 @@ export function ChatScreen(props: ChatScreenProps) {
     // Key the optimistic row under the active conversation (or the pending key if
     // the conversation isn't created yet). All writes go through the DB → emit.
     const mediaKey = ((useUIStore.getState().componentState as any)?.conversationId as string | null) ?? `pending_${otherUserId}`
+
+    // Display metadata (plaintext, kept locally so the sender sees the right card /
+    // thumbnail instantly and offline). Filenames + thumbnails are encrypted before
+    // they reach the DB (below); dur/size/w/h are non-sensitive and ride plaintext.
+    const displayMeta: any = {}
+    if (fileType === 'file' || fileType === 'audio') {
+      displayMeta.name = file.name
+      displayMeta.size = file.size
+    }
+
+    // Generate the thumbnail / duration in parallel with the upload so it never
+    // delays the optimistic bubble. For images this is the tiny blur placeholder;
+    // for videos a real poster frame (+ duration, dimensions); for audio a duration.
+    const metaP: Promise<void> = (async () => {
+      try {
+        if (fileType === 'image') {
+          displayMeta.thumb = await makeBlurThumb(file).catch(() => null)
+        } else if (fileType === 'video') {
+          const v = await makeVideoThumb(file).catch(() => null)
+          if (v) { displayMeta.thumb = v.thumb; displayMeta.dur = v.dur; displayMeta.w = v.w; displayMeta.h = v.h }
+        } else if (fileType === 'audio') {
+          displayMeta.dur = knownDuration && knownDuration > 0 ? knownDuration : await getAudioDuration(file).catch(() => 0)
+        }
+      } catch { /* leave whatever we have */ }
+    })()
 
     const optimisticMsg: LocalMessage = {
       id: tempId,
@@ -547,13 +574,6 @@ export function ChatScreen(props: ChatScreenProps) {
 
     await upsertMessage(mediaKey, optimisticMsg)
 
-    // Generate the blur preview (images only) in parallel with the upload so it
-    // never delays the optimistic bubble — the sender already sees the full local
-    // image; this preview is what the recipient (and offline reloads) render first.
-    const thumbP: Promise<string | null> = fileType === 'image'
-      ? makeBlurThumb(file).catch(() => null)
-      : Promise.resolve(null)
-
     const uploaded = await uploadChatMedia(file)
     URL.revokeObjectURL(localUrl)
 
@@ -562,7 +582,8 @@ export function ChatScreen(props: ChatScreenProps) {
       return
     }
     const { url, blob } = uploaded
-    const thumb = await thumbP
+    await metaP
+    const hasMeta = Object.keys(displayMeta).length > 0
 
     // Keep an offline copy of our own media without re-downloading it later.
     cacheLocalBlob(url, blob, fileType).catch(() => {})
@@ -570,7 +591,7 @@ export function ChatScreen(props: ChatScreenProps) {
     const realId = crypto.randomUUID()
     const realMsg: LocalMessage = {
       ...optimisticMsg, id: realId, content: url, status: 'sent',
-      metadata: thumb ? { thumb } : null,
+      metadata: hasMeta ? { ...displayMeta } : null,
     }
 
     // swap the temp row for the real one
@@ -601,13 +622,16 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     let encContent: string | null = null
-    let metaForDb: any = null
+    let metaForDb: any = hasMeta ? { ...displayMeta } : null
     if (myPrivateKey && otherUserPublicKey) {
       try { encContent = encryptMessage(url, otherUserPublicKey, myPrivateKey) } catch { /* send plain */ }
-      // Encrypt the blur preview exactly like the body so the server never sees
-      // even a low-res version of the photo (enc:true tells the reader to decrypt).
-      if (thumb) {
-        try { metaForDb = { thumb: encryptMessage(thumb, otherUserPublicKey, myPrivateKey), enc: true } } catch { /* drop preview */ }
+      // Encrypt the sensitive bits (poster/blur preview + filename) exactly like the
+      // body so the server never sees them (enc:true tells the reader to decrypt).
+      if (metaForDb) {
+        try {
+          if (displayMeta.thumb) { metaForDb.thumb = encryptMessage(displayMeta.thumb, otherUserPublicKey, myPrivateKey); metaForDb.enc = true }
+          if (displayMeta.name) { metaForDb.name = encryptMessage(displayMeta.name, otherUserPublicKey, myPrivateKey); metaForDb.enc = true }
+        } catch { metaForDb.thumb = null; metaForDb.name = null }
       }
     }
 
@@ -633,6 +657,76 @@ export function ChatScreen(props: ChatScreenProps) {
     }
   }
 
+  // Share a Spigens user as a rich contact card (message_type 'contact'), with the
+  // contact details carried as an encrypted JSON body — no raw text, no metadata leak.
+  const sendContactMessage = async (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => {
+    if (!currentUserId || !otherUserId) return
+    const payload = JSON.stringify({
+      id: contact.id,
+      name: contact.name,
+      username: contact.username || '',
+      avatarUrl: contact.avatarUrl || null,
+    })
+
+    const isOnline = useNetworkStore.getState().isOnline
+    const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+    const newId = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+
+    let encryptedContent: string | null = null
+    if (myPrivateKey && otherUserPublicKey) {
+      try { encryptedContent = encryptMessage(payload, otherUserPublicKey, myPrivateKey) } catch { /* send plain */ }
+    }
+
+    const cacheKey = liveCid ?? `pending_${otherUserId}`
+    const msg: LocalMessage = {
+      id: newId,
+      content: payload,
+      messageType: 'contact',
+      metadata: null,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt,
+      isSent: true,
+      isRead: true,
+      status: isOnline ? 'sent' : 'sending',
+      replyTo: null,
+      isDeleted: false,
+    }
+    await upsertMessage(cacheKey, msg)
+
+    if (!isOnline) {
+      await savePendingMessage(currentUserId, {
+        id: newId, conversationId: liveCid, otherUserId,
+        content: payload, encryptedContent, replyToId: null, createdAt, messageType: 'contact',
+      })
+      return
+    }
+
+    let cid = liveCid
+    if (!cid) {
+      const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
+      if (data) { cid = data; setConversationId(data) } else return
+    }
+
+    const { error } = await supabase.from('messages').insert({
+      id: newId,
+      conversation_id: cid,
+      sender_id: currentUserId,
+      content: encryptedContent ? null : payload,
+      encrypted_content: encryptedContent,
+      message_type: 'contact',
+      status: 'sent',
+      reply_to: null,
+    })
+
+    if (error) {
+      console.error('Failed to insert contact message:', error)
+      await upsertMessage(cacheKey, { ...msg, status: 'failed' })
+      setAttachToast('Failed to send. Try again.')
+      setTimeout(() => setAttachToast(null), 2600)
+    }
+  }
+
   const startVoiceRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -643,23 +737,32 @@ export function ChatScreen(props: ChatScreenProps) {
       recorder.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data) }
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop())
+        const secs = Math.max(1, Math.round((Date.now() - recordingStartRef.current) / 1000))
         setIsRecording(false)
         clearInterval(recordingTimerRef.current)
         setRecordingDuration(0)
         if (recordingCancelledRef.current) { recordingCancelledRef.current = false; return }
         const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' })
         const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' })
-        await sendMediaOptimistic(file)
+        await sendMediaOptimistic(file, secs)
       }
 
       recorder.start()
       mediaRecorderRef.current = recorder
+      recordingStartRef.current = Date.now()
       setIsRecording(true)
       setRecordingDuration(0)
       recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000)
-    } catch {
-      setAttachToast('Microphone access denied')
-      setTimeout(() => setAttachToast(null), 2600)
+    } catch (err: any) {
+      const name = err?.name || ''
+      const msg =
+        name === 'NotAllowedError' || name === 'SecurityError'
+          ? 'Microphone blocked — allow mic access for Spigens in your phone settings'
+          : name === 'NotFoundError'
+          ? 'No microphone found on this device'
+          : 'Could not start recording. Please try again.'
+      setAttachToast(msg)
+      setTimeout(() => setAttachToast(null), 3200)
     }
   }
 
@@ -764,6 +867,10 @@ export function ChatScreen(props: ChatScreenProps) {
       }
     },
     onOpenCommunityInvite: (meta: any, msgId: string) => onOpenCommunityInvite?.(meta, msgId),
+    onOpenContactCard: (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => {
+      if (!contact?.id) return
+      onOpenUserProfile?.({ id: contact.id, display_name: contact.name, username: contact.username, avatar_url: contact.avatarUrl ?? null })
+    },
     onTyping: () => {
       const now = Date.now()
       if (now - lastTypingSentRef.current < 1500) return
@@ -916,8 +1023,12 @@ export function ChatScreen(props: ChatScreenProps) {
     onSelect: (contactId: string) => {
       const c = contacts.find(x => x.id === contactId)
       if (c) {
-        const username = c.rawProfile?.username || ''
-        sendMsgRef.current?.(`Contact: ${c.name}${username ? ' · @' + username : ''}`)
+        sendContactMessage({
+          id: c.id,
+          name: c.name,
+          username: c.rawProfile?.username || '',
+          avatarUrl: c.avatarUrl || null,
+        })
       }
       setShowContactPicker(false)
     },

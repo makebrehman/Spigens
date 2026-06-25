@@ -1,11 +1,12 @@
 'use client'
-import { useState, useEffect, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { BackButton } from './BackButton'
-import { cacheCommunityList, getCachedCommunityList } from '@/lib/offlineCache'
+import { cacheCommunityList, getCachedCommunityList, getCachedCommunityMessages } from '@/lib/offlineCache'
+import { communityMirror } from '@/lib/messageMirror'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 
 // Hot in-memory mirror of the cached community list, so reopening the tab is instant.
@@ -35,12 +36,14 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
   // SQLite is the single source of truth: reveal the screen as soon as we've read it
   // (even if empty), so the chrome shows instantly instead of a network-gated spinner.
   // The server fetch below is only a background refresh that writes into SQLite.
-  // Seed from the in-memory mirror before paint so the list shows instantly.
-  useLayoutEffect(() => {
-    if (!currentUserId) return
+  // Seed the list DURING render (before RenderifyHost snapshots it) so it shows
+  // instantly with no empty flash.
+  const seededRef = useRef<string | null>(null)
+  if (currentUserId && seededRef.current !== currentUserId) {
+    seededRef.current = currentUserId
     const seed = commListCache.get(currentUserId)
-    if (seed) { useUIStore.getState().setComponentState('communityList', seed); setLoaded(true) }
-  }, [currentUserId])
+    if (seed) useUIStore.getState().setComponentState('communityList', seed)
+  }
 
   useEffect(() => {
     if (!currentUserId) return
@@ -50,6 +53,10 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
       if (!active) return
       if (cached) { commListCache.set(currentUserId, cached); useUIStore.getState().setComponentState('communityList', cached) }
       setLoaded(true) // local read done → reveal immediately (don't wait for network)
+      // Pre-warm the community message mirror so opening a community is instant.
+      if (cached) for (const c of cached) {
+        getCachedCommunityMessages(c.id).then(m => { if (m) communityMirror.set(c.id, m) }).catch(() => {})
+      }
     }
     reload()
     const unsub = subscribeDb(topics.communities(), reload)

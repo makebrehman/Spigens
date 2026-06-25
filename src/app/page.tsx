@@ -26,9 +26,11 @@ import { useNetworkStore } from '@/stores/networkStore'
 import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
-import { cacheContacts, getCachedContacts } from '@/lib/offlineCache'
+import { cacheContacts, getCachedContacts, getCachedMessages } from '@/lib/offlineCache'
+import { dmMirror } from '@/lib/messageMirror'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb } from '@/lib/localDb'
+import { warmIconsFromSources } from '@/lib/iconLoader'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
 import { CommunityListScreen } from '@/components/CommunityListScreen'
@@ -169,6 +171,13 @@ export default function Home() {
   const interactions = useUIStore(state => state.interactions)
   const customComponents = useUIStore(state => state.customComponents)
   const componentSources = useUIStore(state => state.componentSources)
+
+  // Warm GenUI icons into the offline cache while online, so the back/send/etc. icons
+  // render with no network once offline (they're fetched from unpkg on first use).
+  useEffect(() => {
+    if (isOnline && componentSources) warmIconsFromSources(componentSources)
+  }, [isOnline, componentSources])
+
   const topAppBarSource = componentSources?.topAppBar
   const searchBarSource = componentSources?.searchBar
   const bottomSheetSource = componentSources?.bottomSheet
@@ -283,6 +292,13 @@ export default function Home() {
       const withPresence = cached.map((c: any) => ({ ...c, isOnline: online.has(c.id) }))
       useContactStore.getState().setContacts(withPresence)
       useUIStore.getState().setComponentState('feedContacts', withPresence)
+      // Pre-warm the DM message mirror so opening any chat is instant — even the
+      // first open after a cold start (the mirror is empty until this runs).
+      for (const c of cached) {
+        if (c.conversationId) {
+          getCachedMessages(c.conversationId).then(m => { if (m) dmMirror.set(c.id, m) }).catch(() => {})
+        }
+      }
     }
     reload()
     const unsub = subscribeDb(topics.contacts(), reload)

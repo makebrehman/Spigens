@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { MessageStatus } from './MessageStatus'
 import { ReplyQuote } from './ReplyQuote'
 import { MessageReactions } from './MessageReactions'
@@ -48,6 +49,8 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   // Non-image media (video/audio/file): prefer a cached local file, else stream
   // from the remote URL. We don't force-download these to disk in this pass.
   const [mediaSrc, setMediaSrc] = useState(content)
+  // Full-screen viewer (lightbox) for images and videos.
+  const [showLightbox, setShowLightbox] = useState(false)
 
   useEffect(() => {
     if (!isImage || isDeleted || !content) return
@@ -133,16 +136,16 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       )
       return (
         <div
-          onClick={missing ? retryDownload : openFull}
+          onClick={missing ? retryDownload : () => { if (fullSrc) setShowLightbox(true) }}
           style={{
             position: 'relative',
             width: W,
+            height: 280,
             maxWidth: '100%',
             borderRadius: 12,
             overflow: 'hidden',
             cursor: 'pointer',
             background: 'rgba(0,0,0,0.22)',
-            minHeight: thumb ? undefined : 160,
             lineHeight: 0,
           }}
         >
@@ -152,8 +155,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
               alt=""
               aria-hidden
               style={{
-                width: '100%',
-                display: 'block',
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: 'cover',
                 filter: 'blur(12px)',
                 transform: 'scale(1.08)',
                 opacity: loaded ? 0 : 1,
@@ -169,9 +173,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
               onLoad={() => setLoaded(true)}
               onError={() => { setLoaded(false); setMissing(true) }}
               style={{
-                ...(thumb
-                  ? { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' as const }
-                  : { width: '100%', maxHeight: 320, display: 'block', objectFit: 'cover' as const }),
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: 'cover',
                 opacity: loaded ? 1 : 0,
                 transition: 'opacity 0.35s ease',
               }}
@@ -186,12 +190,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
           {missing && !loaded && (
             <div style={{
-              position: thumb ? 'absolute' : 'relative',
-              inset: thumb ? 0 : undefined,
-              width: '100%', height: thumb ? '100%' : 160,
+              position: 'absolute', inset: 0,
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
               gap: 6, color: 'rgba(255,255,255,0.9)',
-              background: thumb ? 'rgba(0,0,0,0.28)' : 'transparent',
+              background: 'rgba(0,0,0,0.28)',
             }}>
               <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -209,16 +211,14 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
     if (messageType === 'video') {
       return (
-        <video
-          src={mediaSrc}
-          controls
-          style={{
-            maxWidth: 240,
-            maxHeight: 320,
-            borderRadius: 12,
-            display: 'block',
-          }}
-        />
+        <div style={{ width: 240, height: 280, maxWidth: '100%', borderRadius: 12, overflow: 'hidden', background: '#000', lineHeight: 0 }}>
+          <video
+            src={mediaSrc}
+            controls
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+        </div>
       )
     }
 
@@ -311,6 +311,23 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
         onToggleReaction={onToggleReaction}
         onShowReactors={onShowReactors}
       />
+
+      {showLightbox && typeof document !== 'undefined' && createPortal(
+        <div
+          onClick={() => setShowLightbox(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <img src={fullSrc || content} alt="image" style={{ maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain' }} />
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowLightbox(false) }}
+            aria-label="Close"
+            style={{ position: 'absolute', top: 'calc(10px + env(safe-area-inset-top))', right: 14, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}
+          >
+            ✕
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

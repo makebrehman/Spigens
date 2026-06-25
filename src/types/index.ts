@@ -14,6 +14,7 @@ export interface Contact {
   isOnline: boolean
   isPinned?: boolean
   isMuted?: boolean
+  conversationId?: string | null
   rawProfile?: any
 }
 

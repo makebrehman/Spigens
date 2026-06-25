@@ -127,6 +127,12 @@ export function ChatScreen(props: ChatScreenProps) {
       setConversationId(null)
     }
 
+    // Resolve the conversation id from the locally-cached contact. Messages are cached
+    // under the real conversation id, so this is what makes them load offline (and load
+    // instantly online, without waiting on the server lookup below).
+    const cachedCid = useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId
+    if (cachedCid) setConversationId(cachedCid)
+
     // Offline: keep current conversationId (don't null it — Effect 2 reads cache by it)
     if (!networkIsOnline) { setLoaded(true); return }
 

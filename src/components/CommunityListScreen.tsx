@@ -82,10 +82,14 @@ export function CommunityListScreen(props: CommunityListScreenProps) {
           last_message: lastMsgMap[c.id] || null,
           unreadCount: unreadMap[c.id] || 0,
         }))
-        if (!cancelled && currentUserId && withLastMsgs.length > 0) {
+        // The Communities tab is the single-source-of-truth list of YOUR communities,
+        // so only the joined ones are cached/shown (consistent with the sign-in sync).
+        // This is what stops non-member communities from leaking in offline.
+        const joined = withLastMsgs.filter((c: any) => c.isMember)
+        if (!cancelled && currentUserId && joined.length > 0) {
           // Write to the DB → emit → the local-first effect re-reads and renders.
           // Only when non-empty: never let a transient empty reply wipe the saved list.
-          await cacheCommunityList(currentUserId, withLastMsgs)
+          await cacheCommunityList(currentUserId, joined)
         }
       } catch (e) {
         console.error('Communities load exception:', e)

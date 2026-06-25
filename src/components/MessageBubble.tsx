@@ -53,11 +53,12 @@ export interface MessageBubbleProps {
   currentUserId?: string
   onToggleReaction?: (messageId: string, emoji: string) => void
   onShowReactors?: (messageId: string) => void
+  onOpenContactCard?: (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => void
   isDeleted?: boolean
 }
 
 export function MessageBubble(props: MessageBubbleProps) {
-  const { id, content, messageType, metadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, isDeleted } = props
+  const { id, content, messageType, metadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, onOpenContactCard, isDeleted } = props
 
   // Heal chat-screen sources that don't forward messageType/content/metadata. Saved
   // GenUI snapshots build MessageBubble with only a subset of props, so a media
@@ -138,6 +139,7 @@ export function MessageBubble(props: MessageBubbleProps) {
         currentUserId={currentUserId}
         onToggleReaction={onToggleReaction}
         onShowReactors={onShowReactors}
+        onOpenContactCard={onOpenContactCard}
         isDeleted={isDeleted}
       />
     )

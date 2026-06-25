@@ -367,7 +367,7 @@ export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
                 )
               );
             } else {
-              bubble = React.createElement(MessageBubble, { key: msg.id + '-' + msg.status + (msg.isDeleted ? '-deleted' : ''), id: msg.id, contactId: msg.contactId, content: msg.content, messageType: msg.messageType, metadata: msg.metadata, timestamp: msg.timestamp, isSent: msg.isSent, isRead: msg.isRead, status: msg.status, replyTo: msg.replyTo, isDeleted: !!msg.isDeleted, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors });
+              bubble = React.createElement(MessageBubble, { key: msg.id + '-' + msg.status + (msg.isDeleted ? '-deleted' : ''), id: msg.id, contactId: msg.contactId, content: msg.content, messageType: msg.messageType, metadata: msg.metadata, timestamp: msg.timestamp, isSent: msg.isSent, isRead: msg.isRead, status: msg.status, replyTo: msg.replyTo, isDeleted: !!msg.isDeleted, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined });
             }
             return separator ? React.createElement(React.Fragment, { key: 'frag-' + msg.id }, separator, bubble) : bubble;
           }),
@@ -627,7 +627,11 @@ export const DEFAULT_COMPOSERBAR_SOURCE = `function Component() {
         placeholder: 'message...',
         style: { flex: 1, background: '#1E1E1E', borderRadius: '24px', padding: '10px 16px', fontSize: '15px', color: '#E8E8E8', border: 'none', outline: 'none', minWidth: 0 }
       }),
-      React.createElement(SendButton, { onSend: onSend })
+      React.createElement('div', {
+        onClick: onSend,
+        onMouseDown: function(e) { if (e && typeof e.preventDefault === 'function') e.preventDefault(); },
+        style: { width: '44px', height: '44px', borderRadius: '50%', background: inputText && inputText.trim() ? '#2563EB' : 'rgba(255,255,255,0.12)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, userSelect: 'none', WebkitTapHighlightColor: 'transparent', transition: 'background 0.2s' }
+      }, React.createElement(Icon, { name: 'arrow-right', size: 20, color: '#fff' }))
     )
   );
 }`;

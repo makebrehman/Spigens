@@ -1,12 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageStatus } from './MessageStatus'
 import { ReplyQuote } from './ReplyQuote'
 import { MessageReactions } from './MessageReactions'
+import { AudioMessage } from './AudioMessage'
+import { ProfileImage } from './ProfileImage'
 import { getCachedMediaUri, resolveMedia } from '@/lib/mediaCache'
 import { useNetworkStore } from '@/stores/networkStore'
+import { useUIStore } from '@/stores/uiStore'
 
 export interface NativeMediaBubbleProps {
   id: string
@@ -23,34 +26,62 @@ export interface NativeMediaBubbleProps {
   currentUserId?: string
   onToggleReaction?: (messageId: string, emoji: string) => void
   onShowReactors?: (messageId: string) => void
+  onOpenContactCard?: (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => void
   isDeleted?: boolean
+}
+
+function fmtBytes(n?: number): string {
+  if (!n || n <= 0) return ''
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB'
+  return (n / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+function fmtDur(s?: number): string {
+  const t = Math.max(0, Math.floor(s || 0))
+  const m = Math.floor(t / 60)
+  const ss = String(t % 60).padStart(2, '0')
+  return `${m}:${ss}`
 }
 
 export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   const {
     id, content, messageType, metadata, timestamp, isSent, isRead, status,
     replyTo, onReplyTo, onJumpToReply, currentUserId,
-    onToggleReaction, onShowReactors, isDeleted,
+    onToggleReaction, onShowReactors, onOpenContactCard, isDeleted,
   } = props
 
   const isImage = messageType === 'image'
+  const isContact = messageType === 'contact'
   const thumb: string | null =
     metadata && typeof metadata === 'object' && typeof metadata.thumb === 'string' ? metadata.thumb : null
+  const metaName: string | null =
+    metadata && typeof metadata === 'object' && typeof metadata.name === 'string' ? metadata.name : null
+  const metaSize: number | undefined =
+    metadata && typeof metadata === 'object' && typeof metadata.size === 'number' ? metadata.size : undefined
+  const metaDur: number | undefined =
+    metadata && typeof metadata === 'object' && typeof metadata.dur === 'number' ? metadata.dur : undefined
 
-  // ── Progressive image loading ──────────────────────────────────────────────
-  // Show the (always-local) blur preview instantly, then resolve the full image:
-  // a cached local file if we have one, else download it when online. If neither
-  // is possible (offline + not cached, or the local file was deleted), we stay on
-  // the blur and surface a re-download tap target.
+  // Parse the encrypted-then-decrypted contact payload (JSON in the body).
+  const contactData: { id: string; name: string; username?: string; avatarUrl?: string | null } | null = (() => {
+    if (!isContact || !content) return null
+    try { return JSON.parse(content) } catch { return null }
+  })()
+
+  // ── Progressive image loading (blur → full, download-first) ─────────────────
   const [fullSrc, setFullSrc] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [missing, setMissing] = useState(false)
   const [downloading, setDownloading] = useState(false)
-  // Non-image media (video/audio/file): prefer a cached local file, else stream
-  // from the remote URL. We don't force-download these to disk in this pass.
-  const [mediaSrc, setMediaSrc] = useState(content)
-  // Full-screen viewer (lightbox) for images and videos.
+
+  // ── Non-image media (video/audio/file): local-first, download-first ─────────
+  // localSrc is ONLY ever a local file (or a blob:/data: we already hold), never a
+  // streamed remote URL on a real device — resolveMedia downloads to disk first.
+  const [localSrc, setLocalSrc] = useState<string | null>(null)
+  const [resolving, setResolving] = useState(false)
+
   const [showLightbox, setShowLightbox] = useState(false)
+  const [showVideo, setShowVideo] = useState(false)
 
   useEffect(() => {
     if (!isImage || isDeleted || !content) return
@@ -59,11 +90,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       setLoaded(false)
       setMissing(false)
       setFullSrc(null)
-      // Optimistic local source (blob:/data:) — already on-device, show as-is.
-      if (content.startsWith('blob:') || content.startsWith('data:')) {
-        setFullSrc(content)
-        return
-      }
+      if (content.startsWith('blob:') || content.startsWith('data:')) { setFullSrc(content); return }
       const cached = await getCachedMediaUri(content)
       if (cancelled) return
       if (cached) { setFullSrc(cached); return }
@@ -81,16 +108,28 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   }, [content, isImage, isDeleted])
 
   useEffect(() => {
-    if (isImage || isDeleted || !content) return
+    if (isImage || isContact || isDeleted || !content) return
     let cancelled = false
     const run = async () => {
-      setMediaSrc(content)
+      setLocalSrc(null)
+      setResolving(false)
+      if (content.startsWith('blob:') || content.startsWith('data:')) { setLocalSrc(content); return }
       const cached = await getCachedMediaUri(content)
-      if (!cancelled && cached) setMediaSrc(cached)
+      if (cancelled) return
+      if (cached) { setLocalSrc(cached); return }
+      // Auto-fetch small audio so the player is ready; video/files wait for a tap
+      // (so we never silently pull a big file over mobile data).
+      if (messageType === 'audio' && useNetworkStore.getState().isOnline) {
+        setResolving(true)
+        const dl = await resolveMedia(content, 'audio')
+        if (cancelled) return
+        setResolving(false)
+        if (dl) setLocalSrc(dl)
+      }
     }
     run()
     return () => { cancelled = true }
-  }, [content, isImage, isDeleted])
+  }, [content, messageType, isImage, isContact, isDeleted])
 
   const retryDownload = async () => {
     if (downloading) return
@@ -102,19 +141,89 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     else setMissing(true)
   }
 
-  const openFull = () => {
-    const target = fullSrc || content
-    if (target) window.open(target, '_blank', 'noopener,noreferrer')
+  // Download to the device (if needed) and return the local URI. Never streams.
+  const ensureDownloaded = async (): Promise<string | null> => {
+    if (localSrc) return localSrc
+    if (content.startsWith('blob:') || content.startsWith('data:')) { setLocalSrc(content); return content }
+    if (resolving) return null
+    setResolving(true)
+    const kind = messageType === 'video' ? 'video' : messageType === 'audio' ? 'audio' : 'file'
+    const dl = await resolveMedia(content, kind)
+    setResolving(false)
+    if (dl) { setLocalSrc(dl); return dl }
+    return null
   }
+
+  const openVideo = async () => {
+    const uri = await ensureDownloaded()
+    if (uri) setShowVideo(true)
+  }
+
+  const openFile = async () => {
+    const uri = await ensureDownloaded()
+    if (uri) { try { window.open(uri, '_blank', 'noopener,noreferrer') } catch { /* ignore */ } }
+  }
+
+  const mediaLabel = (): string => {
+    switch (messageType) {
+      case 'image': return '📷 Photo'
+      case 'video': return '🎥 Video'
+      case 'audio': return '🎙️ Voice message'
+      case 'file': return metaName ? '📄 ' + metaName : '📄 Document'
+      case 'contact': return '👤 ' + (contactData?.name || 'Contact')
+      default: return content
+    }
+  }
+
+  // ── Tap vs. long-press ──────────────────────────────────────────────────────
+  const press = useRef<{ t: any; moved: boolean; x: number; y: number; long: boolean }>({ t: null, moved: false, x: 0, y: 0, long: false })
+
+  const openActions = () => {
+    if (isDeleted) return
+    const ui = useUIStore.getState()
+    ui.setComponentState('activeMessageActions', { id, isSent, content: mediaLabel() })
+    ui.setComponentState('openReactionMessageId', id)
+  }
+
+  const beginPress = (e: React.PointerEvent) => {
+    press.current.moved = false
+    press.current.long = false
+    press.current.x = e.clientX
+    press.current.y = e.clientY
+    press.current.t = setTimeout(() => { press.current.t = null; press.current.long = true; openActions() }, 480)
+  }
+  const movePress = (e: React.PointerEvent) => {
+    if (!press.current.t) return
+    if (Math.abs(e.clientX - press.current.x) > 12 || Math.abs(e.clientY - press.current.y) > 12) {
+      press.current.moved = true
+      clearTimeout(press.current.t)
+      press.current.t = null
+    }
+  }
+  const cancelPress = () => { if (press.current.t) { clearTimeout(press.current.t); press.current.t = null } }
+  const endPress = (primary?: () => void) => () => {
+    if (press.current.long) { press.current.long = false; return }
+    if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
+    if (!press.current.moved) primary?.()
+  }
+  const pressProps = (primary?: () => void) => ({
+    onPointerDown: beginPress,
+    onPointerMove: movePress,
+    onPointerUp: endPress(primary),
+    onPointerLeave: cancelPress,
+    onPointerCancel: cancelPress,
+  })
 
   const bubbleBg = isSent ? '#1d4ed8' : '#1f2937'
-  const bubbleRadius = isSent
-    ? '18px 18px 4px 18px'
-    : '18px 18px 18px 4px'
+  const bubbleRadius = isSent ? '18px 18px 4px 18px' : '18px 18px 18px 4px'
 
-  const handleSwipe = () => {
-    if (onReplyTo) onReplyTo({ id, content, isSent })
-  }
+  const spinner = (size = 24) => (
+    <svg width={size} height={size} viewBox="0 0 50 50" style={{ display: 'block' }}>
+      <circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="5" strokeLinecap="round" strokeDasharray="80 50">
+        <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite" />
+      </circle>
+    </svg>
+  )
 
   const renderMedia = () => {
     if (isDeleted) {
@@ -127,79 +236,37 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
     if (messageType === 'image') {
       const W = 240
-      const spinner = (
-        <svg width="24" height="24" viewBox="0 0 50 50" style={{ display: 'block' }}>
-          <circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="5" strokeLinecap="round" strokeDasharray="80 50">
-            <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite" />
-          </circle>
-        </svg>
-      )
       return (
         <div
-          onClick={missing ? retryDownload : () => { if (fullSrc) setShowLightbox(true) }}
+          {...pressProps(() => { if (missing) retryDownload(); else if (fullSrc) setShowLightbox(true) })}
           style={{
-            position: 'relative',
-            width: W,
-            height: 280,
-            maxWidth: '100%',
-            borderRadius: 12,
-            overflow: 'hidden',
-            cursor: 'pointer',
-            background: 'rgba(0,0,0,0.22)',
-            lineHeight: 0,
+            position: 'relative', width: W, height: 280, maxWidth: '100%',
+            borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
+            background: 'rgba(0,0,0,0.22)', lineHeight: 0,
           }}
         >
           {thumb && (
             <img
-              src={thumb}
-              alt=""
-              aria-hidden
-              style={{
-                position: 'absolute', inset: 0,
-                width: '100%', height: '100%',
-                objectFit: 'cover',
-                filter: 'blur(12px)',
-                transform: 'scale(1.08)',
-                opacity: loaded ? 0 : 1,
-                transition: 'opacity 0.35s ease',
-              }}
+              src={thumb} alt="" aria-hidden
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(12px)', transform: 'scale(1.08)', opacity: loaded ? 0 : 1, transition: 'opacity 0.35s ease' }}
             />
           )}
-
           {fullSrc && (
             <img
-              src={fullSrc}
-              alt="image"
+              src={fullSrc} alt="image"
               onLoad={() => setLoaded(true)}
               onError={() => { setLoaded(false); setMissing(true) }}
-              style={{
-                position: 'absolute', inset: 0,
-                width: '100%', height: '100%',
-                objectFit: 'cover',
-                opacity: loaded ? 1 : 0,
-                transition: 'opacity 0.35s ease',
-              }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: loaded ? 1 : 0, transition: 'opacity 0.35s ease' }}
             />
           )}
-
           {downloading && !loaded && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {spinner}
-            </div>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{spinner()}</div>
           )}
-
           {missing && !loaded && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 6, color: 'rgba(255,255,255,0.9)',
-              background: 'rgba(0,0,0,0.28)',
-            }}>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'rgba(255,255,255,0.9)', background: 'rgba(0,0,0,0.28)' }}>
               <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
               </div>
               <span style={{ fontSize: 11, lineHeight: 1.2 }}>Tap to download</span>
@@ -210,67 +277,100 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     }
 
     if (messageType === 'video') {
+      const W = 240
       return (
-        <div style={{ width: 240, height: 280, maxWidth: '100%', borderRadius: 12, overflow: 'hidden', background: '#000', lineHeight: 0 }}>
-          <video
-            src={mediaSrc}
-            controls
-            playsInline
-            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-          />
+        <div
+          {...pressProps(openVideo)}
+          style={{
+            position: 'relative', width: W, height: 280, maxWidth: '100%',
+            borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
+            background: '#0b0b0b', lineHeight: 0,
+          }}
+        >
+          {thumb ? (
+            <img src={thumb} alt="video" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.25)' }}>
+              <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
+            </div>
+          )}
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.18)' }} />
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {resolving ? spinner(26) : (
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" style={{ marginLeft: 3 }}><path d="M8 5v14l11-7z" /></svg>
+            )}
+          </div>
+          <div style={{ position: 'absolute', left: 8, top: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(0,0,0,0.55)', borderRadius: 6, padding: '2px 7px' }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" fill="none" stroke="#fff" strokeWidth="2" /></svg>
+            <span style={{ fontSize: 11, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{fmtDur(metaDur)}</span>
+          </div>
         </div>
       )
     }
 
     if (messageType === 'audio') {
       return (
-        <audio
-          src={mediaSrc}
-          controls
-          style={{ maxWidth: 240, borderRadius: 8, display: 'block' }}
-        />
+        <div {...pressProps()}>
+          <AudioMessage src={localSrc} isSent={isSent} duration={metaDur} resolving={resolving} onRetry={ensureDownloaded} />
+        </div>
       )
     }
 
-    // file
-    const fileName = (() => {
-      try { return decodeURIComponent(content.split('/').pop() || 'File') } catch { return 'File' }
+    if (messageType === 'contact') {
+      const c = contactData
+      const name = c?.name || 'Contact'
+      const initials = (name[0] || '?').toUpperCase()
+      return (
+        <div
+          {...pressProps(() => { if (c) onOpenContactCard?.(c) })}
+          style={{ width: 244, maxWidth: '100%', cursor: 'pointer' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 4px 10px' }}>
+            <ProfileImage avatarUrl={c?.avatarUrl ?? null} contactInitials={initials} contactAvatarColor="#2563eb" size={46} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+              {c?.username ? <div style={{ fontSize: 12, color: isSent ? 'rgba(255,255,255,0.7)' : 'rgba(156,163,175,0.95)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{c.username}</div> : null}
+            </div>
+          </div>
+          <div style={{ borderTop: `1px solid ${isSent ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.1)'}`, textAlign: 'center', paddingTop: 8, fontSize: 13, fontWeight: 600, color: isSent ? '#dbeafe' : '#60a5fa' }}>
+            View profile
+          </div>
+        </div>
+      )
+    }
+
+    // file / document
+    const fallbackName = (() => {
+      try { return decodeURIComponent(content.split('/').pop() || 'Document') } catch { return 'Document' }
     })()
+    const fileName = metaName || fallbackName
+    const sub = [fmtBytes(metaSize), localSrc ? 'Saved' : 'Tap to download'].filter(Boolean).join(' · ')
     return (
-      <a
-        href={mediaSrc}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          color: isSent ? '#fff' : '#e5e7eb',
-          textDecoration: 'none',
-          maxWidth: 240,
-        }}
-      >
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <div {...pressProps(openFile)} style={{ display: 'flex', alignItems: 'center', gap: 12, width: 248, maxWidth: '100%', cursor: 'pointer' }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: 'rgba(255,255,255,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff' }}>
+          {resolving ? spinner(20) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+            </svg>
+          )}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14, color: isSent ? '#fff' : '#e5e7eb', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</div>
+          {sub ? <div style={{ fontSize: 11, color: isSent ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.9)', marginTop: 2 }}>{sub}</div> : null}
+        </div>
+        <div style={{ flexShrink: 0, color: isSent ? 'rgba(255,255,255,0.8)' : 'rgba(156,163,175,0.95)' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
           </svg>
         </div>
-        <span style={{ fontSize: 13, lineHeight: 1.4, wordBreak: 'break-all' }}>{fileName}</span>
-      </a>
+      </div>
     )
   }
 
+  const pad = messageType === 'audio' || messageType === 'file' || messageType === 'contact' ? '10px 12px' : '6px'
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: isSent ? 'flex-end' : 'flex-start',
-        marginBottom: 4,
-        width: '100%',
-      }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', marginBottom: 4, width: '100%' }}>
       {replyTo && (
         <div style={{ maxWidth: 280, width: '100%', display: 'flex', justifyContent: isSent ? 'flex-end' : 'flex-start' }}>
           <ReplyQuote replyTo={replyTo} isSent={isSent} onJumpToReply={onJumpToReply} />
@@ -278,29 +378,13 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       )}
 
       <div
-        onDoubleClick={handleSwipe}
-        style={{
-          background: bubbleBg,
-          borderRadius: bubbleRadius,
-          padding: messageType === 'audio' || messageType === 'file' ? '10px 14px' : '6px',
-          maxWidth: 280,
-          position: 'relative',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-        }}
+        id={'msg-' + id}
+        style={{ background: bubbleBg, borderRadius: bubbleRadius, padding: pad, maxWidth: 280, position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}
       >
         {renderMedia()}
 
-        <div style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: 4,
-          marginTop: 4,
-          paddingRight: 2,
-        }}>
-          <span style={{ fontSize: 10, color: isSent ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.8)' }}>
-            {timestamp}
-          </span>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 4, paddingRight: 2 }}>
+          <span style={{ fontSize: 10, color: isSent ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.8)' }}>{timestamp}</span>
           {isSent && <MessageStatus status={status} isSent={isSent} />}
         </div>
       </div>
@@ -313,18 +397,26 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       />
 
       {showLightbox && typeof document !== 'undefined' && createPortal(
-        <div
-          onClick={() => setShowLightbox(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
+        <div onClick={() => setShowLightbox(false)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <img src={fullSrc || content} alt="image" style={{ maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain' }} />
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowLightbox(false) }}
-            aria-label="Close"
-            style={{ position: 'absolute', top: 'calc(10px + env(safe-area-inset-top))', right: 14, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}
-          >
-            ✕
-          </button>
+          <button onClick={(e) => { e.stopPropagation(); setShowLightbox(false) }} aria-label="Close" style={{ position: 'absolute', top: 'calc(10px + env(safe-area-inset-top))', right: 14, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>✕</button>
+        </div>,
+        document.body
+      )}
+
+      {showVideo && localSrc && typeof document !== 'undefined' && createPortal(
+        <div onClick={() => setShowVideo(false)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.96)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <video
+            src={localSrc}
+            controls
+            autoPlay
+            playsInline
+            controlsList="nodownload noplaybackrate noremoteplayback"
+            disablePictureInPicture
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '100vw', maxHeight: '100vh', objectFit: 'contain', background: '#000' }}
+          />
+          <button onClick={(e) => { e.stopPropagation(); setShowVideo(false) }} aria-label="Close" style={{ position: 'absolute', top: 'calc(10px + env(safe-area-inset-top))', right: 14, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>✕</button>
         </div>,
         document.body
       )}

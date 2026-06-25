@@ -68,9 +68,10 @@ export async function fetchLucideIcon(name: string): Promise<string | null> {
 const CORE_ICONS = [
   'arrow-left', 'chevron-left', 'chevron-right', 'arrow-up', 'arrow-right',
   'send', 'send-horizontal', 'search', 'plus', 'x', 'check', 'check-check',
-  'paperclip', 'mic', 'smile', 'image', 'camera', 'file', 'trash-2', 'copy',
-  'corner-up-left', 'more-vertical', 'more-horizontal', 'settings', 'users',
-  'user', 'phone', 'video', 'reply', 'forward', 'download', 'play', 'pause',
+  'paperclip', 'mic', 'smile', 'image', 'camera', 'file', 'file-text', 'trash-2',
+  'copy', 'corner-up-left', 'more-vertical', 'more-horizontal', 'settings', 'users',
+  'user', 'user-round', 'phone', 'video', 'reply', 'forward', 'download', 'play',
+  'pause', 'music', 'bell-off', 'pin', 'archive',
 ]
 
 /**

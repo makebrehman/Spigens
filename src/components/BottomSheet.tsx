@@ -4,6 +4,16 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, ReactNode } from 'react'
 import { useUIStore } from '@/stores/uiStore'
+import { useLucideIcon } from '@/lib/iconLoader'
+
+// Renders a lucide icon by name (kebab-case) into the bottom-sheet option row.
+// Falls back to a blank box while the SVG loads / if the name isn't found.
+function OptionIcon({ name, style }: { name: string; style?: CSSProperties }) {
+  const svg = useLucideIcon(name)
+  const sized = svg ? svg.replace(/width="[^"]*"/, 'width="22"').replace(/height="[^"]*"/, 'height="22"') : null
+  if (!sized) return <span style={{ display: 'inline-block', width: 22, height: 22, ...style }} />
+  return <span style={{ display: 'inline-flex', color: '#E8E8E8', ...style }} dangerouslySetInnerHTML={{ __html: sized }} />
+}
 
 export interface BottomSheetOption {
   id: string
@@ -141,8 +151,10 @@ export function BottomSheet(props: BottomSheetProps) {
                       style={{ display: 'inline-flex', ...s.optionIcon, ...override?.optionIcon, ...iconOverride.iconStyle }}
                       dangerouslySetInnerHTML={{ __html: iconOverride.iconSvg }}
                     />
+                  ) : /^[a-z][a-z0-9-]+$/.test(option.icon) ? (
+                    <OptionIcon name={option.icon} style={{ ...s.optionIcon, ...override?.optionIcon, ...iconOverride?.iconStyle }} />
                   ) : (
-                    <span 
+                    <span
                       className="text-[20px] text-[#E8E8E8]"
                       style={{ ...s.optionIcon, ...override?.optionIcon, ...iconOverride?.iconStyle }}
                     >

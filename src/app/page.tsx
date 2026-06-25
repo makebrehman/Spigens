@@ -621,11 +621,11 @@ export default function Home() {
         popup: {
           title: 'send attachment',
           options: [
-            { id: 'photo', label: 'Photo / Video', icon: '🖼' },
-            { id: 'document', label: 'Document', icon: '📄' },
-            { id: 'audio', label: 'Audio', icon: '🎵' },
-            { id: 'voice', label: 'Voice Note', icon: '🎤' },
-            { id: 'spigens-contact', label: 'Contact', icon: '👤' },
+            { id: 'photo', label: 'Photo / Video', icon: 'image' },
+            { id: 'document', label: 'Document', icon: 'file-text' },
+            { id: 'audio', label: 'Audio', icon: 'music' },
+            { id: 'voice', label: 'Voice Note', icon: 'mic' },
+            { id: 'spigens-contact', label: 'Contact', icon: 'user-round' },
           ],
         },
       },
@@ -633,10 +633,10 @@ export default function Home() {
         popup: {
           title: 'chat options',
           options: [
-            { id: 'mute', label: 'mute notifications', icon: '🔕' },
-            { id: 'pin', label: 'pin to top', icon: '📌' },
-            { id: 'archive', label: 'archive chat', icon: '📦' },
-            { id: 'delete', label: 'delete chat', icon: '🗑️', destructive: true },
+            { id: 'mute', label: 'mute notifications', icon: 'bell-off' },
+            { id: 'pin', label: 'pin to top', icon: 'pin' },
+            { id: 'archive', label: 'archive chat', icon: 'archive' },
+            { id: 'delete', label: 'delete chat', icon: 'trash-2', destructive: true },
           ],
         },
       },

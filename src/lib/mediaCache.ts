@@ -19,6 +19,32 @@ import { dbRun, dbQuery, isUsingFallback } from '@/lib/localDb'
 const DIR = Directory.Data
 const ROOT = 'media_cache'
 
+// Synchronous mirror of remote URL → local display URI, populated whenever we resolve
+// a cached file. Lets the UI swap a remote avatar URL for its on-device file
+// synchronously (e.g. community avatars rendered as raw <img> in the GenUI), with no
+// async gap and no broken-image flash.
+const displayMirror = new Map<string, string>()
+
+/** Sync lookup: the local display URI for a remote URL if it's been resolved already. */
+export function getMirroredMediaUri(remoteUrl: string | null | undefined): string | null {
+  if (!remoteUrl) return null
+  return displayMirror.get(remoteUrl) ?? null
+}
+
+/** Warm the sync mirror for a set of URLs (reads the cache, no network). Best-effort. */
+export async function warmMediaMirror(urls: (string | null | undefined)[]): Promise<void> {
+  for (const u of urls) {
+    if (u && !displayMirror.has(u)) { try { await getCachedMediaUri(u) } catch { /* ignore */ } }
+  }
+}
+
+/** Return a copy of an item with avatar_url swapped for its cached local URI (sync). */
+export function withMirroredAvatar<T extends { avatar_url?: string | null }>(item: T): T {
+  if (!item) return item
+  const m = getMirroredMediaUri(item.avatar_url)
+  return m ? { ...item, avatar_url: m } : item
+}
+
 function isNative() {
   return Capacitor.isNativePlatform()
 }
@@ -105,7 +131,9 @@ export async function getCachedMediaUri(remoteUrl: string | null | undefined): P
     return null
   }
   await dbRun('UPDATE media_cache SET last_access = ? WHERE url = ?', [new Date().toISOString(), remoteUrl]).catch(() => {})
-  return displaySrc(rel)
+  const uri = await displaySrc(rel)
+  if (uri) displayMirror.set(remoteUrl, uri)
+  return uri
 }
 
 async function recordCache(remoteUrl: string, relPath: string, kind: string | undefined, size: number): Promise<void> {
@@ -128,7 +156,9 @@ export async function cacheLocalBlob(remoteUrl: string, blob: Blob, kind?: strin
     const b64 = await blobToBase64(blob)
     await Filesystem.writeFile({ directory: DIR, path: rel, data: b64 })
     await recordCache(remoteUrl, rel, kind, blob.size)
-    return displaySrc(rel)
+    const uri = await displaySrc(rel)
+    if (uri) displayMirror.set(remoteUrl, uri)
+    return uri
   } catch {
     return null
   }
@@ -177,6 +207,7 @@ export async function isMediaCached(remoteUrl: string | null | undefined): Promi
 
 /** Wipe every cached media file + row (called on logout). */
 export async function clearMediaCache(): Promise<void> {
+  displayMirror.clear()
   if (!isNative() || isUsingFallback()) return
   try { await Filesystem.rmdir({ directory: DIR, path: ROOT, recursive: true }) } catch { /* nothing to remove */ }
   await dbRun('DELETE FROM media_cache').catch(() => {})

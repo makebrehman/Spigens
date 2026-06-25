@@ -234,6 +234,7 @@ export default function Home() {
         lastMessageTime: timeStr,
         unreadCount: unreadMap[c.otherProfile.id] || 0,
         isOnline: useContactStore.getState().onlineUserIds.has(c.otherProfile.id),
+        conversationId: c.conversationId,
         rawProfile: c.otherProfile
       }
     })
@@ -858,6 +859,7 @@ export default function Home() {
   if (activeCommunity) {
     return (
       <CommunityChatScreen
+        key={activeCommunity.id}
         communityId={activeCommunity.id}
         communityName={activeCommunity.name}
         communityType={activeCommunity.type}
@@ -911,6 +913,7 @@ export default function Home() {
     return (
       <>
         <ChatScreen
+          key={activeChatUser.id}
           otherUserId={activeChatUser.id}
           otherUserPublicKey={activeChatUser.public_key}
           contactName={activeChatUser.display_name || activeChatUser.username}
@@ -932,6 +935,7 @@ export default function Home() {
     return (
       <>
         <ChatScreen
+          key={selectedContact.id}
           contactId={selectedContact.id}
           contactName={selectedContact.name}
           contactInitials={selectedContact.avatarInitials}

@@ -71,6 +71,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
           lastMessageTime: new Date(c.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           unreadCount: 0,
           isOnline: false,
+          conversationId: c.conversationId,
           rawProfile: c.otherProfile,
         }))
         if (contacts.length) await cacheContacts(userId, contacts)
@@ -134,8 +135,14 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         if (!active) return
 
         const allComms = commRes.data || []
-        const myIds = new Set((memRes.data || []).map((m: any) => m.community_id as string))
-        const myComms = allComms.filter((c: any) => myIds.has(c.id))
+        // Keep membership flags so cached communities render as joined (not as
+        // "join"-button tiles) offline.
+        const roleById: Record<string, string> = {}
+        ;(memRes.data || []).forEach((m: any) => { roleById[m.community_id] = m.role })
+        const myIds = new Set(Object.keys(roleById))
+        const myComms = allComms
+          .filter((c: any) => myIds.has(c.id))
+          .map((c: any) => ({ ...c, isMember: true, userRole: roleById[c.id] || 'member' }))
         if (myComms.length) await cacheCommunityList(userId, myComms)
         setProgress(80)
 

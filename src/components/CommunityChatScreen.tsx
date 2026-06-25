@@ -176,6 +176,9 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   useEffect(() => {
     if (!communityId) return
     let active = true
+    // Drop any previous community's messages immediately so they can't flash before
+    // this community's cached rows are read.
+    useUIStore.getState().setComponentState('communityMessages', [])
     const reload = async () => {
       const cached = await getCachedCommunityMessages(communityId)
       if (!active) return

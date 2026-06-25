@@ -175,8 +175,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     }
   }
 
-  // ── Tap vs. long-press ──────────────────────────────────────────────────────
-  const press = useRef<{ t: any; moved: boolean; x: number; y: number; long: boolean }>({ t: null, moved: false, x: 0, y: 0, long: false })
+  // ── Tap vs. long-press vs. swipe-to-reply ───────────────────────────────────
+  const [drag, setDrag] = useState(0)
+  const press = useRef<{ t: any; active: boolean; startX: number; startY: number; dx: number; moved: boolean; long: boolean }>({ t: null, active: false, startX: 0, startY: 0, dx: 0, moved: false, long: false })
 
   const openActions = () => {
     if (isDeleted) return
@@ -185,34 +186,59 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     ui.setComponentState('openReactionMessageId', id)
   }
 
+  // The primary tap action depends on the media type. Audio has its own inline
+  // play/seek controls, so a bare tap on an audio bubble does nothing.
+  const primaryAction = () => {
+    if (isDeleted) return
+    if (messageType === 'image') { if (missing) retryDownload(); else if (fullSrc) setShowLightbox(true) }
+    else if (messageType === 'video') openVideo()
+    else if (messageType === 'file') openFile()
+    else if (messageType === 'contact') { if (contactData) onOpenContactCard?.(contactData) }
+  }
+
   const beginPress = (e: React.PointerEvent) => {
-    press.current.moved = false
-    press.current.long = false
-    press.current.x = e.clientX
-    press.current.y = e.clientY
-    press.current.t = setTimeout(() => { press.current.t = null; press.current.long = true; openActions() }, 480)
+    press.current = { t: null, active: true, startX: e.clientX, startY: e.clientY, dx: 0, moved: false, long: false }
+    press.current.t = setTimeout(() => { press.current.t = null; press.current.long = true; setDrag(0); openActions() }, 480)
   }
   const movePress = (e: React.PointerEvent) => {
-    if (!press.current.t) return
-    if (Math.abs(e.clientX - press.current.x) > 12 || Math.abs(e.clientY - press.current.y) > 12) {
+    if (!press.current.active) return
+    const dx = e.clientX - press.current.startX
+    const dy = e.clientY - press.current.startY
+    if (!press.current.moved && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
       press.current.moved = true
-      clearTimeout(press.current.t)
-      press.current.t = null
+      if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
+    }
+    // Horizontal drag → swipe-to-reply (ignore mostly-vertical scrolls).
+    if (press.current.moved && !press.current.long && Math.abs(dx) > Math.abs(dy)) {
+      const cdx = Math.max(-90, Math.min(90, dx))
+      press.current.dx = cdx
+      setDrag(cdx)
     }
   }
-  const cancelPress = () => { if (press.current.t) { clearTimeout(press.current.t); press.current.t = null } }
-  const endPress = (primary?: () => void) => () => {
-    if (press.current.long) { press.current.long = false; return }
+  const endPress = () => {
+    if (!press.current.active) return
+    press.current.active = false
     if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
-    if (!press.current.moved) primary?.()
+    const { dx, long, moved } = press.current
+    press.current.dx = 0
+    setDrag(0)
+    if (long) { press.current.long = false; return }
+    if (Math.abs(dx) > 45) { onReplyTo?.({ id, content: mediaLabel(), isSent }); return }
+    if (!moved) primaryAction()
   }
-  const pressProps = (primary?: () => void) => ({
+  const cancelPress = () => {
+    press.current.active = false
+    if (press.current.t) { clearTimeout(press.current.t); press.current.t = null }
+    press.current.dx = 0
+    setDrag(0)
+  }
+  const gestureProps = {
     onPointerDown: beginPress,
     onPointerMove: movePress,
-    onPointerUp: endPress(primary),
+    onPointerUp: endPress,
     onPointerLeave: cancelPress,
     onPointerCancel: cancelPress,
-  })
+  }
 
   const bubbleBg = isSent ? '#1d4ed8' : '#1f2937'
   const bubbleRadius = isSent ? '18px 18px 4px 18px' : '18px 18px 18px 4px'
@@ -238,11 +264,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       const W = 240
       return (
         <div
-          {...pressProps(() => { if (missing) retryDownload(); else if (fullSrc) setShowLightbox(true) })}
           style={{
             position: 'relative', width: W, height: 280, maxWidth: '100%',
             borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
-            background: 'rgba(0,0,0,0.22)', lineHeight: 0,
+            background: 'rgba(0,0,0,0.22)', lineHeight: 0, touchAction: 'pan-y',
           }}
         >
           {thumb && (
@@ -280,11 +305,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       const W = 240
       return (
         <div
-          {...pressProps(openVideo)}
           style={{
             position: 'relative', width: W, height: 280, maxWidth: '100%',
             borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
-            background: '#0b0b0b', lineHeight: 0,
+            background: '#0b0b0b', lineHeight: 0, touchAction: 'pan-y',
           }}
         >
           {thumb ? (
@@ -310,9 +334,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
     if (messageType === 'audio') {
       return (
-        <div {...pressProps()}>
-          <AudioMessage src={localSrc} isSent={isSent} duration={metaDur} resolving={resolving} onRetry={ensureDownloaded} />
-        </div>
+        <AudioMessage src={localSrc} isSent={isSent} duration={metaDur} resolving={resolving} onRetry={ensureDownloaded} />
       )
     }
 
@@ -321,10 +343,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       const name = c?.name || 'Contact'
       const initials = (name[0] || '?').toUpperCase()
       return (
-        <div
-          {...pressProps(() => { if (c) onOpenContactCard?.(c) })}
-          style={{ width: 244, maxWidth: '100%', cursor: 'pointer' }}
-        >
+        <div style={{ width: 244, maxWidth: '100%', cursor: 'pointer' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 4px 10px' }}>
             <ProfileImage avatarUrl={c?.avatarUrl ?? null} contactInitials={initials} contactAvatarColor="#2563eb" size={46} />
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -346,7 +365,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     const fileName = metaName || fallbackName
     const sub = [fmtBytes(metaSize), localSrc ? 'Saved' : 'Tap to download'].filter(Boolean).join(' · ')
     return (
-      <div {...pressProps(openFile)} style={{ display: 'flex', alignItems: 'center', gap: 12, width: 248, maxWidth: '100%', cursor: 'pointer' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: 248, maxWidth: '100%', cursor: 'pointer' }}>
         <div style={{ width: 42, height: 42, borderRadius: 10, background: 'rgba(255,255,255,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff' }}>
           {resolving ? spinner(20) : (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -370,7 +389,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   const pad = messageType === 'audio' || messageType === 'file' || messageType === 'contact' ? '10px 12px' : '6px'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', marginBottom: 4, width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', marginBottom: 4, width: '100%', padding: '0 16px', boxSizing: 'border-box' }}>
       {replyTo && (
         <div style={{ maxWidth: 280, width: '100%', display: 'flex', justifyContent: isSent ? 'flex-end' : 'flex-start' }}>
           <ReplyQuote replyTo={replyTo} isSent={isSent} onJumpToReply={onJumpToReply} />
@@ -379,7 +398,16 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
       <div
         id={'msg-' + id}
-        style={{ background: bubbleBg, borderRadius: bubbleRadius, padding: pad, maxWidth: 280, position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}
+        {...gestureProps}
+        style={{
+          background: bubbleBg, borderRadius: bubbleRadius, padding: pad, maxWidth: 280,
+          position: 'relative', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+          transform: drag ? `translateX(${drag}px)` : undefined,
+          transition: drag ? 'none' : 'transform 0.2s ease',
+          touchAction: 'pan-y',
+          cursor: 'pointer',
+          userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
+        }}
       >
         {renderMedia()}
 
@@ -389,12 +417,16 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
         </div>
       </div>
 
-      <MessageReactions
-        messageId={id}
-        currentUserId={currentUserId}
-        onToggleReaction={onToggleReaction}
-        onShowReactors={onShowReactors}
-      />
+      {/* Reaction pill / picker tray — aligned under the bubble on the message's side
+          (the tray itself is hardcoded alignSelf:flex-start, so it needs this wrapper). */}
+      <div style={{ width: '100%', display: 'flex', justifyContent: isSent ? 'flex-end' : 'flex-start' }}>
+        <MessageReactions
+          messageId={id}
+          currentUserId={currentUserId}
+          onToggleReaction={onToggleReaction}
+          onShowReactors={onShowReactors}
+        />
+      </div>
 
       {showLightbox && typeof document !== 'undefined' && createPortal(
         <div onClick={() => setShowLightbox(false)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.93)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

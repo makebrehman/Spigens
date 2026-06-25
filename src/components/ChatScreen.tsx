@@ -574,6 +574,14 @@ export function ChatScreen(props: ChatScreenProps) {
 
     await upsertMessage(mediaKey, optimisticMsg)
 
+    // Show the poster / preview to the sender as soon as it's generated — before the
+    // (potentially slow) upload finishes — so a video doesn't sit on a black frame
+    // and an image shows its blur instantly. The bubble updates in place.
+    await metaP
+    if (Object.keys(displayMeta).length > 0) {
+      await upsertMessage(mediaKey, { ...optimisticMsg, metadata: { ...displayMeta } })
+    }
+
     const uploaded = await uploadChatMedia(file)
     URL.revokeObjectURL(localUrl)
 

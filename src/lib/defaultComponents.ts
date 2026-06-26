@@ -817,6 +817,8 @@ export const DEFAULT_CONTACTPROFILESCREEN_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE = `function Component() {
+  var makeLink = function(u, k) { return React.createElement('a', { key: 'lnk' + k, href: u, onClick: function(e) { if (e && e.stopPropagation) e.stopPropagation(); if (e && e.preventDefault) e.preventDefault(); try { window.open(u, '_blank', 'noopener,noreferrer'); } catch (err) {} }, onPointerDown: function(e) { if (e && e.stopPropagation) e.stopPropagation(); }, style: { color: isMine ? '#cfe0ff' : '#93C5FD', textDecoration: 'underline', wordBreak: 'break-all', cursor: 'pointer' } }, u); };
+  var linkify = function(t) { if (!t || t.indexOf('http') === -1) return t; var words = t.split(' '); var out = []; for (var wi = 0; wi < words.length; wi++) { var wd = words[wi]; if (wd.indexOf('http://') === 0 || wd.indexOf('https://') === 0) out.push(makeLink(wd, wi)); else out.push(wd); if (wi < words.length - 1) out.push(' '); } return out; };
   var pressTimerRef = React.useRef(null);
   var dragState = React.useState(0); var drag = dragState[0], setDrag = dragState[1];
   var startXRef = React.useRef(0); var startYRef = React.useRef(0); var movedRef = React.useRef(false);
@@ -853,7 +855,7 @@ export const DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE = `function Component() {
           React.createElement('div', { style: { fontSize: '11px', fontWeight: '600', color: isMine ? 'rgba(255,255,255,0.9)' : '#60A5FA', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, replyToData.senderName || ''),
           React.createElement('div', { style: { fontSize: '12px', color: isMine ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' } }, replyToData.content || '')
         ) : null,
-        React.createElement('div', { style: { fontSize: '14px', lineHeight: '1.45', color: isMine ? '#F0F0F0' : '#E8E8E8', wordBreak: 'break-word' } }, content),
+        React.createElement('div', { style: { fontSize: '14px', lineHeight: '1.45', color: isMine ? '#F0F0F0' : '#E8E8E8', wordBreak: 'break-word' } }, linkify(content)),
         React.createElement(MessageReactions, { messageId: id, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors }),
         React.createElement('div', { style: { display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', marginTop: '2px' } },
           React.createElement('div', { style: { fontSize: '10px', color: isMine ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.35)' } }, timestamp)
@@ -1363,6 +1365,8 @@ export const DEFAULT_TYPINGINDICATOR_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_MESSAGEBUBBLE_SOURCE = `function Component() {
+  var makeLink = function(u, k) { return React.createElement('a', { key: 'lnk' + k, href: u, onClick: function(e) { if (e && e.stopPropagation) e.stopPropagation(); if (e && e.preventDefault) e.preventDefault(); try { window.open(u, '_blank', 'noopener,noreferrer'); } catch (err) {} }, onPointerDown: function(e) { if (e && e.stopPropagation) e.stopPropagation(); }, style: { color: '#93C5FD', textDecoration: 'underline', wordBreak: 'break-all', cursor: 'pointer' } }, u); };
+  var linkify = function(t) { if (!t || t.indexOf('http') === -1) return t; var words = t.split(' '); var out = []; for (var wi = 0; wi < words.length; wi++) { var wd = words[wi]; if (wd.indexOf('http://') === 0 || wd.indexOf('https://') === 0) out.push(makeLink(wd, wi)); else out.push(wd); if (wi < words.length - 1) out.push(' '); } return out; };
   var hlState = useComponentState('highlightedMessageId', null);
   var isHighlighted = hlState[0] === id;
   var openTrayState = useComponentState('openReactionMessageId', null);
@@ -1453,7 +1457,7 @@ export const DEFAULT_MESSAGEBUBBLE_SOURCE = `function Component() {
           fontSize: '15px', lineHeight: '1.4', wordBreak: 'break-word',
           color: isSent ? '#F0F0F0' : '#E8E8E8',
         }
-      }, content),
+      }, linkify(content)),
       React.createElement(MessageReactions, { messageId: id, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors }),
       React.createElement('div', {
         style: { display: 'flex', flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'flex-end', alignItems: 'center', marginTop: '2px', gap: '6px' }

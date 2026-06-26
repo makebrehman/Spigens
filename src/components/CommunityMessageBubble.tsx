@@ -7,7 +7,8 @@ import { ProfileImage } from './ProfileImage'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
 import { NativeMediaBubble } from './NativeMediaBubble'
-import { fetchLinkPreview, firstPreviewableUrl } from '@/lib/linkPreview'
+import { firstPreviewableUrl } from '@/lib/linkPreview'
+import { LinkPreviewCard } from './LinkPreviewCard'
 
 export interface CommunityMessageBubbleProps {
   id: string
@@ -58,13 +59,7 @@ export function CommunityMessageBubble(props: CommunityMessageBubbleProps) {
 
   const isMedia = !isDeleted && !!resolvedType && resolvedType !== 'text' && resolvedType !== 'system'
 
-  const [linkPreview, setLinkPreview] = useState<any>(null)
-  useEffect(() => {
-    if (isDeleted || isMedia) return
-    const firstUrl = firstPreviewableUrl(resolvedContent)
-    if (!firstUrl) return
-    fetchLinkPreview(firstUrl).then(p => { if (p?.title) setLinkPreview(p) })
-  }, [resolvedContent, isMedia, isDeleted])
+  const previewUrl = !isDeleted && !isMedia ? firstPreviewableUrl(resolvedContent) : null
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)
@@ -121,22 +116,7 @@ export function CommunityMessageBubble(props: CommunityMessageBubbleProps) {
   return (
     <>
       <RenderifyHost code={source} storeActions={{ id, content: resolvedContent, timestamp, isMine, senderName, senderAvatar: senderAvatar ?? null, senderInitials, senderId: senderId ?? null, onSenderTap: onSenderTap ?? null, isDeleted: isDeleted ?? false, currentUserId, onToggleReaction: onToggleReaction ?? null, onShowReactors: onShowReactors ?? null, replyToData: replyToData ?? null, onJumpToReply: onJumpToReply ?? null, onReplyTo: onReplyTo ?? null, MessageReactions, ReactionPicker, ProfileImage, useComponentState }} />
-      {linkPreview && (
-        <div
-          onClick={() => window.open(linkPreview.url, '_blank', 'noopener,noreferrer')}
-          style={{ margin: isMine ? '2px 16px 6px auto' : '2px auto 6px 52px', maxWidth: 280, background: isMine ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isMine ? 'rgba(37,99,235,0.25)' : 'rgba(255,255,255,0.08)'}`, borderRadius: 12, overflow: 'hidden', cursor: 'pointer' }}
-        >
-          {linkPreview.image && (
-            <img src={linkPreview.image} alt="" style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-          )}
-          <div style={{ padding: '8px 12px 10px' }}>
-            {linkPreview.siteName && <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 3 }}>{linkPreview.siteName}</div>}
-            {linkPreview.title && <div style={{ fontSize: 13, color: '#e5e7eb', fontWeight: 600, lineHeight: 1.3, marginBottom: 3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>{linkPreview.title}</div>}
-            {linkPreview.description && <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>{linkPreview.description}</div>}
-            <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4 }}>{linkPreview.hostname}</div>
-          </div>
-        </div>
-      )}
+      {previewUrl && <LinkPreviewCard url={previewUrl} isSent={isMine} leftInset={52} />}
     </>
   )
 }

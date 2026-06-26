@@ -189,13 +189,15 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 2
+const SOURCES_SCHEMA_VERSION = 3
 const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
   { version: 1, reset: ['composerBar', 'chatScreen'] },
   // v2: community chat + message bubble gained media/attachments and swipe-to-reply.
   { version: 2, reset: ['communityChatScreen', 'communityMessageBubble'] },
+  // v3: message bubbles linkify URLs (clickable links) in DM + community text.
+  { version: 3, reset: ['messageBubble', 'communityMessageBubble'] },
 ]
 
 function migrateComponentSources(sources: Record<string, string>, fromVersion: number): Record<string, string> {

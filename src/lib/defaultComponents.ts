@@ -818,6 +818,8 @@ export const DEFAULT_CONTACTPROFILESCREEN_SOURCE = `function Component() {
 
 export const DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE = `function Component() {
   var pressTimerRef = React.useRef(null);
+  var dragState = React.useState(0); var drag = dragState[0], setDrag = dragState[1];
+  var startXRef = React.useRef(0); var startYRef = React.useRef(0); var movedRef = React.useRef(false);
   var hlState = useComponentState('highlightedMessageId', null);
   var isHighlighted = hlState[0] === id;
   var deleteTargetState = useComponentState('communityDeleteTarget', null);
@@ -836,14 +838,15 @@ export const DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE = `function Component() {
   }
   return React.createElement('div', {
     id: 'msg-' + id,
-    onPointerDown: function() { pressTimerRef.current = setTimeout(function() { if (typeof setActiveActions === 'function') setActiveActions({ id: id, isMine: isMine, content: content, senderName: senderName }); if (typeof setCommunityOpenTray === 'function') setCommunityOpenTray(id); }, 600); },
-    onPointerUp: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } },
-    onPointerLeave: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } },
-    onPointerCancel: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } },
-    style: { width: '100%', display: 'flex', flexDirection: 'row', padding: '2px 16px', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '8px', backgroundColor: isHighlighted ? 'rgba(255,255,255,0.07)' : 'transparent', transition: 'background-color 0.4s ease' }
+    onPointerDown: function(e) { startXRef.current = e.clientX; startYRef.current = e.clientY; movedRef.current = false; pressTimerRef.current = setTimeout(function() { if (typeof setActiveActions === 'function') setActiveActions({ id: id, isMine: isMine, content: content, senderName: senderName }); if (typeof setCommunityOpenTray === 'function') setCommunityOpenTray(id); }, 600); },
+    onPointerMove: function(e) { var dx = e.clientX - startXRef.current; var dy = e.clientY - startYRef.current; if (!movedRef.current && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) { movedRef.current = true; if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } } if (movedRef.current && Math.abs(dx) > Math.abs(dy)) { var cd = dx; if (cd > 80) cd = 80; if (cd < -80) cd = -80; setDrag(cd); } },
+    onPointerUp: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } if (Math.abs(drag) > 45 && typeof onReplyTo === 'function') { onReplyTo({ id: id, senderName: senderName, content: content }); } setDrag(0); },
+    onPointerLeave: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } setDrag(0); },
+    onPointerCancel: function() { if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; } setDrag(0); },
+    style: { width: '100%', display: 'flex', flexDirection: 'row', padding: '2px 16px', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '8px', backgroundColor: isHighlighted ? 'rgba(255,255,255,0.07)' : 'transparent', transition: 'background-color 0.4s ease', touchAction: 'pan-y' }
   },
     !isMine ? React.createElement('div', { onClick: function() { if (typeof onSenderTap === 'function') onSenderTap(senderId, senderName, senderAvatar); }, style: { flexShrink: 0, cursor: 'pointer', WebkitTapHighlightColor: 'transparent' } }, React.createElement(ProfileImage, { avatarUrl: senderAvatar, contactInitials: senderInitials, contactAvatarColor: '#2563EB', size: 28 })) : null,
-    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '72%' } },
+    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', maxWidth: '72%', transform: 'translateX(' + drag + 'px)', transition: drag === 0 ? 'transform 0.2s ease' : 'none' } },
       !isMine ? React.createElement('div', { onClick: function() { if (typeof onSenderTap === 'function') onSenderTap(senderId, senderName, senderAvatar); }, style: { fontSize: '11px', fontWeight: '600', color: '#60A5FA', marginBottom: '3px', paddingLeft: '2px', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' } }, senderName) : null,
       React.createElement('div', { style: { padding: '8px 12px', borderRadius: '16px', borderBottomRightRadius: isMine ? '3px' : '16px', borderBottomLeftRadius: isMine ? '16px' : '3px', background: isMine ? '#2563EB' : '#1E1E1E' } },
         replyToData ? React.createElement('div', { onClick: function() { if (replyToData.id && typeof onJumpToReply === 'function') onJumpToReply(replyToData.id); }, style: { borderLeft: '3px solid ' + (isMine ? 'rgba(255,255,255,0.5)' : '#2563EB'), paddingLeft: '8px', marginBottom: '5px', cursor: replyToData.id ? 'pointer' : 'default', WebkitTapHighlightColor: 'transparent' } },
@@ -986,7 +989,8 @@ export const DEFAULT_COMMUNITYCHATSCREEN_SOURCE = `function Component() {
   var commActionsState = useComponentState('activeMessageActions', null); var commActions = commActionsState[0]; var setCommActions = commActionsState[1];
   var commOpenTrayState = useComponentState('openReactionMessageId', null); var commOpenTrayMsgId = commOpenTrayState[0]; var setCommOpenTray = commOpenTrayState[1];
   var commReplyState = useComponentState('communityReplyingTo', null); var commReplyingTo = commReplyState[0];
-  var resolveReply = function(rid) { if (!rid) return null; for (var i = 0; i < messages.length; i++) { if (messages[i].id === rid) return { id: rid, senderName: messages[i].senderName || '', content: messages[i].content || '' }; } return null; };
+  var mediaPrev = function(m) { var mt = m.messageType; if (mt === 'image') return '📷 Photo'; if (mt === 'video') return '🎥 Video'; if (mt === 'audio') return '🎙️ Voice message'; if (mt === 'file') return '📄 ' + ((m.metadata && m.metadata.name) ? m.metadata.name : 'Document'); if (mt === 'contact') { try { var c = JSON.parse(m.content || '{}'); return '👤 ' + (c.name || 'Contact'); } catch (e) { return '👤 Contact'; } } return m.content || ''; };
+  var resolveReply = function(rid) { if (!rid) return null; for (var i = 0; i < messages.length; i++) { if (messages[i].id === rid) return { id: rid, senderName: messages[i].senderName || '', content: mediaPrev(messages[i]) }; } return null; };
   var canPost = joinStatus === 'member';
   var isJoining = joinStatus === 'loading' || joinStatus === 'requesting';
   var endRef = React.useRef(null);
@@ -1045,7 +1049,7 @@ export const DEFAULT_COMMUNITYCHATSCREEN_SOURCE = `function Component() {
         if (msg.messageType === 'system') {
           el = React.createElement('div', { key: msg.id, style: { textAlign: 'center', padding: '6px 20px 2px', color: 'rgba(255,255,255,0.32)', fontSize: '12px', letterSpacing: '0.2px', userSelect: 'none' } }, msg.content);
         } else {
-          el = React.createElement(CommunityMessageBubble, { key: msg.id + (msg.isDeleted ? '-deleted' : ''), id: msg.id, content: msg.content, timestamp: msg.timestamp, isMine: msg.isMine, senderName: msg.senderName, senderAvatar: msg.senderAvatar, senderInitials: msg.senderInitials, senderId: msg.senderId, isDeleted: !!msg.isDeleted, replyToData: resolveReply(msg.replyTo), onJumpToReply: onJumpToReply, onShowReactors: onShowReactors, onToggleReaction: typeof onToggleReaction !== 'undefined' ? onToggleReaction : undefined, onSenderTap: function(uid, name, avatar) { if (!msg.isMine && typeof onSenderTap === 'function') onSenderTap(uid, name, avatar); } });
+          el = React.createElement(CommunityMessageBubble, { key: msg.id + (msg.isDeleted ? '-deleted' : '') + '-' + (msg.status || ''), id: msg.id, content: msg.content, messageType: msg.messageType, metadata: msg.metadata, status: msg.status, timestamp: msg.timestamp, isMine: msg.isMine, senderName: msg.senderName, senderAvatar: msg.senderAvatar, senderInitials: msg.senderInitials, senderId: msg.senderId, isDeleted: !!msg.isDeleted, replyToData: resolveReply(msg.replyTo), onJumpToReply: onJumpToReply, onShowReactors: onShowReactors, onReplyTo: typeof onReplyTo !== 'undefined' ? onReplyTo : undefined, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined, onToggleReaction: typeof onToggleReaction !== 'undefined' ? onToggleReaction : undefined, onSenderTap: function(uid, name, avatar) { if (!msg.isMine && typeof onSenderTap === 'function') onSenderTap(uid, name, avatar); } });
         }
         return separator ? React.createElement(React.Fragment, { key: 'frag-' + msg.id }, separator, el) : el;
       }),
@@ -1060,6 +1064,7 @@ export const DEFAULT_COMMUNITYCHATSCREEN_SOURCE = `function Component() {
       React.createElement('div', { onClick: function() { if (typeof onCancelReply === 'function') onCancelReply(); }, style: { fontSize: '16px', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '4px 8px', userSelect: 'none', WebkitTapHighlightColor: 'transparent' } }, String.fromCharCode(10005))
     ) : null,
     canPost ? React.createElement('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px', padding: '10px 16px', paddingBottom: 'calc(env(safe-area-inset-bottom,0px) + 10px)', borderTop: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 } },
+      React.createElement('div', { onClick: function() { if (typeof onAttach === 'function') onAttach(); }, style: { width: '40px', height: '40px', borderRadius: '50%', background: '#1E1E1E', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, fontSize: '22px', color: '#E8E8E8', userSelect: 'none', WebkitTapHighlightColor: 'transparent' } }, '+'),
       React.createElement('input', { type: 'text', value: inputValue, onChange: function(e) { setInputValue(e.target.value); if (typeof onTyping === 'function') onTyping(); }, onKeyDown: function(e) { if (e.key === 'Enter') onSend(); }, placeholder: 'Message ' + communityName + '...', style: { flex: 1, background: '#1E1E1E', borderRadius: '24px', padding: '10px 16px', fontSize: '15px', color: '#E8E8E8', border: 'none', outline: 'none', minWidth: 0 } }),
       React.createElement('div', { onClick: onSend, style: { width: '38px', height: '38px', borderRadius: '50%', background: inputValue && inputValue.trim() ? '#2563EB' : 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, userSelect: 'none', WebkitTapHighlightColor: 'transparent', transition: 'background 0.2s' } }, React.createElement('span', { style: { fontSize: '16px', color: '#FFF' } }, String.fromCharCode(10148)))
     ) : React.createElement('div', { style: { padding: '12px 16px', paddingBottom: 'calc(env(safe-area-inset-bottom,0px) + 12px)', borderTop: '1px solid #1F1F1F', background: '#141414', flexShrink: 0 } },

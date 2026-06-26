@@ -28,6 +28,13 @@ export interface NativeMediaBubbleProps {
   onShowReactors?: (messageId: string) => void
   onOpenContactCard?: (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => void
   isDeleted?: boolean
+  // ── Community reuse ──
+  // `embedded` drops the full-width DM row wrapper so the bubble can sit inside the
+  // community message row (next to the sender avatar). `senderName` is carried into
+  // the long-press action payload so the community action tray (which reads
+  // isMine/senderName) works the same as in DMs.
+  embedded?: boolean
+  senderName?: string
 }
 
 function fmtBytes(n?: number): string {
@@ -49,6 +56,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     id, content, messageType, metadata, timestamp, isSent, isRead, status,
     replyTo, onReplyTo, onJumpToReply, currentUserId,
     onToggleReaction, onShowReactors, onOpenContactCard, isDeleted,
+    embedded, senderName,
   } = props
 
   const isImage = messageType === 'image'
@@ -186,7 +194,8 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   const openActions = () => {
     if (isDeleted) return
     const ui = useUIStore.getState()
-    ui.setComponentState('activeMessageActions', { id, isSent, content: mediaLabel() })
+    // isSent for the DM action tray; isMine + senderName for the community one.
+    ui.setComponentState('activeMessageActions', { id, isSent, isMine: isSent, senderName: senderName ?? undefined, content: mediaLabel() })
     ui.setComponentState('openReactionMessageId', id)
   }
 
@@ -405,7 +414,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   const pad = messageType === 'audio' || messageType === 'file' || messageType === 'contact' ? '10px 12px' : '6px'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', marginBottom: 4, width: '100%', padding: '0 16px', boxSizing: 'border-box' }}>
+    <div style={embedded
+      ? { display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', minWidth: 0 }
+      : { display: 'flex', flexDirection: 'column', alignItems: isSent ? 'flex-end' : 'flex-start', marginBottom: 4, width: '100%', padding: '0 16px', boxSizing: 'border-box' }}>
       {replyTo && (
         <div style={{ maxWidth: 280, width: '100%', display: 'flex', justifyContent: isSent ? 'flex-end' : 'flex-start' }}>
           <ReplyQuote replyTo={replyTo} isSent={isSent} onJumpToReply={onJumpToReply} />

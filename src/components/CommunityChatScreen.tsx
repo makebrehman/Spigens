@@ -1,21 +1,27 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useContactStore } from '@/stores/contactStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { supabase } from '@/lib/supabase'
 import { uploadCommunityImage } from '@/lib/avatarUpload'
 import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMessage, deleteCachedCommunityMessage, savePendingCommunityMessage, getPendingCommunityMessages, removePendingCommunityMessage } from '@/lib/offlineCache'
 import { communityMirror as commMsgCache } from '@/lib/messageMirror'
-import { getMirroredMediaUri, warmMediaMirror } from '@/lib/mediaCache'
+import { getMirroredMediaUri, warmMediaMirror, cacheLocalBlob } from '@/lib/mediaCache'
+import { makeBlurThumb, makeVideoThumb, getAudioDuration } from '@/lib/thumbnails'
+import imageCompression from 'browser-image-compression'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
 import { CommunityMessageBubble } from './CommunityMessageBubble'
 import { BackButton } from './BackButton'
-import { CornerUpLeft, Copy, Trash2 } from 'lucide-react'
+import { CornerUpLeft, Copy, Trash2, Mic, Square, X } from 'lucide-react'
 import { MessageReactions } from './MessageReactions'
 import { DateSeparator } from './DateSeparator'
 import { ReactionPicker } from './ReactionPicker'
+
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
 
 export interface CommunityChatScreenProps {
   communityId: string
@@ -46,6 +52,29 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   const typingExpireRef = useRef<Record<string, any>>({})
   const memberProfilesRef = useRef<Record<string, any>>({})
   const senderCacheRef = useRef<Record<string, { displayName: string; username: string; avatarUrl: string | null }>>({})
+
+  // ── Attachments / voice (parity with DMs) ──
+  const bottomSheetSource = componentSources?.bottomSheet ?? null
+  const attachConfig = useUIStore(state => state.behaviorConfig.attachButton)
+  const contacts = useContactStore(state => state.contacts)
+  const [showAttachSheet, setShowAttachSheet] = useState(false)
+  const [showContactPicker, setShowContactPicker] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [attachToast, setAttachToast] = useState<string | null>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const docInputRef = useRef<HTMLInputElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<any>(null)
+  const recordingCancelledRef = useRef(false)
+  const recordingStartRef = useRef<number>(0)
+  // Live overlay values flow to the GenUI via componentState (same keys the DM
+  // recording overlay / attach toast read; the two screens are never open at once).
+  useEffect(() => { useUIStore.getState().setComponentState('chatRecordingDuration', recordingDuration) }, [recordingDuration])
+  useEffect(() => { useUIStore.getState().setComponentState('chatAttachToastText', attachToast) }, [attachToast])
+
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)
     useEffect(() => { const unsub = useUIStore.subscribe((state: any, prevState: any) => { const next = state.componentState?.[key]; const prev = prevState.componentState?.[key]; if (next !== prev) setValue(next ?? defaultValue) }); return unsub }, [key, defaultValue])
@@ -53,6 +82,7 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
   }
   const formatMsg = (row: any) => ({
     id: row.id, content: row.content || '', messageType: row.message_type || 'text',
+    metadata: row.metadata ?? null, status: 'sent',
     senderId: row.sender_id,
     senderName: senderCacheRef.current[row.sender_id]?.displayName || senderCacheRef.current[row.sender_id]?.username || 'Unknown',
     senderAvatar: senderCacheRef.current[row.sender_id]?.avatarUrl ?? null,
@@ -265,6 +295,131 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     }
   }
 
+  const senderBase = () => ({
+    senderId: currentUserId as string,
+    senderName: profile?.display_name || profile?.username || 'Me',
+    senderAvatar: profile?.avatar_url || null,
+    senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(),
+    isMine: true, isDeleted: false, replyTo: null,
+  })
+
+  const uploadCommunityMedia = async (file: File): Promise<{ url: string; blob: Blob } | null> => {
+    if (!currentUserId) return null
+    if (file.type.startsWith('video/') && file.size > MAX_VIDEO_BYTES) {
+      setAttachToast('Video too large — max 100 MB'); setTimeout(() => setAttachToast(null), 2600); return null
+    }
+    let processed: File | Blob = file
+    if (file.type.startsWith('image/')) {
+      try { processed = await imageCompression(file, { maxSizeMB: 1, maxWidthOrHeight: 1080, useWebWorker: true }) } catch { /* original */ }
+    }
+    const ext = file.name.split('.').pop() || 'bin'
+    const path = `${currentUserId}/community_media/${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('avatars').upload(path, processed, { upsert: false })
+    if (error) { setAttachToast('Failed to send. Try again.'); setTimeout(() => setAttachToast(null), 2600); return null }
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+    return { url: data.publicUrl, blob: processed }
+  }
+
+  // Community media is a group chat → stored plaintext (URL + metadata), no E2E.
+  const sendCommunityMedia = async (file: File, knownDuration?: number) => {
+    if (!currentUserId) return
+    if (!networkIsOnline) { setAttachToast('Connect to the internet to share media'); setTimeout(() => setAttachToast(null), 2600); return }
+    const fileType = file.type.startsWith('image/') ? 'image'
+      : file.type.startsWith('video/') ? 'video'
+      : file.type.startsWith('audio/') ? 'audio' : 'file'
+    const localUrl = URL.createObjectURL(file)
+    const tempId = `temp_${Date.now()}`
+    const createdAt = new Date().toISOString()
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+    const displayMeta: any = {}
+    if (fileType === 'file' || fileType === 'audio') { displayMeta.name = file.name; displayMeta.size = file.size }
+    const metaP = (async () => {
+      try {
+        if (fileType === 'image') displayMeta.thumb = await makeBlurThumb(file).catch(() => null)
+        else if (fileType === 'video') { const v = await makeVideoThumb(file).catch(() => null); if (v) { displayMeta.thumb = v.thumb; displayMeta.dur = v.dur; displayMeta.w = v.w; displayMeta.h = v.h } }
+        else if (fileType === 'audio') displayMeta.dur = knownDuration && knownDuration > 0 ? knownDuration : await getAudioDuration(file).catch(() => 0)
+      } catch { /* keep what we have */ }
+    })()
+
+    const optimistic: any = { id: tempId, content: localUrl, messageType: fileType, metadata: null, status: 'sending', timestamp: ts, createdAt, ...senderBase() }
+    await upsertCommunityMessage(communityId, optimistic)
+    await metaP
+    const hasMeta = Object.keys(displayMeta).length > 0
+    if (hasMeta) await upsertCommunityMessage(communityId, { ...optimistic, metadata: { ...displayMeta } })
+
+    const uploaded = await uploadCommunityMedia(file)
+    URL.revokeObjectURL(localUrl)
+    if (!uploaded) { await deleteCachedCommunityMessage(communityId, tempId); return }
+    const { url, blob } = uploaded
+    cacheLocalBlob(url, blob, fileType).catch(() => {})
+
+    const realId = crypto.randomUUID()
+    const realMsg: any = { ...optimistic, id: realId, content: url, status: 'sent', metadata: hasMeta ? { ...displayMeta } : null }
+    await deleteCachedCommunityMessage(communityId, tempId)
+    await upsertCommunityMessage(communityId, realMsg)
+
+    const { error } = await supabase.from('community_messages').insert({ id: realId, community_id: communityId, sender_id: currentUserId, content: url, message_type: fileType, metadata: hasMeta ? { ...displayMeta } : null })
+    if (error) {
+      console.error('Failed to insert community media:', error)
+      await upsertCommunityMessage(communityId, { ...realMsg, status: 'failed' })
+      setAttachToast('Failed to send. Try again.'); setTimeout(() => setAttachToast(null), 2600)
+    }
+  }
+
+  const sendCommunityContact = async (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => {
+    if (!currentUserId) return
+    if (!networkIsOnline) { setAttachToast('Connect to the internet to share a contact'); setTimeout(() => setAttachToast(null), 2600); return }
+    const payload = JSON.stringify({ id: contact.id, name: contact.name, username: contact.username || '', avatarUrl: contact.avatarUrl || null })
+    const newId = crypto.randomUUID()
+    const createdAt = new Date().toISOString()
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const optimistic: any = { id: newId, content: payload, messageType: 'contact', metadata: null, status: 'sent', timestamp: ts, createdAt, ...senderBase() }
+    await upsertCommunityMessage(communityId, optimistic)
+    const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: payload, message_type: 'contact' })
+    if (error) {
+      await upsertCommunityMessage(communityId, { ...optimistic, status: 'failed' })
+      setAttachToast('Failed to send. Try again.'); setTimeout(() => setAttachToast(null), 2600)
+    }
+  }
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      recordedChunksRef.current = []
+      recordingCancelledRef.current = false
+      recorder.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const secs = Math.max(1, Math.round((Date.now() - recordingStartRef.current) / 1000))
+        setIsRecording(false); clearInterval(recordingTimerRef.current); setRecordingDuration(0)
+        if (recordingCancelledRef.current) { recordingCancelledRef.current = false; return }
+        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' })
+        const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' })
+        await sendCommunityMedia(file, secs)
+      }
+      recorder.start(); mediaRecorderRef.current = recorder; recordingStartRef.current = Date.now()
+      setIsRecording(true); setRecordingDuration(0)
+      recordingTimerRef.current = setInterval(() => setRecordingDuration(d => d + 1), 1000)
+    } catch (err: any) {
+      const name = err?.name || ''
+      setAttachToast(name === 'NotAllowedError' || name === 'SecurityError' ? 'Microphone blocked — allow mic access for Spigens in your phone settings' : name === 'NotFoundError' ? 'No microphone found on this device' : 'Could not start recording. Please try again.')
+      setTimeout(() => setAttachToast(null), 3200)
+    }
+  }
+  const stopVoiceRecording = () => { recordingCancelledRef.current = false; mediaRecorderRef.current?.stop(); clearInterval(recordingTimerRef.current) }
+  const cancelVoiceRecording = () => { recordingCancelledRef.current = true; mediaRecorderRef.current?.stop(); clearInterval(recordingTimerRef.current); setIsRecording(false); setRecordingDuration(0) }
+
+  const handleAttachOption = async (option: any) => {
+    setShowAttachSheet(false)
+    if (option.id === 'photo') photoInputRef.current?.click()
+    else if (option.id === 'document') docInputRef.current?.click()
+    else if (option.id === 'audio') audioInputRef.current?.click()
+    else if (option.id === 'voice') startVoiceRecording()
+    else if (option.id === 'spigens-contact') setShowContactPicker(true)
+  }
+
   const onDeleteMessage = async (messageId: string) => {
     const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
     const snapshot = current.find((m: any) => m.id === messageId)
@@ -331,7 +486,26 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const url = await uploadCommunityImage(communityId, file)
     if (url) setCommunityAvatarUrl(url)
   }
-  return <><RenderifyHost code={source} storeActions={{ communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl, sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack, onViewCommunityProfile: () => onViewCommunityProfile?.(), onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar), LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2, MessageReactions, ReactionPicker, onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji), CommunityMessageBubble, BackButton, DateSeparator, onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) }, onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) }, onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },     onShowReactors: async (messageId: string) => {
+  const pickerContacts = contacts.map(c => ({
+    id: c.id, name: c.name, username: c.rawProfile?.username || '',
+    avatarUrl: c.avatarUrl || null, avatarColor: c.avatarColor || '#333', avatarInitials: c.avatarInitials,
+  }))
+
+  const scope = {
+    communityId, communityName, communityType, isMember, userRole: userRole || null, memberCount, communityAvatarUrl,
+    sendMessage, onTyping, onDeleteMessage, onJoin, onRequest, onLeave, onUpdateCommunityImage, onBack,
+    onAttach: () => setShowAttachSheet(true),
+    onViewCommunityProfile: () => onViewCommunityProfile?.(),
+    onSenderTap: (uid: string, name: string, avatar: string | null) => onSenderTap?.(uid, name, avatar),
+    onOpenContactCard: (c: { id: string; name: string; username?: string; avatarUrl?: string | null }) => onSenderTap?.(c.id, c.name, c.avatarUrl ?? null),
+    LucideReply: CornerUpLeft, LucideCopy: Copy, LucideTrash: Trash2,
+    MessageReactions, ReactionPicker,
+    onToggleReaction: (messageId: string, emoji: string) => onToggleCommunityReaction(messageId, emoji),
+    CommunityMessageBubble, BackButton, DateSeparator,
+    onReplyTo: (target: any) => { useUIStore.getState().setComponentState('communityReplyingTo', { id: target.id, senderName: target.senderName || '', content: target.content || '' }) },
+    onCancelReply: () => { useUIStore.getState().setComponentState('communityReplyingTo', null); useUIStore.getState().setComponentState('reactionDetail', null) },
+    onJumpToReply: (targetId: string) => { if (typeof document === 'undefined') return; const el = document.getElementById('msg-' + targetId); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); useUIStore.getState().setComponentState('highlightedMessageId', targetId); setTimeout(() => { useUIStore.getState().setComponentState('highlightedMessageId', null) }, 1500) },
+    onShowReactors: async (messageId: string) => {
       const key = 'reactions:' + messageId
       const reactions = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       if (!reactions.length) return
@@ -342,5 +516,42 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       const enriched = reactions.map((r: any) => ({ emoji: r.emoji, name: nameMap[r.user_id] || 'Unknown', isMe: r.user_id === currentUserId }))
       useUIStore.getState().setComponentState('reactionDetail', { messageId, reactions: enriched })
     },
-    useComponentState }} /></>
+    useComponentState,
+  }
+
+  const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return; e.target.value = ''
+    sendCommunityMedia(file)
+  }
+
+  return (
+    <>
+      <RenderifyHost code={source} storeActions={scope} />
+
+      <RenderifyHost code={componentSources?.chatAttachToast ?? null} storeActions={{ useComponentState }} />
+
+      {/* Hidden file inputs */}
+      <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={onFileInput} />
+      <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.txt,.zip,.rar,.xls,.xlsx,.ppt,.pptx,.csv" style={{ display: 'none' }} onChange={onFileInput} />
+      <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={onFileInput} />
+
+      {/* Attach sheet */}
+      {attachConfig?.popup && showAttachSheet && createPortal(
+        <RenderifyHost code={bottomSheetSource} storeActions={{ sheetId: 'attachSheet', title: attachConfig.popup.title, options: attachConfig.popup.options, onClose: () => setShowAttachSheet(false), onOptionSelect: (option: any) => handleAttachOption(option) }} />,
+        document.body
+      )}
+
+      {/* Voice recording overlay */}
+      {isRecording && createPortal(
+        <RenderifyHost code={componentSources?.chatRecordingOverlay ?? null} storeActions={{ onCancel: cancelVoiceRecording, onStop: stopVoiceRecording, LucideMic: Mic, LucideX: X, LucideSquare: Square, useComponentState }} />,
+        document.body
+      )}
+
+      {/* Spigens contact picker */}
+      {showContactPicker && createPortal(
+        <RenderifyHost code={componentSources?.chatContactPicker ?? null} storeActions={{ contacts: pickerContacts, onClose: () => setShowContactPicker(false), onSelect: (contactId: string) => { const c = contacts.find(x => x.id === contactId); if (c) sendCommunityContact({ id: c.id, name: c.name, username: c.rawProfile?.username || '', avatarUrl: c.avatarUrl || null }); setShowContactPicker(false) } }} />,
+        document.body
+      )}
+    </>
+  )
 }

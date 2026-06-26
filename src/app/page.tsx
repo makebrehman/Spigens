@@ -37,6 +37,7 @@ import { ContactProfileScreen } from '@/components/ContactProfileScreen'
 import { CommunityListScreen } from '@/components/CommunityListScreen'
 import { CreateCommunityScreen } from '@/components/CreateCommunityScreen'
 import { CommunityChatScreen } from '@/components/CommunityChatScreen'
+import { DiscoverScreen } from '@/components/DiscoverScreen'
 import { CommunityProfileScreen } from '@/components/CommunityProfileScreen'
 import { ProfileImage } from '@/components/ProfileImage'
 import { SettingsScreen } from '@/components/SettingsScreen'
@@ -113,6 +114,7 @@ export default function Home() {
   const [contactProfileUser, setContactProfileUser] = useState<any>(null)
   const [showCommunityList, setShowCommunityList] = useState(false)
   const [showCreateCommunity, setShowCreateCommunity] = useState(false)
+  const [showDiscover, setShowDiscover] = useState(false)
   const [activeCommunity, setActiveCommunity] = useState<any>(null)
   const [activeCommunityProfile, setActiveCommunityProfile] = useState<any>(null)
   const [returnToProfile, setReturnToProfile] = useState<any | null>(null)
@@ -796,6 +798,7 @@ export default function Home() {
       { id: 'profile', label: 'Profile', path: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
     ],
     onSelectTab: (id: string) => { setActiveTab(id as 'chats' | 'communities' | 'profile'); setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
+    onPlus: () => setShowDiscover(true),
   }
 
   // shared props for every GenUIPanel instance (server-synced undo/reset/restore)
@@ -903,6 +906,15 @@ export default function Home() {
       <CreateCommunityScreen
         onBack={() => setShowCreateCommunity(false)}
         onCreated={(community) => { setShowCreateCommunity(false); setActiveCommunity(community) }}
+      />
+    )
+  }
+
+  if (showDiscover) {
+    return (
+      <DiscoverScreen
+        onBack={() => setShowDiscover(false)}
+        onOpenChat={(u) => { setShowDiscover(false); setActiveChatUser(u) }}
       />
     )
   }

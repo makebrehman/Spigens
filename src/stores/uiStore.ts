@@ -59,6 +59,8 @@ type Snapshot = {
   customComponents: any
   componentSources: any
   sourcesVersion?: number
+  /** Component-source keys the user (or AI) has edited; migrations skip these. */
+  editedSources?: string[]
 }
 
 // a named, restorable point in the customization timeline
@@ -86,6 +88,7 @@ function captureSnapshot(state: any): Snapshot {
     customComponents: state.customComponents,
     componentSources: state.componentSources,
     sourcesVersion: SOURCES_SCHEMA_VERSION,
+    editedSources: state.editedSources ?? [],
   }
 }
 
@@ -118,6 +121,8 @@ interface UIStoreState extends UIOverrideState {
   canUndo: () => boolean
   componentState: Record<string, any>
   setComponentState: (key: string, value: any) => void
+  /** Component-source keys the user (or AI) has edited; migrations skip these. */
+  editedSources: string[]
   // version timeline
   versions: GenUIVersion[]
   activeVersionId: string | null
@@ -189,7 +194,7 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 4
+const SOURCES_SCHEMA_VERSION = 5
 const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
@@ -200,14 +205,25 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
   { version: 3, reset: ['messageBubble', 'communityMessageBubble'] },
   // v4: bottom nav gained the Discover (+) button.
   { version: 4, reset: ['bottomNav'] },
+  // v5: composer + sendButton refactored to be independent (sendButton can live
+  // anywhere). Edited copies are preserved by editedSources; only defaults swap.
+  { version: 5, reset: ['composerBar', 'sendButton'] },
 ]
 
-function migrateComponentSources(sources: Record<string, string>, fromVersion: number): Record<string, string> {
+function migrateComponentSources(
+  sources: Record<string, string>,
+  fromVersion: number,
+  editedKeys: string[] = [],
+): Record<string, string> {
+  const edited = new Set(editedKeys)
   let out = sources
   for (const m of SOURCES_MIGRATIONS) {
     if (m.version > fromVersion) {
       out = { ...out }
       for (const key of m.reset) {
+        // Only replace untouched (default) copies. If the AI / a user customized this
+        // key, keep their version — never silently overwrite a real edit.
+        if (edited.has(key)) continue
         if (DEFAULT_COMPONENT_SOURCES[key]) out[key] = DEFAULT_COMPONENT_SOURCES[key]
       }
     }
@@ -217,13 +233,32 @@ function migrateComponentSources(sources: Record<string, string>, fromVersion: n
 
 // normalize any snapshot before it is applied to the live store: guarantees its
 // componentSources contains every key the app renders.
+// Detect which source keys differ from the built-in defaults; used to backfill
+// editedSources for snapshots saved before per-key edit tracking existed (so the AI's
+// past edits aren't silently wiped by a future schema migration).
+function diffEditedKeys(componentSources: any): string[] {
+  if (!componentSources || typeof componentSources !== 'object') return []
+  const out: string[] = []
+  for (const [k, v] of Object.entries(componentSources)) {
+    if (typeof v !== 'string') continue
+    const def = DEFAULT_COMPONENT_SOURCES[k]
+    if (def && v !== def) out.push(k)
+  }
+  return out
+}
+
 function normalizeSnapshot(snapshot: any): any {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
   const fromV = typeof snapshot.sourcesVersion === 'number' ? snapshot.sourcesVersion : 0
+  const sources = mergeWithDefaultSources(snapshot.componentSources)
+  const edited = Array.isArray(snapshot.editedSources) && snapshot.editedSources.length
+    ? snapshot.editedSources
+    : diffEditedKeys(sources)
   return {
     ...snapshot,
-    componentSources: migrateComponentSources(mergeWithDefaultSources(snapshot.componentSources), fromV),
+    componentSources: migrateComponentSources(sources, fromV, edited),
     sourcesVersion: SOURCES_SCHEMA_VERSION,
+    editedSources: edited,
   }
 }
 
@@ -259,6 +294,7 @@ const defaultState = {
   versions: [] as GenUIVersion[],
   activeVersionId: null as string | null,
   ownerUserId: null as string | null,
+  editedSources: [] as string[],
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -389,7 +425,9 @@ export const useUIStore = create<UIStoreState>()(
 
       setComponentSource: (name, source) =>
         set((state) => ({
-          componentSources: { ...state.componentSources, [name]: source }
+          componentSources: { ...state.componentSources, [name]: source },
+          // Mark this key as customized so future schema migrations leave it alone.
+          editedSources: state.editedSources.includes(name) ? state.editedSources : [...state.editedSources, name],
         })),
 
       resetComponentSource: (name) =>
@@ -431,7 +469,8 @@ export const useUIStore = create<UIStoreState>()(
           else if (name === 'chatEncryptionToast') next[name] = DEFAULT_CHATENCRYPTIONTOAST_SOURCE
           else if (name === 'chatAttachToast') next[name] = DEFAULT_CHATATTACHTOAST_SOURCE
           else delete next[name]
-          return { componentSources: next }
+          // Reset → un-mark it as edited so future migrations apply normally again.
+          return { componentSources: next, editedSources: state.editedSources.filter(k => k !== name) }
         }),
 
       resetAll: () => set(defaultState),
@@ -490,6 +529,7 @@ export const useUIStore = create<UIStoreState>()(
         },
         customComponents: {},
         componentSources: { ...DEFAULT_COMPONENT_SOURCES },
+        editedSources: [],
         history: [],
         componentState: {},
         activeVersionId: null,
@@ -547,8 +587,13 @@ export const useUIStore = create<UIStoreState>()(
         const p = (persisted ?? {}) as Record<string, any>
         const merged = { ...current, ...p } as any
         const fromV = typeof p.sourcesVersion === 'number' ? p.sourcesVersion : 0
-        merged.componentSources = migrateComponentSources(mergeWithDefaultSources(p.componentSources), fromV)
+        const sources = mergeWithDefaultSources(p.componentSources)
+        const edited = Array.isArray(p.editedSources) && p.editedSources.length
+          ? p.editedSources
+          : diffEditedKeys(sources)
+        merged.componentSources = migrateComponentSources(sources, fromV, edited)
         merged.sourcesVersion = SOURCES_SCHEMA_VERSION
+        merged.editedSources = edited
         return merged
       },
       // persist only the data fields, NOT the functions
@@ -567,6 +612,7 @@ export const useUIStore = create<UIStoreState>()(
         customComponents: state.customComponents,
         componentSources: state.componentSources,
         sourcesVersion: SOURCES_SCHEMA_VERSION,
+        editedSources: state.editedSources,
         history: state.history,
         componentState: filterPersistentComponentState(state.componentState),
         versions: state.versions,

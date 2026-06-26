@@ -433,9 +433,22 @@ export const DEFAULT_ATTACHBUTTON_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_SENDBUTTON_SOURCE = `function Component() {
-  return React.createElement('button', {
-    onClick: function() { onSend && onSend(); },
-    style: { width: '44px', height: '44px', borderRadius: '50%', background: '#2563EB', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }
+  // Read the live composer text via shared state — so this button works whether
+  // it sits inside the composer (default) or anywhere the AI moves it (e.g. the
+  // header). If a parent passes an explicit onSend, prefer that.
+  var txt = useComponentState('composerText', '')[0] || '';
+  var hasText = !!(txt && txt.trim());
+  var fire = function() {
+    if (typeof onSend === 'function') { onSend(); return; }
+    if (hasText && typeof sendMessage === 'function') {
+      sendMessage(txt.trim());
+      useComponentState('composerText', '')[1]('');
+    }
+  };
+  return React.createElement('div', {
+    onClick: fire,
+    onMouseDown: function(e) { if (e && typeof e.preventDefault === 'function') e.preventDefault(); },
+    style: { width: '44px', height: '44px', borderRadius: '50%', background: hasText ? '#2563EB' : 'rgba(255,255,255,0.12)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, userSelect: 'none', WebkitTapHighlightColor: 'transparent', transition: 'background 0.2s' }
   }, React.createElement(Icon, { name: 'arrow-right', size: 20, color: '#fff' }));
 }`;
 
@@ -599,16 +612,12 @@ export const DEFAULT_REACTIONPICKER_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_COMPOSERBAR_SOURCE = `function Component() {
-  var inp = React.useState('');
+  // The text input lives in shared componentState so AttachButton and SendButton
+  // (each an independent editable component) can read/send the current message —
+  // even when the AI moves them out of the composer (e.g. into the header).
+  var inp = useComponentState('composerText', '');
   var inputText = inp[0], setInputText = inp[1];
-  
-  var onSend = function() {
-    if (inputText && inputText.trim() && sendMessage) {
-      sendMessage(inputText.trim());
-      setInputText('');
-    }
-  };
-  
+
   return React.createElement('div', {
     style: { display: 'flex', flexDirection: 'column', background: '#141414', borderTop: '1px solid #1F1F1F', flexShrink: 0 }
   },
@@ -621,17 +630,13 @@ export const DEFAULT_COMPOSERBAR_SOURCE = `function Component() {
         type: 'text', value: inputText, onChange: function(e) { setInputText(e.target.value); if (typeof onTyping === 'function') { onTyping(); } },
         onKeyDown: function(e) {
           if (e.key === 'Enter') {
-            onSend();
+            if (inputText && inputText.trim() && sendMessage) { sendMessage(inputText.trim()); setInputText(''); }
           }
         },
         placeholder: 'message...',
         style: { flex: 1, background: '#1E1E1E', borderRadius: '24px', padding: '10px 16px', fontSize: '15px', color: '#E8E8E8', border: 'none', outline: 'none', minWidth: 0 }
       }),
-      React.createElement('div', {
-        onClick: onSend,
-        onMouseDown: function(e) { if (e && typeof e.preventDefault === 'function') e.preventDefault(); },
-        style: { width: '44px', height: '44px', borderRadius: '50%', background: inputText && inputText.trim() ? '#2563EB' : 'rgba(255,255,255,0.12)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, userSelect: 'none', WebkitTapHighlightColor: 'transparent', transition: 'background 0.2s' }
-      }, React.createElement(Icon, { name: 'arrow-right', size: 20, color: '#fff' }))
+      React.createElement(SendButton, { onSend: function() { if (inputText && inputText.trim() && sendMessage) { sendMessage(inputText.trim()); setInputText(''); } } })
     )
   );
 }`;

@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Mic, X, ArrowUp, History, Undo2, RotateCcw, ChevronLeft, Check, Clock } from 'lucide-react'
 import { startVoiceInput, type VoiceSession } from '@/lib/voiceInput'
 import type { GenUIVersion } from '@/stores/uiStore'
+import { LaunchSplash } from './LaunchSplash'
 
 export interface GenUIPanelProps {
   isOpen: boolean
@@ -55,6 +57,10 @@ export default function GenUIPanel({
   const [focused, setFocused] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
+  // Restore-version confirm sheet + splash-on-apply (a "soft restart" so the user
+  // knows the change really took effect).
+  const [pendingRestore, setPendingRestore] = useState<GenUIVersion | null>(null)
+  const [showRestartSplash, setShowRestartSplash] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const voiceRef = useRef<VoiceSession | null>(null)
   const baseTextRef = useRef('')
@@ -359,7 +365,7 @@ export default function GenUIPanel({
                     title={v.name}
                     subtitle={`#${i + 1} · ${timeAgo(v.createdAt)}`}
                     active={activeVersionId === v.id}
-                    onClick={() => onRestoreVersion?.(v.id)}
+                    onClick={() => { if (activeVersionId !== v.id) setPendingRestore(v) }}
                   />
                 ))
               )}
@@ -367,6 +373,48 @@ export default function GenUIPanel({
           </>
         )}
       </div>
+
+      {/* "Apply this version?" confirmation sheet */}
+      {pendingRestore && typeof document !== 'undefined' && createPortal(
+        <div onClick={() => setPendingRestore(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1100 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: '#141414', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: '22px 22px calc(env(safe-area-inset-bottom, 0px) + 22px)', boxShadow: '0 -10px 40px rgba(0,0,0,0.6)' }}>
+            <div style={{ width: 36, height: 4, background: 'rgba(255,255,255,0.12)', borderRadius: 2, margin: '0 auto 16px' }} />
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#F3F4F6', marginBottom: 6 }}>Apply this version?</div>
+            <div style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.5, marginBottom: 18 }}>
+              Switch the app to <span style={{ color: '#E8E8E8', fontWeight: 600 }}>{pendingRestore.name}</span>. The app will restart so the change takes effect cleanly.
+            </div>
+            <button
+              onClick={() => {
+                const id = pendingRestore.id
+                setPendingRestore(null)
+                onRestoreVersion?.(id)
+                // Soft "restart": brief splash so the user can see the change is live.
+                setShowRestartSplash(true)
+                onClose()
+                setTimeout(() => setShowRestartSplash(false), 1300)
+              }}
+              style={{ width: '100%', padding: '14px', borderRadius: 999, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', marginBottom: 10, WebkitTapHighlightColor: 'transparent' }}
+            >
+              Apply &amp; restart
+            </button>
+            <button
+              onClick={() => setPendingRestore(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: 999, border: 'none', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.65)', fontSize: 15, fontWeight: 600, cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Brief splash overlay shown right after applying a version — a soft restart. */}
+      {showRestartSplash && typeof document !== 'undefined' && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1200 }}>
+          <LaunchSplash />
+        </div>,
+        document.body
+      )}
     </>
   )
 }

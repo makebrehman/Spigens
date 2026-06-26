@@ -11,6 +11,25 @@
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   box-sizing: border-box;
+  /* App-like touch behaviour: taps / long-presses never select message text,
+     names, timestamps, etc. Text inputs re-enable selection below so typing,
+     caret placement and copy/paste still work. (Copying a message still works
+     via its long-press menu.) */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+[contenteditable=""] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
 }
 
 html {

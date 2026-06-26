@@ -124,7 +124,17 @@ export function ChatScreen(props: ChatScreenProps) {
   if (otherUserId && seededRef.current !== otherUserId) {
     seededRef.current = otherUserId
     useUIStore.getState().setComponentState('chatMessages', msgCache.get(otherUserId) ?? [])
+    // CRITICAL: reset the live conversation id for THIS chat (null for a brand-new
+    // user). componentState.conversationId is global and the send path reads it; if it
+    // isn't reset on chat open it keeps the PREVIOUS chat's id and the first message is
+    // sent to that old conversation instead of this user. Seed from the cached contact.
+    const seedCid = useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId ?? null
+    useUIStore.getState().setComponentState('conversationId', seedCid)
   }
+
+  // Keep the GenUI-visible conversation id in lockstep with the resolved one (incl.
+  // null) so the send path can never reuse a previous chat's conversation.
+  useEffect(() => { useUIStore.getState().setComponentState('conversationId', conversationId ?? null) }, [conversationId])
 
   useEffect(() => {
     if (!otherUserId || !currentUserId) return

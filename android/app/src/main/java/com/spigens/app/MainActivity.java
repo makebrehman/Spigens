@@ -1,9 +1,17 @@
 package com.spigens.app;
 
+import android.os.Bundle;
 import android.view.KeyEvent;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.community.database.sqlite.CapacitorSQLitePlugin;
 
 public class MainActivity extends BridgeActivity {
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(CapacitorSQLitePlugin.class);
+        super.onCreate(savedInstanceState);
+    }
 
     private boolean volumeUpPressed = false;
     private boolean volumeDownPressed = false;

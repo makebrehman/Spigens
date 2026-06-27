@@ -141,6 +141,15 @@ async function openSQLite(): Promise<void> {
   // Log what we got so _errorStep captures it if the next call fails
   _setStep(`got plugin: pkg=${typeof CapacitorSQLite} bridge=${typeof bridgePlugin}`)
 
+  // Some @capacitor-community/sqlite v8.x Android builds require an explicit
+  // folder-init call before the first connection; the native load() may not do
+  // it automatically. Best-effort — swallow if the method doesn't exist or if
+  // the folder was already created.
+  if (Capacitor.getPlatform() === 'android') {
+    _setStep('createNCDatabaseFolder')
+    try { await (pluginImpl as any).createNCDatabaseFolder() } catch { /* ok */ }
+  }
+
   const sqlite = new SQLiteConnection(pluginImpl)
 
   _setStep('checkConnectionsConsistency')

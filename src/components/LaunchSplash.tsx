@@ -8,6 +8,7 @@ interface DbDiag {
   usingFallback: boolean
   attempts: number
   lastStep: string
+  errorStep: string
   lastError: string | null
 }
 
@@ -88,7 +89,7 @@ export function LaunchSplash({ dbStatus = 'initializing', dbStep = '', dbDiag = 
           <DiagRow label="Plugin in bridge" value={dbDiag.pluginInBridge ? 'Yes' : 'No'} ok={dbDiag.pluginInBridge} />
           <DiagRow label="SQLite active"    value={dbDiag.sqliteActive ? 'Yes' : 'No'}    ok={dbDiag.sqliteActive} />
           <DiagRow label="Attempts made"    value={String(dbDiag.attempts || 0)}           ok={false} neutral />
-          <DiagRow label="Failed at"        value={dbDiag.lastStep || '—'}                ok={false} neutral />
+          <DiagRow label="Failed at call"   value={dbDiag.errorStep || '—'}               ok={false} neutral />
           {dbDiag.lastError ? (
             <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px solid rgba(248,113,113,0.15)' }}>
               <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', marginBottom: 4, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Error</div>

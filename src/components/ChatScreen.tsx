@@ -309,11 +309,16 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     const loadReactions = async () => {
-      // SQLite-first: populate componentState immediately so reactions are visible
-      // offline and before the server responds.
-      const cached = await getCachedReactions(conversationId)
-      Object.keys(cached).forEach(id => useUIStore.getState().setComponentState('reactions:' + id, cached[id]))
+      // SQLite is the single source of truth — always read from here and push to componentState.
+      const renderFromCache = async () => {
+        const cached = await getCachedReactions(conversationId)
+        Object.keys(cached).forEach(msgId =>
+          useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
+        )
+      }
 
+      // Immediate render from cache — works offline, same timing as messages.
+      await renderFromCache()
       if (!networkIsOnline) return
 
       const { data: rows, error } = await supabase
@@ -321,14 +326,23 @@ export function ChatScreen(props: ChatScreenProps) {
         .select('message_id, user_id, emoji')
         .eq('conversation_id', conversationId)
       if (error || !rows) return
-      // Persist fresh server state so the next offline open shows current reactions.
-      await cacheReactions(conversationId, rows)
-      const grouped: Record<string, any[]> = {}
-      rows.forEach(r => {
-        if (!grouped[r.message_id]) grouped[r.message_id] = []
-        grouped[r.message_id].push({ user_id: r.user_id, emoji: r.emoji })
-      })
-      Object.keys(grouped).forEach(id => useUIStore.getState().setComponentState('reactions:' + id, grouped[id]))
+
+      // Merge server rows with any pending offline reactions before writing to SQLite.
+      // This prevents a stale server response from wiping locally-queued toggles that
+      // haven't been flushed yet — the same race that causes the offline reaction to
+      // disappear after the app is reopened online.
+      const pending = await getPendingReactions()
+      const pendingForConv = pending.filter(r => r.conversationId === conversationId)
+      const merged = new Map(rows.map(r => [`${r.message_id}:${r.user_id}`, r]))
+      for (const p of pendingForConv) {
+        const k = `${p.messageId}:${p.userId}`
+        if (p.action === 'remove') merged.delete(k)
+        else merged.set(k, { message_id: p.messageId, user_id: p.userId, emoji: p.emoji })
+      }
+
+      // Write merged result to SQLite, then re-read it — SQLite drives componentState, not the raw server rows.
+      await cacheReactions(conversationId, [...merged.values()])
+      await renderFromCache()
     }
 
     loadMessages()

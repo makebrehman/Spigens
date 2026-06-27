@@ -226,14 +226,19 @@ export function ChatScreen(props: ChatScreenProps) {
         }
       }
       if (!active) return
-      if (otherUserId) msgCache.set(otherUserId, merged) // keep the hot mirror fresh
-      messagesRef.current = merged
-      setRealMessages(merged)
-      useUIStore.getState().setComponentState('chatMessages', merged)
-      // Reveal the screen once we actually have cached messages (or we're offline and
-      // this is all we'll get). An online empty cache keeps the loader until the
-      // network load below settles, so "no messages yet" isn't shown prematurely.
-      if (merged.length > 0 || !useNetworkStore.getState().isOnline) setLoaded(true)
+      if (merged.length > 0) {
+        // Only update state when SQLite returned real data (same guard as
+        // CommunityListScreen) so an empty DB read never wipes messages that
+        // are about to arrive via the network load below.
+        if (otherUserId) msgCache.set(otherUserId, merged)
+        messagesRef.current = merged
+        setRealMessages(merged)
+        useUIStore.getState().setComponentState('chatMessages', merged)
+        setLoaded(true)
+      } else if (!useNetworkStore.getState().isOnline) {
+        // Offline + empty cache: reveal the screen to show "no messages yet"
+        setLoaded(true)
+      }
     }
 
     reload()

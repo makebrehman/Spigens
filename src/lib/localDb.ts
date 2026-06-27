@@ -107,6 +107,7 @@ let _initPromise: Promise<void> | null = null
 let _usingFallback = false
 let _lastInitError: string | null = null
 let _lastInitStep = 'idle'
+let _errorStep = ''
 let _initAttempts = 0
 let _stepListener: ((step: string) => void) | null = null
 
@@ -128,26 +129,28 @@ async function openSQLite(): Promise<void> {
 
   // If the package export is still null (bridge wasn't ready during module eval),
   // fall back to Capacitor.Plugins which is populated by the bridge at startup.
-  const pluginImpl = CapacitorSQLite
-    ?? (globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite
+  const bridgePlugin = (globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite
+  const pluginImpl = CapacitorSQLite ?? bridgePlugin
 
   if (!pluginImpl) {
-    const bridgeVal = !!(globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite
     throw new Error(
-      `CapacitorSQLite null — pkg=${!!CapacitorSQLite} bridge=${bridgeVal}`
+      `CapacitorSQLite null — pkg=${typeof CapacitorSQLite} bridge=${typeof bridgePlugin}`
     )
   }
 
+  // Log what we got so _errorStep captures it if the next call fails
+  _setStep(`got plugin: pkg=${typeof CapacitorSQLite} bridge=${typeof bridgePlugin}`)
+
   const sqlite = new SQLiteConnection(pluginImpl)
 
-  _setStep('Checking connection consistency...')
+  _setStep('checkConnectionsConsistency')
   const { result: consistent } = await sqlite.checkConnectionsConsistency()
-  _setStep('Checking existing connection...')
+  _setStep('isConnection')
   const { result: exists } = await sqlite.isConnection(DB_NAME, false)
 
   let db: SQLiteDBConnection
   if (consistent && exists) {
-    _setStep('Retrieving existing connection...')
+    _setStep('retrieveConnection')
     db = await sqlite.retrieveConnection(DB_NAME, false)
   } else {
     // If the native layer has a stale connection (e.g. app was killed or updated
@@ -155,26 +158,21 @@ async function openSQLite(): Promise<void> {
     // that state throws "connection already exists". Clear all native connections
     // first so we can create a clean one.
     if (!consistent) {
-      _setStep('Clearing stale connections...')
+      _setStep('closeAllConnections')
       try { await sqlite.closeAllConnections() } catch { /* best-effort */ }
     }
-    _setStep('Creating connection...')
+    _setStep('createConnection')
     db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', DB_VERSION, false)
   }
 
-  _setStep('Opening database...')
+  _setStep('open')
   await db.open()
 
-  _setStep('Running schema...')
-  // Create tables/indexes. Use execute() — NOT run() — for DDL. In
-  // @capacitor-community/sqlite, run() is for INSERT/UPDATE/DELETE; calling it on a
-  // CREATE/ALTER (which reports no row changes) throws "Run: not an error (code 0)"
-  // and was killing init on device. execute() runs the whole multi-statement script.
-  // Strip `--` comment lines so the script is clean SQL.
+  _setStep('execute schema')
   const ddl = SCHEMA.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
   await db.execute(ddl)
 
-  _setStep('Running migrations...')
+  _setStep('execute migrations')
   // Lightweight, idempotent column migrations (added after v1). execute() throws if
   // the column already exists on upgraded installs — expected, so we swallow it.
   const migrations = [
@@ -225,6 +223,7 @@ export async function initLocalDb(): Promise<void> {
         _setStep('Ready')
         return // native SQLite is live — _usingFallback stays false
       } catch (e) {
+        _errorStep = _lastInitStep  // capture the method-call name that threw
         _lastInitError = String((e as any)?.message ?? e)
         _setStep(`Attempt ${attempt} failed: ${_lastInitError}`)
         console.warn(`[localDb] native SQLite init failed (attempt ${attempt}/${MAX_ATTEMPTS})`, e)
@@ -256,6 +255,7 @@ export function getInitDiagnostics() {
     usingFallback: _usingFallback,
     attempts: _initAttempts,
     lastStep: _lastInitStep,
+    errorStep: _errorStep,
     lastError: _lastInitError,
   }
 }

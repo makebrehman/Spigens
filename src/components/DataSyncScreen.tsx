@@ -11,6 +11,7 @@ import {
   cacheCommunityMessages,
   cacheCommunityMembers,
   cacheProfile,
+  cacheReactions,
 } from '@/lib/offlineCache'
 import { markInitialSyncDone, hasInitialSyncDone } from '@/stores/authStore'
 import { cacheRemoteMedia } from '@/lib/mediaCache'
@@ -117,6 +118,27 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             }
           }
           setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
+        }
+
+        // Bulk-fetch all reactions for every conversation in one query and cache them.
+        // This is what makes reactions available offline from the very first open —
+        // without this, message_reactions is empty until the user opens a chat online.
+        if (conversations.length) {
+          const convIds = conversations.map(c => c.conversationId)
+          const { data: allRx } = await supabase
+            .from('message_reactions')
+            .select('message_id, user_id, emoji, conversation_id')
+            .in('conversation_id', convIds)
+          if (allRx?.length) {
+            const byConv: Record<string, Array<{ message_id: string; user_id: string; emoji: string }>> = {}
+            allRx.forEach((r: any) => {
+              if (!byConv[r.conversation_id]) byConv[r.conversation_id] = []
+              byConv[r.conversation_id].push({ message_id: r.message_id, user_id: r.user_id, emoji: r.emoji })
+            })
+            for (const [convId, rxRows] of Object.entries(byConv)) {
+              await cacheReactions(convId, rxRows)
+            }
+          }
         }
 
         // Step 3 — communities (65 → 80 %)

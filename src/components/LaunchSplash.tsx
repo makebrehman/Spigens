@@ -6,9 +6,9 @@ interface LaunchSplashProps {
 
 export function LaunchSplash({ dbStatus = 'initializing' }: LaunchSplashProps) {
   const dotColor =
-    dbStatus === 'ready'       ? 'rgba(74,222,128,0.8)' :
-    dbStatus === 'failed'      ? 'rgba(248,113,113,0.8)' :
-                                 'rgba(255,255,255,0.2)'
+    dbStatus === 'ready'  ? '#4ade80' :
+    dbStatus === 'failed' ? '#f87171' :
+                            'rgba(255,255,255,0.35)'
 
   const label =
     dbStatus === 'ready'  ? 'Local storage ready' :
@@ -16,13 +16,14 @@ export function LaunchSplash({ dbStatus = 'initializing' }: LaunchSplashProps) {
                             'Setting up local storage...'
 
   const labelColor =
-    dbStatus === 'failed' ? 'rgba(248,113,113,0.6)' : 'rgba(255,255,255,0.22)'
+    dbStatus === 'ready'  ? 'rgba(74,222,128,0.85)' :
+    dbStatus === 'failed' ? 'rgba(248,113,113,0.85)' :
+                            'rgba(255,255,255,0.45)'
 
   return (
     <div style={{
       height: '100vh', width: '100%', background: '#050505',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      position: 'relative',
     }}>
       <img
         src="/spigens_logo.png"
@@ -32,20 +33,18 @@ export function LaunchSplash({ dbStatus = 'initializing' }: LaunchSplashProps) {
       <div style={{ fontSize: '10px', letterSpacing: '5px', color: 'rgba(255,255,255,0.16)', marginBottom: '5px' }}>
         spigens
       </div>
-      <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.10)' }}>
+      <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.10)', marginBottom: '48px' }}>
         end-to-end encrypted
       </div>
 
-      <div style={{
-        position: 'absolute', bottom: 40,
-        display: 'flex', alignItems: 'center', gap: 6,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <div style={{
-          width: 6, height: 6, borderRadius: '50%',
+          width: 7, height: 7, borderRadius: '50%',
           background: dotColor,
-          transition: 'background 0.4s ease',
+          flexShrink: 0,
+          transition: 'background 0.3s ease',
         }} />
-        <span style={{ fontSize: '10px', color: labelColor, letterSpacing: '0.4px' }}>
+        <span style={{ fontSize: '11px', color: labelColor, letterSpacing: '0.3px' }}>
           {label}
         </span>
       </div>

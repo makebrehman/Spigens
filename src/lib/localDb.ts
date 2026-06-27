@@ -120,6 +120,13 @@ async function openSQLite(): Promise<void> {
   if (consistent && exists) {
     db = await sqlite.retrieveConnection(DB_NAME, false)
   } else {
+    // If the native layer has a stale connection (e.g. app was killed or updated
+    // mid-session), consistent=false but exists=true. Calling createConnection in
+    // that state throws "connection already exists". Clear all native connections
+    // first so we can create a clean one.
+    if (!consistent) {
+      try { await sqlite.closeAllConnections() } catch { /* best-effort */ }
+    }
     db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', DB_VERSION, false)
   }
 

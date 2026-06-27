@@ -51,7 +51,7 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
       try {
         // Already fully synced once on this device (e.g. this screen remounted
         // mid-flight) — don't re-download, just release the screen.
-        if (hasInitialSyncDone(userId)) { onDone(); return }
+        if (await hasInitialSyncDone(userId)) { onDone(); return }
 
         // Step 1 — conversations (0 → 25 %)
         setLabel('fetching your chats...')
@@ -96,11 +96,9 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             .order('created_at', { ascending: false })
             .limit(50)
           if (data?.length) {
-            // Decrypt + convert to the SAME canonical shape ChatScreen stores, so the
-            // cache is display-ready and readable offline right after sign-in.
             const otherPublicKey = conv.otherProfile?.public_key
             const contactName = conv.otherProfile?.display_name || conv.otherProfile?.username || 'Unknown'
-            const ordered = [...data].reverse() // ascending by created_at
+            const ordered = [...data].reverse()
             const local: LocalMessage[] = []
             for (const row of ordered) {
               local.push(toLocalMessage(row, {
@@ -135,8 +133,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         if (!active) return
 
         const allComms = commRes.data || []
-        // Keep membership flags so cached communities render as joined (not as
-        // "join"-button tiles) offline.
         const roleById: Record<string, string> = {}
         ;(memRes.data || []).forEach((m: any) => { roleById[m.community_id] = m.role })
         const myIds = new Set(Object.keys(roleById))
@@ -157,8 +153,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             .order('created_at', { ascending: false })
             .limit(50)
           if (data?.length) {
-            // Format into the SAME canonical shape CommunityChatScreen stores, so the
-            // cache is display-ready offline right after sign-in.
             const formatted = [...data].reverse().map((row: any) => {
               const sp = row.profiles
               const name = sp?.display_name || sp?.username || 'Unknown'
@@ -179,8 +173,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
             })
             await cacheCommunityMessages(myComms[i].id, formatted)
           }
-          // Cache this community's members so the member list works offline and
-          // "mutual communities" can be computed locally from the DB.
           const { data: mem } = await supabase
             .from('community_members')
             .select('user_id, role, profiles(display_name, username, avatar_url)')
@@ -198,18 +190,12 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
 
         if (!active) return
 
-        // Make sure the signed-in user's OWN profile (incl. bio + avatar) is in SQLite,
-        // so their own profile screen — and photo — work offline.
         let ownAvatar: string | null = null
         try {
           const { data: me } = await supabase.from('profiles').select('*').eq('id', userId).single()
           if (me) { await cacheProfile(userId, me); ownAvatar = (me as any).avatar_url ?? null }
         } catch { /* offline / non-fatal */ }
 
-        // Warm the media cache in the background — never block sign-in on it. We pull
-        // the user's own avatar + contact/community avatars and the most recent chat
-        // photos so they're available offline; the rest download lazily on first view.
-        // Fire-and-forget: these promises keep resolving even after this screen unmounts.
         const avatarUrls = [
           ...(ownAvatar ? [ownAvatar] : []),
           ...contacts.map(c => c.avatarUrl).filter((u): u is string => !!u),
@@ -218,15 +204,11 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         void warmMediaCache(avatarUrls, 'image')
         void warmMediaCache(imageUrls.slice(-30), 'image')
 
-        // Record completion durably BEFORE the cosmetic delay/unmount, so finishing the
-        // download is never lost even if this screen unmounts a moment later.
-        markInitialSyncDone(userId)
+        await markInitialSyncDone(userId)
         setProgress(100)
         setLabel('ready!')
-        // onDone() clears needsInitialSync (a store action — safe to call post-unmount).
         setTimeout(() => onDone(), 600)
       } catch {
-        // Failed/partial sync: do NOT mark done, so it retries on the next launch.
         onDone()
       }
     }

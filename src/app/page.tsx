@@ -30,7 +30,7 @@ import { cacheContacts, getCachedContacts, getCachedMessages, getCachedCommunity
 import { dmMirror } from '@/lib/messageMirror'
 import { warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
-import { initLocalDb } from '@/lib/localDb'
+import { initLocalDb, isNativeSqliteActive, isUsingFallback } from '@/lib/localDb'
 import { warmIconsFromSources } from '@/lib/iconLoader'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
@@ -143,9 +143,14 @@ export default function Home() {
     }
   }, [])
 
+  const [dbStatus, setDbStatus] = useState<'initializing' | 'ready' | 'failed'>('initializing')
+
   // initialize local DB then auth on mount
   useEffect(() => {
-    initLocalDb().finally(() => useAuthStore.getState().initialize())
+    initLocalDb().then(() => {
+      if (isNativeSqliteActive() || isUsingFallback()) setDbStatus('ready')
+      else setDbStatus('failed')
+    }).finally(() => useAuthStore.getState().initialize())
   }, [])
 
   const { isAuthenticated, isLoading: authLoading, user, profile, privateKey, needsInitialSync, clearNeedsInitialSync } = useAuthStore()
@@ -831,7 +836,7 @@ export default function Home() {
   }
 
   // auth splash — checking session
-  if (authLoading) return <LaunchSplash />
+  if (authLoading) return <LaunchSplash dbStatus={dbStatus} />
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
@@ -858,7 +863,7 @@ export default function Home() {
   //  - fresh device / different account / no cache, online -> wait for the server fetch
   const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
-  if (!hydrated || waitingForGenUI) return <LaunchSplash />
+  if (!hydrated || waitingForGenUI) return <LaunchSplash dbStatus={dbStatus} />
 
   if (showSettings) {
     return <SettingsScreen onBack={() => setShowSettings(false)} />

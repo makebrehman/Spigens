@@ -30,7 +30,7 @@ import { cacheContacts, getCachedContacts, getCachedMessages, getCachedCommunity
 import { dmMirror } from '@/lib/messageMirror'
 import { warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
-import { initLocalDb, isNativeSqliteActive, isUsingFallback } from '@/lib/localDb'
+import { initLocalDb, isNativeSqliteActive, isUsingFallback, onInitProgress, getInitDiagnostics } from '@/lib/localDb'
 import { warmIconsFromSources } from '@/lib/iconLoader'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
@@ -144,11 +144,17 @@ export default function Home() {
   }, [])
 
   const [dbStatus, setDbStatus] = useState<'initializing' | 'ready' | 'failed'>('initializing')
+  const [dbStep, setDbStep] = useState('Starting...')
+  const [dbDiag, setDbDiag] = useState<ReturnType<typeof getInitDiagnostics> | null>(null)
 
   // initialize local DB then auth on mount
   useEffect(() => {
+    onInitProgress(setDbStep)
     initLocalDb().then(() => {
-      if (isNativeSqliteActive() || isUsingFallback()) setDbStatus('ready')
+      const diag = getInitDiagnostics()
+      setDbDiag(diag)
+      setDbStep(diag.lastStep)
+      if (diag.sqliteActive || diag.usingFallback) setDbStatus('ready')
       else setDbStatus('failed')
     }).finally(() => useAuthStore.getState().initialize())
   }, [])
@@ -836,7 +842,7 @@ export default function Home() {
   }
 
   // auth splash — checking session
-  if (authLoading) return <LaunchSplash dbStatus={dbStatus} />
+  if (authLoading || dbStatus === 'failed') return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
@@ -863,7 +869,7 @@ export default function Home() {
   //  - fresh device / different account / no cache, online -> wait for the server fetch
   const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
-  if (!hydrated || waitingForGenUI) return <LaunchSplash dbStatus={dbStatus} />
+  if (!hydrated || waitingForGenUI) return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
 
   if (showSettings) {
     return <SettingsScreen onBack={() => setShowSettings(false)} />

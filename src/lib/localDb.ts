@@ -106,18 +106,31 @@ let _db: SQLiteDBConnection | null = null
 let _initPromise: Promise<void> | null = null
 let _usingFallback = false
 let _lastInitError: string | null = null
+let _lastInitStep = 'idle'
+let _initAttempts = 0
+let _stepListener: ((step: string) => void) | null = null
+
+function _setStep(step: string) {
+  _lastInitStep = step
+  _stepListener?.(step)
+}
+
+/** Register a callback that fires on every init step change (for live splash diagnostics). */
+export function onInitProgress(cb: (step: string) => void) { _stepListener = cb }
 
 // ── SQLite helpers ───────────────────────────────────────────────────────────
 
 async function openSQLite(): Promise<void> {
   const sqlite = new SQLiteConnection(CapacitorSQLite)
 
-  // Consistency check (required by the plugin on some platforms)
+  _setStep('Checking connection consistency...')
   const { result: consistent } = await sqlite.checkConnectionsConsistency()
+  _setStep('Checking existing connection...')
   const { result: exists } = await sqlite.isConnection(DB_NAME, false)
 
   let db: SQLiteDBConnection
   if (consistent && exists) {
+    _setStep('Retrieving existing connection...')
     db = await sqlite.retrieveConnection(DB_NAME, false)
   } else {
     // If the native layer has a stale connection (e.g. app was killed or updated
@@ -125,13 +138,17 @@ async function openSQLite(): Promise<void> {
     // that state throws "connection already exists". Clear all native connections
     // first so we can create a clean one.
     if (!consistent) {
+      _setStep('Clearing stale connections...')
       try { await sqlite.closeAllConnections() } catch { /* best-effort */ }
     }
+    _setStep('Creating connection...')
     db = await sqlite.createConnection(DB_NAME, false, 'no-encryption', DB_VERSION, false)
   }
 
+  _setStep('Opening database...')
   await db.open()
 
+  _setStep('Running schema...')
   // Create tables/indexes. Use execute() — NOT run() — for DDL. In
   // @capacitor-community/sqlite, run() is for INSERT/UPDATE/DELETE; calling it on a
   // CREATE/ALTER (which reports no row changes) throws "Run: not an error (code 0)"
@@ -140,6 +157,7 @@ async function openSQLite(): Promise<void> {
   const ddl = SCHEMA.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
   await db.execute(ddl)
 
+  _setStep('Running migrations...')
   // Lightweight, idempotent column migrations (added after v1). execute() throws if
   // the column already exists on upgraded installs — expected, so we swallow it.
   const migrations = [
@@ -183,11 +201,15 @@ export async function initLocalDb(): Promise<void> {
     // exactly what we don't want. Retry transient init failures a few times instead.
     const MAX_ATTEMPTS = 3
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      _initAttempts = attempt
+      _setStep(`Attempt ${attempt}/${MAX_ATTEMPTS}...`)
       try {
         await openSQLite()
+        _setStep('Ready')
         return // native SQLite is live — _usingFallback stays false
       } catch (e) {
         _lastInitError = String((e as any)?.message ?? e)
+        _setStep(`Attempt ${attempt} failed: ${_lastInitError}`)
         console.warn(`[localDb] native SQLite init failed (attempt ${attempt}/${MAX_ATTEMPTS})`, e)
         if (attempt < MAX_ATTEMPTS) await new Promise(r => setTimeout(r, 400 * attempt))
       }
@@ -196,6 +218,7 @@ export async function initLocalDb(): Promise<void> {
     // stay on the SQLite path (writes no-op, reads return empty) rather than routing
     // to localStorage. The device uses native SQLite or no cache at all — never the
     // typical browser cache. A later initLocalDb() retry can still bring SQLite up.
+    _setStep('Failed after all retries')
     _initPromise = null
     console.error('[localDb] native SQLite unavailable after retries — offline cache disabled (NOT falling back to localStorage)')
   })()
@@ -205,8 +228,19 @@ export async function initLocalDb(): Promise<void> {
 export function isUsingFallback() { return _usingFallback }
 
 // True only when genuine native SQLite is open and serving reads/writes.
-// Useful for diagnostics / a settings "storage: native SQLite" indicator.
 export function isNativeSqliteActive() { return !_usingFallback && _db !== null }
+
+export function getInitDiagnostics() {
+  return {
+    isNative: Capacitor.isNativePlatform(),
+    pluginAvailable: Capacitor.isPluginAvailable('CapacitorSQLite'),
+    sqliteActive: !_usingFallback && _db !== null,
+    usingFallback: _usingFallback,
+    attempts: _initAttempts,
+    lastStep: _lastInitStep,
+    lastError: _lastInitError,
+  }
+}
 
 // ── Diagnostics (temporary, for debugging offline storage on-device) ──────────
 

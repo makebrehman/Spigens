@@ -451,8 +451,9 @@ export default function Home() {
       componentSources: useUIStore.getState().componentSources,
     } as any
 
-    // determine current screen
-    const screen = selectedContact ? 'chat' : 'home'
+    // determine current screen — activeChatUser is the real DM path; selectedContact
+    // is the legacy mock-contact path. both mean "user is inside a chat right now".
+    const screen = (selectedContact || activeChatUser) ? 'chat' : 'home'
 
     try {
       const mutation = await callGenUIForUpdate({
@@ -553,7 +554,7 @@ export default function Home() {
       setGenUIError(err instanceof Error ? err.message : 'something went wrong')
       setIsGenerating(false)
     }
-  }, [selectedContact])
+  }, [selectedContact, activeChatUser])
 
   // portal safety — only render portals after client mount
   useEffect(() => {

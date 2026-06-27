@@ -88,6 +88,38 @@ CREATE TABLE IF NOT EXISTS pending_community_messages (
   created_at TEXT
 );
 
+-- Per-message emoji reactions. Primary key (message_id, user_id) means a user can
+-- only hold one reaction per message at a time — the same constraint Supabase enforces.
+-- Indexed by conversation_id so loading all reactions for a chat is a single range scan.
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  PRIMARY KEY (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_conv ON message_reactions(conversation_id);
+
+-- Offline queue for "mark conversation as read" updates. One row per conversation;
+-- repeated opens while offline collapse to a single flush on reconnect.
+CREATE TABLE IF NOT EXISTS pending_read_receipts (
+  conversation_id TEXT PRIMARY KEY,
+  queued_at TEXT
+);
+
+-- Offline queue for emoji reaction toggles. Primary key (message_id, user_id) means
+-- only the last toggle per user+message is kept — last-write wins, which is correct
+-- since toggling twice is equivalent to no-op. action = 'add' | 'remove'.
+CREATE TABLE IF NOT EXISTS pending_reactions (
+  message_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  action TEXT NOT NULL,
+  queued_at TEXT,
+  PRIMARY KEY (message_id, user_id)
+);
+
 -- On-device media cache index (see mediaCache.ts). The bytes live as real files
 -- on the Filesystem; this table just maps a remote URL → the local file path so
 -- full-res images/avatars render offline and survive app restarts. If the file is
@@ -285,7 +317,7 @@ export function getLocalDbDiagnostics() {
 
 // Row counts per table. -1 means the query failed / the DB isn't serving reads.
 export async function getTableCounts(): Promise<Record<string, number>> {
-  const tables = ['profiles', 'contacts', 'community_list', 'dm_messages', 'community_messages', 'community_members', 'media_cache']
+  const tables = ['profiles', 'contacts', 'community_list', 'dm_messages', 'community_messages', 'community_members', 'message_reactions', 'pending_read_receipts', 'pending_reactions', 'media_cache']
   const out: Record<string, number> = {}
   for (const t of tables) {
     try {
@@ -315,7 +347,7 @@ export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise
 /** Delete all user data from every table (called on logout). */
 export async function clearDbForUser(_userId: string): Promise<void> {
   if (_usingFallback) return
-  for (const t of ['dm_messages', 'community_messages', 'community_members', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages', 'media_cache']) {
+  for (const t of ['dm_messages', 'community_messages', 'community_members', 'contacts', 'community_list', 'profiles', 'pending_messages', 'pending_community_messages', 'message_reactions', 'pending_read_receipts', 'pending_reactions', 'media_cache']) {
     await dbRun(`DELETE FROM ${t}`)
   }
 }

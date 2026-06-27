@@ -119,6 +119,131 @@ export async function deleteCachedMessage(conversationId: string, id: string): P
   emitDb(topics.messages(conversationId))
 }
 
+// ── Message Reactions ─────────────────────────────────────────────────────────
+
+// Replace all cached reactions for a conversation (called after a server fetch).
+export async function cacheReactions(
+  conversationId: string,
+  rows: Array<{ message_id: string; user_id: string; emoji: string }>
+): Promise<void> {
+  if (isUsingFallback()) { lsSave(`reactions_${conversationId}`, rows); return }
+  await dbRun('DELETE FROM message_reactions WHERE conversation_id = ?', [conversationId])
+  for (const r of rows) {
+    await dbRun(
+      'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
+      [r.message_id, r.user_id, conversationId, r.emoji]
+    )
+  }
+}
+
+// Load reactions grouped by message_id: { [messageId]: [{ user_id, emoji }, ...] }
+export async function getCachedReactions(
+  conversationId: string
+): Promise<Record<string, Array<{ user_id: string; emoji: string }>>> {
+  if (isUsingFallback()) {
+    const rows = lsLoad<Array<{ message_id: string; user_id: string; emoji: string }>>(`reactions_${conversationId}`) ?? []
+    const out: Record<string, Array<{ user_id: string; emoji: string }>> = {}
+    rows.forEach(r => {
+      if (!out[r.message_id]) out[r.message_id] = []
+      out[r.message_id].push({ user_id: r.user_id, emoji: r.emoji })
+    })
+    return out
+  }
+  const rows = await dbQuery<{ message_id: string; user_id: string; emoji: string }>(
+    'SELECT message_id, user_id, emoji FROM message_reactions WHERE conversation_id = ?',
+    [conversationId]
+  )
+  const out: Record<string, Array<{ user_id: string; emoji: string }>> = {}
+  rows.forEach(r => {
+    if (!out[r.message_id]) out[r.message_id] = []
+    out[r.message_id].push({ user_id: r.user_id, emoji: r.emoji })
+  })
+  return out
+}
+
+// Insert or replace one reaction (used on toggle-on and realtime INSERT/UPDATE).
+export async function upsertCachedReaction(
+  messageId: string, userId: string, conversationId: string, emoji: string
+): Promise<void> {
+  if (isUsingFallback()) {
+    const rows = lsLoad<Array<{ message_id: string; user_id: string; emoji: string }>>(`reactions_${conversationId}`) ?? []
+    const filtered = rows.filter(r => !(r.message_id === messageId && r.user_id === userId))
+    lsSave(`reactions_${conversationId}`, [...filtered, { message_id: messageId, user_id: userId, emoji }])
+    return
+  }
+  await dbRun(
+    'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
+    [messageId, userId, conversationId, emoji]
+  )
+}
+
+// Remove one reaction (used on toggle-off and realtime DELETE).
+export async function deleteCachedReaction(messageId: string, userId: string): Promise<void> {
+  if (isUsingFallback()) return
+  await dbRun('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?', [messageId, userId])
+}
+
+// ── Pending Reactions (offline → online sync) ─────────────────────────────────
+
+export interface PendingReaction {
+  messageId: string
+  userId: string
+  conversationId: string
+  emoji: string
+  action: 'add' | 'remove'
+}
+
+// Queue a reaction toggle for when the user reconnects.
+// INSERT OR REPLACE means toggling twice (add → remove) collapses to the final state.
+export async function savePendingReaction(r: PendingReaction): Promise<void> {
+  if (isUsingFallback()) return
+  await dbRun(
+    `INSERT OR REPLACE INTO pending_reactions (message_id, user_id, conversation_id, emoji, action, queued_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [r.messageId, r.userId, r.conversationId, r.emoji, r.action, new Date().toISOString()]
+  )
+}
+
+export async function getPendingReactions(): Promise<PendingReaction[]> {
+  if (isUsingFallback()) return []
+  const rows = await dbQuery<any>('SELECT * FROM pending_reactions ORDER BY queued_at ASC')
+  return rows.map(r => ({
+    messageId: r.message_id,
+    userId: r.user_id,
+    conversationId: r.conversation_id,
+    emoji: r.emoji,
+    action: r.action as 'add' | 'remove',
+  }))
+}
+
+export async function clearPendingReaction(messageId: string, userId: string): Promise<void> {
+  if (isUsingFallback()) return
+  await dbRun('DELETE FROM pending_reactions WHERE message_id = ? AND user_id = ?', [messageId, userId])
+}
+
+// ── Pending Read Receipts ─────────────────────────────────────────────────────
+
+// Queue a "mark conversation as read" update for when we come back online.
+// Uses INSERT OR REPLACE so repeated opens while offline collapse to one row.
+export async function queueReadReceipt(conversationId: string): Promise<void> {
+  if (isUsingFallback()) return
+  await dbRun(
+    'INSERT OR REPLACE INTO pending_read_receipts (conversation_id, queued_at) VALUES (?, ?)',
+    [conversationId, new Date().toISOString()]
+  )
+}
+
+export async function getPendingReadReceipts(): Promise<string[]> {
+  if (isUsingFallback()) return []
+  const rows = await dbQuery<{ conversation_id: string }>('SELECT conversation_id FROM pending_read_receipts')
+  return rows.map(r => r.conversation_id)
+}
+
+export async function clearReadReceipt(conversationId: string): Promise<void> {
+  if (isUsingFallback()) return
+  await dbRun('DELETE FROM pending_read_receipts WHERE conversation_id = ?', [conversationId])
+}
+
 // ── Community List ────────────────────────────────────────────────────────────
 
 export async function cacheCommunityList(userId: string, list: any[]): Promise<void> {
@@ -342,6 +467,7 @@ export async function clearUserCache(userId: string): Promise<void> {
       if (!k) continue
       if (
         k.startsWith(P) ||
+        k.startsWith('reactions_') ||
         k === `spigens_pk_${userId}` ||
         k === `spigens_archived_${userId}` ||
         k === `spigens_pinned_${userId}` ||

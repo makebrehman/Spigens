@@ -29,6 +29,16 @@ import {
   savePendingMessage,
   getPendingMessages,
   removePendingMessage,
+  getCachedReactions,
+  cacheReactions,
+  upsertCachedReaction,
+  deleteCachedReaction,
+  savePendingReaction,
+  getPendingReactions,
+  clearPendingReaction,
+  queueReadReceipt,
+  getPendingReadReceipts,
+  clearReadReceipt,
 } from '@/lib/offlineCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
@@ -299,17 +309,40 @@ export function ChatScreen(props: ChatScreenProps) {
     }
 
     const loadReactions = async () => {
+      // SQLite is the single source of truth — always read from here and push to componentState.
+      const renderFromCache = async () => {
+        const cached = await getCachedReactions(conversationId)
+        Object.keys(cached).forEach(msgId =>
+          useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
+        )
+      }
+
+      // Immediate render from cache — works offline, same timing as messages.
+      await renderFromCache()
+      if (!networkIsOnline) return
+
       const { data: rows, error } = await supabase
         .from('message_reactions')
         .select('message_id, user_id, emoji')
         .eq('conversation_id', conversationId)
       if (error || !rows) return
-      const grouped: Record<string, any[]> = {}
-      rows.forEach(r => {
-        if (!grouped[r.message_id]) grouped[r.message_id] = []
-        grouped[r.message_id].push({ user_id: r.user_id, emoji: r.emoji })
-      })
-      Object.keys(grouped).forEach(id => useUIStore.getState().setComponentState('reactions:' + id, grouped[id]))
+
+      // Merge server rows with any pending offline reactions before writing to SQLite.
+      // This prevents a stale server response from wiping locally-queued toggles that
+      // haven't been flushed yet — the same race that causes the offline reaction to
+      // disappear after the app is reopened online.
+      const pending = await getPendingReactions()
+      const pendingForConv = pending.filter(r => r.conversationId === conversationId)
+      const merged = new Map(rows.map(r => [`${r.message_id}:${r.user_id}`, r]))
+      for (const p of pendingForConv) {
+        const k = `${p.messageId}:${p.userId}`
+        if (p.action === 'remove') merged.delete(k)
+        else merged.set(k, { message_id: p.messageId, user_id: p.userId, emoji: p.emoji })
+      }
+
+      // Write merged result to SQLite, then re-read it — SQLite drives componentState, not the raw server rows.
+      await cacheReactions(conversationId, [...merged.values()])
+      await renderFromCache()
     }
 
     loadMessages()
@@ -370,18 +403,21 @@ export function ChatScreen(props: ChatScreenProps) {
         const key = 'reactions:' + row.message_id
         const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
         useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
+        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
         const row = payload.new as any
         const key = 'reactions:' + row.message_id
         const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
         useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
+        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
         const row = payload.old as any
         const key = 'reactions:' + row.message_id
         const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
         useUIStore.getState().setComponentState(key, cur.filter((r: any) => r.user_id !== row.user_id))
+        deleteCachedReaction(row.message_id, row.user_id).catch(() => {})
       })
       .subscribe()
 
@@ -452,8 +488,13 @@ export function ChatScreen(props: ChatScreenProps) {
   }, [contactId])
 
   useEffect(() => {
-    if (!conversationId || !currentUserId || !networkIsOnline) return
+    if (!conversationId || !currentUserId) return
     const hasUnread = realMessages.some(m => !m.isSent && m.status !== 'read')
+    if (!networkIsOnline) {
+      // Queue for when the device reconnects; repeated opens collapse to one row.
+      if (hasUnread) queueReadReceipt(conversationId).catch(() => {})
+      return
+    }
     if (hasUnread) {
       supabase.from('messages').update({ status: 'read' })
         .eq('conversation_id', conversationId)
@@ -467,6 +508,47 @@ export function ChatScreen(props: ChatScreenProps) {
       .eq('user_id', currentUserId)
       .then()
   }, [conversationId, currentUserId, realMessages, networkIsOnline])
+
+  // Flush any read receipts that were queued while offline.
+  useEffect(() => {
+    if (!networkIsOnline || !currentUserId) return
+    ;(async () => {
+      const pending = await getPendingReadReceipts()
+      if (!pending.length) return
+      await Promise.all(pending.map(async cid => {
+        await supabase.from('messages').update({ status: 'read' })
+          .eq('conversation_id', cid)
+          .neq('sender_id', currentUserId)
+          .neq('status', 'read')
+        await supabase.from('conversation_participants')
+          .update({ last_read_at: new Date().toISOString() })
+          .eq('conversation_id', cid)
+          .eq('user_id', currentUserId)
+        await clearReadReceipt(cid)
+      }))
+    })()
+  }, [networkIsOnline, currentUserId])
+
+  // Flush any reaction toggles that were queued while offline.
+  useEffect(() => {
+    if (!networkIsOnline || !currentUserId) return
+    ;(async () => {
+      const pending = await getPendingReactions()
+      if (!pending.length) return
+      await Promise.all(pending.map(async r => {
+        if (r.action === 'remove') {
+          await supabase.from('message_reactions').delete()
+            .eq('message_id', r.messageId).eq('user_id', r.userId)
+        } else {
+          await supabase.from('message_reactions').upsert(
+            { message_id: r.messageId, conversation_id: r.conversationId, user_id: r.userId, emoji: r.emoji },
+            { onConflict: 'message_id,user_id' }
+          )
+        }
+        await clearPendingReaction(r.messageId, r.userId)
+      }))
+    })()
+  }, [networkIsOnline, currentUserId])
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -878,15 +960,26 @@ export function ChatScreen(props: ChatScreenProps) {
     onToggleReaction: (messageId: string, emoji: string) => {
       const liveUserId = useUIStore.getState().componentState?.currentUserId
       const liveConversationId = useUIStore.getState().componentState?.conversationId
+      const isOnline = useNetworkStore.getState().isOnline
       const key = 'reactions:' + messageId
       const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
       const mine = current.find((r: any) => r.user_id === liveUserId)
       if (mine && mine.emoji === emoji) {
         useUIStore.getState().setComponentState(key, current.filter((r: any) => r.user_id !== liveUserId))
-        supabase.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', liveUserId).then()
+        deleteCachedReaction(messageId, liveUserId).catch(() => {})
+        if (isOnline) {
+          supabase.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', liveUserId).then()
+        } else if (liveConversationId) {
+          savePendingReaction({ messageId, userId: liveUserId, conversationId: liveConversationId, emoji, action: 'remove' }).catch(() => {})
+        }
       } else {
         useUIStore.getState().setComponentState(key, [...current.filter((r: any) => r.user_id !== liveUserId), { user_id: liveUserId, emoji }])
-        supabase.from('message_reactions').upsert({ message_id: messageId, conversation_id: liveConversationId, user_id: liveUserId, emoji }, { onConflict: 'message_id,user_id' }).then()
+        if (liveConversationId) upsertCachedReaction(messageId, liveUserId, liveConversationId, emoji).catch(() => {})
+        if (isOnline) {
+          supabase.from('message_reactions').upsert({ message_id: messageId, conversation_id: liveConversationId, user_id: liveUserId, emoji }, { onConflict: 'message_id,user_id' }).then()
+        } else if (liveConversationId) {
+          savePendingReaction({ messageId, userId: liveUserId, conversationId: liveConversationId, emoji, action: 'add' }).catch(() => {})
+        }
       }
     },
     onOpenCommunityInvite: (meta: any, msgId: string) => onOpenCommunityInvite?.(meta, msgId),

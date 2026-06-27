@@ -1055,7 +1055,7 @@ export default function Home() {
       <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeHeaderScope} />
 
       {/* Search bar — editable via GenUI (componentSources.homeSearch) */}
-      {showSearch && (
+      {showSearch && !showPortalSearch && (
         <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeSearchScope} />
       )}
 
@@ -1277,6 +1277,13 @@ export default function Home() {
               >Delete</button>
             </div>
           </div>
+        </div>,
+        document.body
+      )}
+      {/* Search bar portal — bottom-overlay and floating positions */}
+      {showPortalSearch && mounted && createPortal(
+        <div style={{ position: 'fixed', bottom: overlayPosition.bottom, left: overlayPosition.left, right: overlayPosition.right, zIndex: 150 }}>
+          <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeSearchScope} />
         </div>,
         document.body
       )}

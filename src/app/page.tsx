@@ -30,7 +30,7 @@ import { cacheContacts, getCachedContacts, getCachedMessages, getCachedCommunity
 import { dmMirror } from '@/lib/messageMirror'
 import { warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
-import { initLocalDb } from '@/lib/localDb'
+import { initLocalDb, isNativeSqliteActive, isUsingFallback, onInitProgress, getInitDiagnostics } from '@/lib/localDb'
 import { warmIconsFromSources } from '@/lib/iconLoader'
 import { ProfileScreen } from '@/components/ProfileScreen'
 import { ContactProfileScreen } from '@/components/ContactProfileScreen'
@@ -143,9 +143,20 @@ export default function Home() {
     }
   }, [])
 
+  const [dbStatus, setDbStatus] = useState<'initializing' | 'ready' | 'failed'>('initializing')
+  const [dbStep, setDbStep] = useState('Starting...')
+  const [dbDiag, setDbDiag] = useState<ReturnType<typeof getInitDiagnostics> | null>(null)
+
   // initialize local DB then auth on mount
   useEffect(() => {
-    initLocalDb().finally(() => useAuthStore.getState().initialize())
+    onInitProgress(setDbStep)
+    initLocalDb().then(() => {
+      const diag = getInitDiagnostics()
+      setDbDiag(diag)
+      setDbStep(diag.lastStep)
+      if (diag.sqliteActive || diag.usingFallback) setDbStatus('ready')
+      else setDbStatus('failed')
+    }).finally(() => useAuthStore.getState().initialize())
   }, [])
 
   const { isAuthenticated, isLoading: authLoading, user, profile, privateKey, needsInitialSync, clearNeedsInitialSync } = useAuthStore()
@@ -251,16 +262,9 @@ export default function Home() {
       }
     })
     // Write fresh contacts to the DB → emit → the local-first effect re-renders.
-    // Also populate the store from this same data synchronously BEFORE clearing the
-    // loading flag, so the list never flashes its empty state during the async
-    // DB read-back (the live-read still handles later realtime updates).
     // Guard against wiping the cache on a transient empty/error result.
     if (user?.id && mappedContacts.length) {
       await cacheContacts(user.id, mappedContacts)
-      const online = useContactStore.getState().onlineUserIds
-      const withPresence = mappedContacts.map(c => ({ ...c, isOnline: online.has(c.id) }))
-      useContactStore.getState().setContacts(withPresence)
-      useUIStore.getState().setComponentState('feedContacts', withPresence)
     }
     setLoadingContacts(false)
   }, [isAuthenticated, user, privateKey, activeChatUser, isOnline])
@@ -838,7 +842,7 @@ export default function Home() {
   }
 
   // auth splash — checking session
-  if (authLoading) return <LaunchSplash />
+  if (authLoading || dbStatus === 'failed') return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
@@ -865,7 +869,7 @@ export default function Home() {
   //  - fresh device / different account / no cache, online -> wait for the server fetch
   const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
-  if (!hydrated || waitingForGenUI) return <LaunchSplash />
+  if (!hydrated || waitingForGenUI) return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
 
   if (showSettings) {
     return <SettingsScreen onBack={() => setShowSettings(false)} />

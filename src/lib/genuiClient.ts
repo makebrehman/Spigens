@@ -7,64 +7,6 @@ export type StoreMutation = Partial<UIOverrideState> & {
   versionName?: string
 }
 
-const RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    contactListStyle: {
-      type: 'object',
-      properties: {
-        container: { type: 'object' },
-        tileGap: { type: 'string' },
-        topPadding: { type: 'string' },
-        bottomPadding: { type: 'string' },
-        showDividers: { type: 'boolean' },
-        dividerStyle: { type: 'object' },
-      },
-    },
-    layoutConfig: {
-      type: 'object',
-      properties: {
-        searchBar: {
-          type: 'object',
-          properties: {
-            barPosition: { type: 'string' },
-            iconPosition: { type: 'string' },
-            injectedAt: { type: 'number' },
-            position: { type: 'object' },
-            animation: { type: 'string' },
-            expandable: { type: 'boolean' },
-          },
-        },
-      },
-    },
-    layoutOrder: {
-      type: 'array',
-      items: { type: 'string' },
-    },
-    behaviorConfig: { type: 'object' },
-    interactions: {
-      type: 'object',
-      properties: {
-        tileTap: { type: 'string' },
-        tileLongPress: { type: 'string' },
-        menuTap: { type: 'string' },
-        searchIconTap: { type: 'string' },
-        newChatTap: { type: 'string' },
-        attachTap: { type: 'string' },
-        backTap: { type: 'string' },
-      },
-    },
-    customComponents: {
-      type: 'object',
-      additionalProperties: { type: 'string' },
-    },
-    componentSources: {
-      type: 'object',
-      additionalProperties: { type: 'string' },
-    },
-    versionName: { type: 'string' },
-  },
-}
 
 function buildSystemPrompt(
   screen: 'home' | 'chat',
@@ -100,7 +42,7 @@ examples:
 contact list CONTAINER STYLING (contactListStyle) — the list area BEHIND and AROUND the tiles. this is DIFFERENT from the tiles themselves:
 - IMPORTANT distinction:
   - "make the list background black" / "the chat list area" → contactListStyle.container { background: "#000" }
-  - "make the tiles black" / "the chat rows" → use perContact or globalTile, NOT this
+  - "make the tiles black" / "the chat rows" → rewrite componentSources.contactList, NOT this
 - container: the scrollable list background and padding { background, padding }
 - tileGap: spacing between tiles as a css string (e.g. "8px", "12px")
 - topPadding / bottomPadding: space at the top/bottom of the list (css strings)
@@ -153,18 +95,13 @@ the search has two separate parts that can be placed independently:
    - 'hidden': no icon
 
 IMPORTANT RULES:
-- "ALL TILES" RULE: when the user says "all tiles", "every tile", or "the tiles" without naming a specific contact, they mean EVERY tile uniformly. to guarantee no individual tile keeps an old style that overrides the new one, ALSO set "clearPerContact": true in your response. this wipes any per-contact overrides so the global style applies to all tiles evenly. set the style on both globalTile.unread and globalTile.read. only keep per-contact styling if the user names a specific person.
-- BACKGROUND = CONTAINER (critical): the word "background" ALWAYS means contactListStyle.container.background. it is NEVER the tile background. these are two different things:
-  - "tiles" / "tile color" / "the rows" → globalTile (or perContact)
-  - "background" / "the background" / "behind the tiles" → contactListStyle.container.background
+- "ALL TILES" RULE: when the user says "all tiles", "every tile", or "the tile color" — rewrite componentSources.contactList and change the background value in the tile div's style object directly in the code. there is no globalTile knob — tile color lives inside the contactList source.
+- BACKGROUND = CONTAINER (critical): the word "background" can mean two different things:
+  - "tiles" / "tile color" / "the rows" / "the chat rows" → rewrite componentSources.contactList, change the tile div's background in the code
+  - "background" / "the list background" / "behind the tiles" → contactListStyle.container.background
 
-  when a request contains BOTH, you MUST output BOTH separately. example:
-  "grey tiles, red background" MUST produce:
-  {
-    "globalTile": { "unread": { "background": "#808080" }, "read": { "background": "#808080" } },
-    "contactListStyle": { "container": { "background": "#FF0000" } }
-  }
-  never set the tile color and drop the background. if the user mentions a background color, contactListStyle.container.background MUST appear in your output.
+  when a request contains BOTH, output BOTH: rewrite contactList source AND set contactListStyle.container.background.
+  example: "grey tiles, red background" → rewrite contactList with grey tile background AND set contactListStyle: { container: { background: "#FF0000" } }
 - if the user says "move the search bar to the bottom", set barPosition to 'bottom-overlay' and LEAVE iconPosition as 'top-bar' unless they also mention the icon.
 - if the user says "move the search icon to the bottom", set iconPosition to 'bottom' and leave barPosition unchanged.
 - only change the field the user actually mentioned. never change both unless the user asks for both.
@@ -664,7 +601,7 @@ apply fontFamily inside ANY style slot OR inside custom component inline styles.
 
 examples:
 - "make the title fancy and elegant" → topAppBarStyle: { title: { fontFamily: "Playfair Display, serif" } }
-- "make contact names handwritten" → globalTile: { unread: { name: { fontFamily: "Caveat, cursive" } }, read: { name: { fontFamily: "Caveat, cursive" } } }
+- "make contact names handwritten" → rewrite componentSources.contactList and set fontFamily: "Caveat, cursive" on the contact name span
 - "use a bold condensed font for the headline" → use "Anton" or "Archivo Black" in the relevant slot
 - mix fonts freely: a "Playfair Display" headline with "Manrope" body text is elegant.
 
@@ -680,13 +617,9 @@ rules:
 
 example output format:
 {
-  "perContact": {
-    "Priya Sharma": {
-      "tile": { "background": "linear-gradient(135deg, #7C3AED, #2563EB)" }
-    }
-  },
-  "globalTile": {
-    "unread": { "background": "#1a1a2e" }
+  "versionName": "Red Tile Color",
+  "componentSources": {
+    "contactList": "function Component() { ... tile background changed to red ... }"
   }
 }`
 }
@@ -745,11 +678,7 @@ export async function callGenUIForUpdate(params: {
       { role: 'user', content: `${message} — respond in json only` },
     ],
     response_format: {
-      type: 'json_schema',
-      json_schema: {
-        name: 'ui_mutation',
-        schema: RESPONSE_SCHEMA,
-      },
+      type: 'json_object',
     },
     max_tokens: 16000,
     temperature: 0.2,

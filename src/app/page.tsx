@@ -520,6 +520,26 @@ export default function Home() {
         })
       }
 
+      // apply global tile style overrides (AI may return these directly)
+      const globalTile = (mutation as any).globalTile
+      if (globalTile && typeof globalTile === 'object') {
+        Object.entries(globalTile).forEach(([tileState, style]) => {
+          if (style && typeof style === 'object') {
+            uiStore.setGlobalTileStyle(tileState as any, style as any)
+          }
+        })
+      }
+
+      // apply per-contact style overrides
+      const perContact = (mutation as any).perContact
+      if (perContact && typeof perContact === 'object') {
+        Object.entries(perContact).forEach(([contactName, override]) => {
+          if (override && typeof override === 'object') {
+            uiStore.setContactOverride(contactName, override as any)
+          }
+        })
+      }
+
       // scan edited component source for fonts/icons to load
       if (mutation.componentSources) {
         Object.values(mutation.componentSources).forEach(source => {

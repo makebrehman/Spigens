@@ -351,7 +351,7 @@ export default function GenUIPanel({
                 title="Default"
                 subtitle="The original, unmodified UI"
                 active={!activeVersionId}
-                onClick={() => { onReset?.() }}
+                onClick={() => { if (activeVersionId) setPendingRestore({ id: '__default__', name: 'Default', createdAt: '', snapshot: null as any }) }}
               />
 
               {versions.length === 0 ? (
@@ -374,9 +374,10 @@ export default function GenUIPanel({
         )}
       </div>
 
-      {/* "Apply this version?" confirmation sheet */}
+      {/* "Apply this version?" confirmation sheet — must sit ABOVE the panel
+          backdrop (z 9990) and the panel itself (z 9991). */}
       {pendingRestore && typeof document !== 'undefined' && createPortal(
-        <div onClick={() => setPendingRestore(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1100 }}>
+        <div onClick={() => setPendingRestore(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 10010 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: '#141414', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: '22px 22px calc(env(safe-area-inset-bottom, 0px) + 22px)', boxShadow: '0 -10px 40px rgba(0,0,0,0.6)' }}>
             <div style={{ width: 36, height: 4, background: 'rgba(255,255,255,0.12)', borderRadius: 2, margin: '0 auto 16px' }} />
             <div style={{ fontSize: 17, fontWeight: 700, color: '#F3F4F6', marginBottom: 6 }}>Apply this version?</div>
@@ -387,7 +388,8 @@ export default function GenUIPanel({
               onClick={() => {
                 const id = pendingRestore.id
                 setPendingRestore(null)
-                onRestoreVersion?.(id)
+                if (id === '__default__') onReset?.()
+                else onRestoreVersion?.(id)
                 // Soft "restart": brief splash so the user can see the change is live.
                 setShowRestartSplash(true)
                 onClose()
@@ -410,7 +412,7 @@ export default function GenUIPanel({
 
       {/* Brief splash overlay shown right after applying a version — a soft restart. */}
       {showRestartSplash && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1200 }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10020 }}>
           <LaunchSplash />
         </div>,
         document.body
@@ -423,11 +425,15 @@ function VersionRow({ title, subtitle, active, onClick }: { title: string; subti
   return (
     <button
       onClick={onClick}
+      type="button"
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
         padding: '11px 12px', marginBottom: 8, borderRadius: 12, cursor: 'pointer',
         background: active ? 'rgba(37,99,235,0.16)' : 'rgba(255,255,255,0.035)',
         border: `1px solid ${active ? 'rgba(37,99,235,0.45)' : 'rgba(255,255,255,0.06)'}`,
+        pointerEvents: 'auto',
+        userSelect: 'none', WebkitUserSelect: 'none', WebkitTapHighlightColor: 'transparent',
+        touchAction: 'manipulation',
       }}
     >
       <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: active ? '#2563EB' : 'rgba(255,255,255,0.06)', color: active ? '#fff' : '#8A8A8A' }}>

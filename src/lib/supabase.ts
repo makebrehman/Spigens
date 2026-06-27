@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { capacitorStorage } from '@/lib/persistStorage'
 
 // Fallback placeholders keep createClient from throwing during static build
 // (output: 'export' causes Next.js to process imports server-side at build time).
@@ -11,6 +12,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
+    // Store session in Capacitor Preferences (native app container) instead of
+    // localStorage so it is wiped when the app is uninstalled on device.
+    storage: capacitorStorage,
   },
   realtime: {
     params: {

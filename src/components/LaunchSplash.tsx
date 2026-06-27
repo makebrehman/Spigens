@@ -3,6 +3,7 @@
 interface DbDiag {
   isNative: boolean
   pluginAvailable: boolean
+  pluginInBridge: boolean
   sqliteActive: boolean
   usingFallback: boolean
   attempts: number
@@ -84,6 +85,7 @@ export function LaunchSplash({ dbStatus = 'initializing', dbStep = '', dbDiag = 
         }}>
           <DiagRow label="Native platform" value={dbDiag.isNative ? 'Yes' : 'No (web)'} ok={dbDiag.isNative} />
           <DiagRow label="Plugin available" value={dbDiag.pluginAvailable ? 'Yes' : 'No'} ok={dbDiag.pluginAvailable} />
+          <DiagRow label="Plugin in bridge" value={dbDiag.pluginInBridge ? 'Yes' : 'No'} ok={dbDiag.pluginInBridge} />
           <DiagRow label="SQLite active"    value={dbDiag.sqliteActive ? 'Yes' : 'No'}    ok={dbDiag.sqliteActive} />
           <DiagRow label="Attempts made"    value={String(dbDiag.attempts || 0)}           ok={false} neutral />
           <DiagRow label="Failed at"        value={dbDiag.lastStep || '—'}                ok={false} neutral />

@@ -1,7 +1,7 @@
 'use client'
 
 import { Capacitor } from '@capacitor/core'
-import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite'
+import type { SQLiteDBConnection } from '@capacitor-community/sqlite'
 
 const DB_NAME = 'spigens_local'
 const DB_VERSION = 1
@@ -121,7 +121,24 @@ export function onInitProgress(cb: (step: string) => void) { _stepListener = cb 
 // ── SQLite helpers ───────────────────────────────────────────────────────────
 
 async function openSQLite(): Promise<void> {
-  const sqlite = new SQLiteConnection(CapacitorSQLite)
+  // Dynamic import so the module evaluates here — after the Capacitor native
+  // bridge has registered plugins — not at static bundle-load time when the
+  // bridge may not be ready yet (causing CapacitorSQLite to resolve to null).
+  const { SQLiteConnection, CapacitorSQLite } = await import('@capacitor-community/sqlite')
+
+  // If the package export is still null (bridge wasn't ready during module eval),
+  // fall back to Capacitor.Plugins which is populated by the bridge at startup.
+  const pluginImpl = CapacitorSQLite
+    ?? (globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite
+
+  if (!pluginImpl) {
+    const bridgeVal = !!(globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite
+    throw new Error(
+      `CapacitorSQLite null — pkg=${!!CapacitorSQLite} bridge=${bridgeVal}`
+    )
+  }
+
+  const sqlite = new SQLiteConnection(pluginImpl)
 
   _setStep('Checking connection consistency...')
   const { result: consistent } = await sqlite.checkConnectionsConsistency()
@@ -234,6 +251,7 @@ export function getInitDiagnostics() {
   return {
     isNative: Capacitor.isNativePlatform(),
     pluginAvailable: Capacitor.isPluginAvailable('CapacitorSQLite'),
+    pluginInBridge: !!(globalThis as any)?.Capacitor?.Plugins?.CapacitorSQLite,
     sqliteActive: !_usingFallback && _db !== null,
     usingFallback: _usingFallback,
     attempts: _initAttempts,

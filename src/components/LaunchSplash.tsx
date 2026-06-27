@@ -1,10 +1,28 @@
 'use client'
 
-export function LaunchSplash() {
+interface LaunchSplashProps {
+  dbStatus?: 'initializing' | 'ready' | 'failed'
+}
+
+export function LaunchSplash({ dbStatus = 'initializing' }: LaunchSplashProps) {
+  const dotColor =
+    dbStatus === 'ready'       ? 'rgba(74,222,128,0.8)' :
+    dbStatus === 'failed'      ? 'rgba(248,113,113,0.8)' :
+                                 'rgba(255,255,255,0.2)'
+
+  const label =
+    dbStatus === 'ready'  ? 'Local storage ready' :
+    dbStatus === 'failed' ? 'Local storage unavailable' :
+                            'Setting up local storage...'
+
+  const labelColor =
+    dbStatus === 'failed' ? 'rgba(248,113,113,0.6)' : 'rgba(255,255,255,0.22)'
+
   return (
     <div style={{
       height: '100vh', width: '100%', background: '#050505',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      position: 'relative',
     }}>
       <img
         src="/spigens_logo.png"
@@ -16,6 +34,20 @@ export function LaunchSplash() {
       </div>
       <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.10)' }}>
         end-to-end encrypted
+      </div>
+
+      <div style={{
+        position: 'absolute', bottom: 40,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <div style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: dotColor,
+          transition: 'background 0.4s ease',
+        }} />
+        <span style={{ fontSize: '10px', color: labelColor, letterSpacing: '0.4px' }}>
+          {label}
+        </span>
       </div>
     </div>
   )

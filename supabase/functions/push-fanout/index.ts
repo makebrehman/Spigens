@@ -126,37 +126,58 @@ Deno.serve(async (req) => {
     let body = 'New message'
     const data: Record<string, string> = {}
 
-    const senderId = record.sender_id as string
-    const { data: sender } = await supabase
-      .from('profiles').select('display_name, username').eq('id', senderId).maybeSingle()
-    const senderName = sender?.display_name || sender?.username || 'Someone'
+    if (table === 'message_reactions') {
+      // Reaction: notify the person whose message was reacted to.
+      const reactorId = record.user_id as string
+      const { data: reactor } = await supabase
+        .from('profiles').select('display_name, username').eq('id', reactorId).maybeSingle()
+      const reactorName = reactor?.display_name || reactor?.username || 'Someone'
 
-    if (table === 'messages') {
-      // DM: the other participant(s) of the conversation. Content is E2E encrypted,
-      // so the body stays generic on purpose.
-      const { data: parts } = await supabase
-        .from('conversation_participants').select('user_id')
-        .eq('conversation_id', record.conversation_id).neq('user_id', senderId)
-      recipientIds = (parts ?? []).map((p: any) => p.user_id)
-      title = senderName
-      body = 'New message'
-      data.type = 'dm'
+      const { data: origMsg } = await supabase
+        .from('messages').select('sender_id').eq('id', record.message_id).maybeSingle()
+      if (!origMsg) return new Response('original message not found', { status: 200 })
+
+      const ownerId = origMsg.sender_id as string
+      if (ownerId === reactorId) return new Response('reactor is owner', { status: 200 })
+
+      recipientIds = [ownerId]
+      title = reactorName
+      body = `reacted ${record.emoji} to your message`
+      data.type = 'reaction'
       data.conversationId = String(record.conversation_id ?? '')
-      data.senderId = String(senderId ?? '')
-    } else if (table === 'community_messages') {
-      const { data: members } = await supabase
-        .from('community_members').select('user_id')
-        .eq('community_id', record.community_id).eq('status', 'active').neq('user_id', senderId)
-      recipientIds = (members ?? []).map((m: any) => m.user_id)
-      const { data: comm } = await supabase
-        .from('communities').select('name').eq('id', record.community_id).maybeSingle()
-      title = comm?.name || 'Community'
-      const text = String(record.content ?? '')
-      body = `${senderName}: ${text.length > 80 ? text.slice(0, 77) + '…' : text}`
-      data.type = 'community'
-      data.communityId = String(record.community_id ?? '')
+      data.messageId = String(record.message_id ?? '')
     } else {
-      return new Response('unhandled table', { status: 200 })
+      const senderId = record.sender_id as string
+      const { data: sender } = await supabase
+        .from('profiles').select('display_name, username').eq('id', senderId).maybeSingle()
+      const senderName = sender?.display_name || sender?.username || 'Someone'
+
+      if (table === 'messages') {
+        // DM: content is E2E encrypted so the body stays generic on purpose.
+        const { data: parts } = await supabase
+          .from('conversation_participants').select('user_id')
+          .eq('conversation_id', record.conversation_id).neq('user_id', senderId)
+        recipientIds = (parts ?? []).map((p: any) => p.user_id)
+        title = senderName
+        body = 'New message'
+        data.type = 'dm'
+        data.conversationId = String(record.conversation_id ?? '')
+        data.senderId = String(senderId ?? '')
+      } else if (table === 'community_messages') {
+        const { data: members } = await supabase
+          .from('community_members').select('user_id')
+          .eq('community_id', record.community_id).eq('status', 'active').neq('user_id', senderId)
+        recipientIds = (members ?? []).map((m: any) => m.user_id)
+        const { data: comm } = await supabase
+          .from('communities').select('name').eq('id', record.community_id).maybeSingle()
+        title = comm?.name || 'Community'
+        const text = String(record.content ?? '')
+        body = `${senderName}: ${text.length > 80 ? text.slice(0, 77) + '…' : text}`
+        data.type = 'community'
+        data.communityId = String(record.community_id ?? '')
+      } else {
+        return new Response('unhandled table', { status: 200 })
+      }
     }
 
     if (!recipientIds.length) return new Response('no recipients', { status: 200 })

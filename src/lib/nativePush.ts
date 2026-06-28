@@ -67,12 +67,17 @@ export async function registerNativePush(userId: string): Promise<boolean> {
         console.error('FCM registration error:', err)
       })
 
-      // Foreground receipt: the local-first realtime already refreshes the UI, so
-      // nothing is required here — hook left for future badge/sound handling.
+      // Foreground receipt: the local-first realtime already refreshes the UI.
       PushNotifications.addListener('pushNotificationReceived', () => { /* no-op */ })
 
-      // Notification tapped: hook for deep-linking into the relevant chat.
-      PushNotifications.addListener('pushNotificationActionPerformed', () => { /* no-op */ })
+      // Notification tapped: dispatch a DOM event so page.tsx can navigate to the
+      // relevant chat or community without coupling this module to React state.
+      PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+        const d = (action.notification.data ?? {}) as Record<string, string>
+        if (d.type && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('push-notification-tap', { detail: d }))
+        }
+      })
     }
 
     await PushNotifications.register()

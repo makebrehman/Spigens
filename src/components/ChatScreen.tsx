@@ -364,22 +364,6 @@ export function ChatScreen(props: ChatScreenProps) {
 
     const channel = supabase
       .channel('messages:' + conversationId)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
-        const row = payload.new as any
-        if (row.sender_id === currentUserId) return
-
-        useUIStore.getState().setComponentState('otherUserTyping', false)
-        if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
-
-        if (row.status === 'sent') {
-          supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
-        }
-
-        if (messagesRef.current.some(m => m.id === row.id)) return
-        const msg = decryptRow(row, messagesRef.current)
-        msg.status = row.status === 'sent' ? 'delivered' : row.status
-        await upsertMessage(conversationId, msg) // emit → local-first re-read renders it
-      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
         const row = payload.new as any
         const existing = messagesRef.current.find(m => m.id === row.id)
@@ -408,27 +392,6 @@ export function ChatScreen(props: ChatScreenProps) {
           if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
           typingExpireRef.current = setTimeout(() => useUIStore.getState().setComponentState('otherUserTyping', false), 3000)
         }
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.new as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
-        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.new as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
-        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.old as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, cur.filter((r: any) => r.user_id !== row.user_id))
-        deleteCachedReaction(row.message_id, row.user_id, conversationId).catch(() => {})
       })
       .subscribe()
 

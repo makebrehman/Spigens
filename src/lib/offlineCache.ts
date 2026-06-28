@@ -126,14 +126,18 @@ export async function cacheReactions(
   conversationId: string,
   rows: Array<{ message_id: string; user_id: string; emoji: string }>
 ): Promise<void> {
-  if (isUsingFallback()) { lsSave(`reactions_${conversationId}`, rows); return }
-  await dbRun('DELETE FROM message_reactions WHERE conversation_id = ?', [conversationId])
-  for (const r of rows) {
-    await dbRun(
-      'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
-      [r.message_id, r.user_id, conversationId, r.emoji]
-    )
+  if (isUsingFallback()) {
+    lsSave(`reactions_${conversationId}`, rows)
+  } else {
+    await dbRun('DELETE FROM message_reactions WHERE conversation_id = ?', [conversationId])
+    for (const r of rows) {
+      await dbRun(
+        'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
+        [r.message_id, r.user_id, conversationId, r.emoji]
+      )
+    }
   }
+  emitDb(topics.reactions(conversationId))
 }
 
 // Load reactions grouped by message_id: { [messageId]: [{ user_id, emoji }, ...] }
@@ -169,18 +173,21 @@ export async function upsertCachedReaction(
     const rows = lsLoad<Array<{ message_id: string; user_id: string; emoji: string }>>(`reactions_${conversationId}`) ?? []
     const filtered = rows.filter(r => !(r.message_id === messageId && r.user_id === userId))
     lsSave(`reactions_${conversationId}`, [...filtered, { message_id: messageId, user_id: userId, emoji }])
-    return
+  } else {
+    await dbRun(
+      'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
+      [messageId, userId, conversationId, emoji]
+    )
   }
-  await dbRun(
-    'INSERT OR REPLACE INTO message_reactions (message_id, user_id, conversation_id, emoji) VALUES (?, ?, ?, ?)',
-    [messageId, userId, conversationId, emoji]
-  )
+  emitDb(topics.reactions(conversationId))
 }
 
 // Remove one reaction (used on toggle-off and realtime DELETE).
-export async function deleteCachedReaction(messageId: string, userId: string): Promise<void> {
-  if (isUsingFallback()) return
-  await dbRun('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?', [messageId, userId])
+export async function deleteCachedReaction(messageId: string, userId: string, conversationId: string): Promise<void> {
+  if (!isUsingFallback()) {
+    await dbRun('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?', [messageId, userId])
+  }
+  emitDb(topics.reactions(conversationId))
 }
 
 // ── Pending Reactions (offline → online sync) ─────────────────────────────────

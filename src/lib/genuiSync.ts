@@ -11,13 +11,21 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 // Pull the user's saved state + version timeline from the server and apply it.
 export async function loadGenUIFromServer(userId: string): Promise<boolean> {
   try {
-    const [stateRes, versionsRes] = await Promise.all([
-      supabase.from('genui_states').select('snapshot').eq('user_id', userId).maybeSingle(),
-      supabase
-        .from('genui_versions')
-        .select('id, name, snapshot, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true }),
+    // Race both fetches against a 5 s deadline. Without this, an unreliable
+    // network (e.g. Android's navigator.onLine lying about connectivity) leaves
+    // the splash screen stuck until the OS TCP timeout (30–60 s) fires.
+    const [stateRes, versionsRes] = await Promise.race([
+      Promise.all([
+        supabase.from('genui_states').select('snapshot').eq('user_id', userId).maybeSingle(),
+        supabase
+          .from('genui_versions')
+          .select('id, name, snapshot, created_at')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true }),
+      ]),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 5000)
+      ),
     ])
 
     const versions: GenUIVersion[] = (versionsRes.data ?? []).map((r: any) => ({

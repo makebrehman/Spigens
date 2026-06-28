@@ -130,45 +130,76 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   initialize: async () => {
     set({ isLoading: true })
+
+    // Read the durable local snapshot first — Capacitor Preferences, no network, ~5 ms.
+    const snapshot = await loadAuthSnapshot()
+
     try {
+      // If a known identity exists on this device, restore auth state immediately from
+      // the snapshot so the splash screen can dismiss before any network call is made.
+      if (snapshot?.id && snapshot.username) {
+        const localPk = loadPrivateKey(snapshot.id)
+        const syncDone = await hasInitialSyncDone(snapshot.id)
+        set({
+          user: { id: snapshot.id, email: snapshot.email },
+          profile: snapshot.profile,
+          isAuthenticated: true,
+          privateKey: localPk,
+          needsInitialSync: !syncDone,
+        })
+      }
+    } finally {
+      // isLoading → false here. If a snapshot was found, the splash dismisses instantly.
+      // If not, the auth screen appears. No network call has been awaited yet.
+      set({ isLoading: false })
+    }
+
+    // Background reconciliation: verify the Supabase session and refresh the profile.
+    // Runs after the splash dismisses; never blocks the user-visible UI.
+    void (async () => {
       let userId: string | null = null
       let email: string | null = null
 
+      // Race getSession against a 4 s deadline. When offline, the Supabase client can
+      // attempt a JWT refresh that waits for the OS TCP timeout (30–60 s) before
+      // giving up — the deadline keeps this background task from hanging that long.
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        const { data: { session } } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 4000)
+          ),
+        ])
         if (session?.user) { userId = session.user.id; email = session.user.email! }
-      } catch { /* offline — fall through */ }
+      } catch { /* offline or timed out — fall through to snapshot */ }
 
-      // Offline fallback: our own durable snapshot in Capacitor Preferences.
-      // Supabase's own token is also in Preferences (via the custom storage adapter),
-      // so getSession() above should already cover the online case. The snapshot is
-      // the safest fallback when the token has expired or Supabase is unreachable.
-      const snapshot = await loadAuthSnapshot()
+      // If the network gave us nothing, keep trusting the snapshot for identity.
       if (!userId && snapshot) { userId = snapshot.id; email = snapshot.email }
 
-      if (userId && email) {
-        try { await get().loadProfile(userId) } catch { /* offline */ }
-        let profile = get().profile
-        if (!profile) {
-          try { profile = await getCachedProfile(userId) as Profile | null } catch { /* ignore */ }
-          if (!profile && snapshot?.id === userId) profile = snapshot.profile
-          if (profile) set({ profile })
-        }
-        const username = profile?.username ?? (snapshot?.id === userId ? snapshot.username : null)
-        const authed = !!username
-        const localPk = loadPrivateKey(userId)
-        const syncDone = await hasInitialSyncDone(userId)
-        set({
-          user: { id: userId, email },
-          isAuthenticated: authed,
-          privateKey: authed ? localPk : null,
-          needsInitialSync: authed && !syncDone,
-        })
-        if (authed) await saveAuthSnapshot({ id: userId, email, username, profile: profile ?? snapshot?.profile ?? null })
+      if (!userId || !email) return
+
+      // Refresh the profile from the server — best-effort, no timeout needed because
+      // this path never blocks the user.
+      try { await get().loadProfile(userId) } catch { }
+      let profile = get().profile
+      if (!profile) {
+        try { profile = await getCachedProfile(userId) as Profile | null } catch { }
+        if (!profile && snapshot?.id === userId) profile = snapshot.profile
+        if (profile) set({ profile })
       }
-    } finally {
-      set({ isLoading: false })
-    }
+
+      const username = profile?.username ?? (snapshot?.id === userId ? snapshot.username : null)
+      const authed = !!username
+      const localPk = loadPrivateKey(userId)
+      const syncDone = await hasInitialSyncDone(userId)
+      set({
+        user: { id: userId, email },
+        isAuthenticated: authed,
+        privateKey: authed ? localPk : null,
+        needsInitialSync: authed && !syncDone,
+      })
+      if (authed) await saveAuthSnapshot({ id: userId, email, username, profile: profile ?? snapshot?.profile ?? null })
+    })()
 
     supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {

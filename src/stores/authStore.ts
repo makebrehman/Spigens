@@ -203,6 +203,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
+        // Supabase fires SIGNED_IN on both real sign-ins and silent background
+        // token refreshes (~50-minute intervals). A background refresh always
+        // carries the same user ID that is already in the store.
+        const isNewUser = get().user?.id !== session.user.id
+
         try { await get().loadProfile(session.user.id) } catch { /* offline */ }
         let profile = get().profile
         if (!profile) {
@@ -210,13 +215,28 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           if (profile) set({ profile })
         }
         const localPk = loadPrivateKey(session.user.id)
-        const syncDone = await hasInitialSyncDone(session.user.id)
-        set({
-          user: { id: session.user.id, email: session.user.email! },
-          isAuthenticated: !!profile?.username,
-          privateKey: profile?.username ? localPk : null,
-          needsInitialSync: !!profile?.username && !syncDone,
-        })
+
+        if (isNewUser) {
+          // Genuine sign-in for a new (or previously signed-out) account.
+          const syncDone = await hasInitialSyncDone(session.user.id)
+          set({
+            user: { id: session.user.id, email: session.user.email! },
+            isAuthenticated: !!profile?.username,
+            privateKey: profile?.username ? localPk : null,
+            needsInitialSync: !!profile?.username && !syncDone,
+          })
+        } else {
+          // Background token refresh for the current user — update profile and
+          // key but never re-evaluate needsInitialSync. A transient Preferences
+          // failure in hasInitialSyncDone() would flip it back to true and kick
+          // the user to the sync screen mid-session.
+          set({
+            user: { id: session.user.id, email: session.user.email! },
+            isAuthenticated: !!profile?.username,
+            privateKey: profile?.username ? localPk : null,
+          })
+        }
+
         if (profile?.username) {
           await saveAuthSnapshot({ id: session.user.id, email: session.user.email!, username: profile.username, profile })
         }

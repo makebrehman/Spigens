@@ -46,6 +46,7 @@ import { DataSyncScreen } from '@/components/DataSyncScreen'
 import { LaunchSplash } from '@/components/LaunchSplash'
 import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
+import { Network } from '@capacitor/network'
 
 function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQuery: string, onSelectUser?: (user: any) => void, onAvatarTap?: (user: any) => void }) {
   const [results, setResults] = useState<any[]>([])
@@ -167,8 +168,23 @@ export default function Home() {
   // conversations. Replaces the per-screen INSERT listeners in ChatScreen.
   useAppRealtime()
 
-  // Track online/offline state globally
+  // Track online/offline state globally.
+  // On native Android/iOS we use the Capacitor Network plugin which reads from
+  // the OS ConnectivityManager — reliable even when navigator.onLine lies (e.g.
+  // WiFi connected to a router that has no upstream internet). On web we fall
+  // back to the standard browser events.
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      let listenerHandle: { remove: () => void } | null = null
+      ;(async () => {
+        // Correct the initial value immediately with real OS status.
+        const status = await Network.getStatus()
+        setOnline(status.connected)
+        // Subscribe to future changes.
+        listenerHandle = await Network.addListener('networkStatusChange', (s) => setOnline(s.connected))
+      })()
+      return () => { listenerHandle?.remove() }
+    }
     const goOnline = () => setOnline(true)
     const goOffline = () => setOnline(false)
     window.addEventListener('online', goOnline)

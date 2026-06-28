@@ -257,6 +257,55 @@ export function ChatScreen(props: ChatScreenProps) {
     return () => { active = false; unsubA(); unsubB() }
   }, [otherUserId, conversationId])
 
+  // ── REACTIONS: LOCAL-FIRST READ ───────────────────────────────────────────
+  // Reads from SQLite immediately (works offline) and subscribes to any future
+  // SQLite reaction writes so the UI re-renders automatically — same pattern as
+  // the message local-first effect above. No network gate here.
+  useEffect(() => {
+    if (!conversationId || !currentUserId) return
+    let active = true
+
+    const renderFromCache = async () => {
+      const cached = await getCachedReactions(conversationId)
+      if (!active) return
+      Object.keys(cached).forEach(msgId =>
+        useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
+      )
+    }
+
+    renderFromCache()
+    const unsub = subscribeDb(topics.reactions(conversationId), renderFromCache)
+    return () => { active = false; unsub() }
+  }, [conversationId, currentUserId])
+
+  // ── REACTIONS: ONLINE SUPABASE SYNC ──────────────────────────────────────
+  // When online, fetch the authoritative server state, merge pending offline
+  // toggles, and write to SQLite. The write above emits a dbEvents signal which
+  // the local-first effect picks up automatically — no direct componentState
+  // manipulation here, SQLite is the single source of truth.
+  useEffect(() => {
+    if (!conversationId || !currentUserId || !networkIsOnline) return
+
+    ;(async () => {
+      const { data: rows, error } = await supabase
+        .from('message_reactions')
+        .select('message_id, user_id, emoji')
+        .eq('conversation_id', conversationId)
+      if (error || !rows) return
+
+      const pending = await getPendingReactions()
+      const pendingForConv = pending.filter(r => r.conversationId === conversationId)
+      const merged = new Map(rows.map(r => [`${r.message_id}:${r.user_id}`, r]))
+      for (const p of pendingForConv) {
+        const k = `${p.messageId}:${p.userId}`
+        if (p.action === 'remove') merged.delete(k)
+        else merged.set(k, { message_id: p.messageId, user_id: p.userId, emoji: p.emoji })
+      }
+      // cacheReactions → emitDb(topics.reactions) → subscribeDb listener → renderFromCache
+      await cacheReactions(conversationId, [...merged.values()])
+    })()
+  }, [conversationId, currentUserId, networkIsOnline])
+
   useEffect(() => {
     if (!otherUserId) return
     // Messages are read by the local-first effect above; this effect only pulls
@@ -308,67 +357,13 @@ export function ChatScreen(props: ChatScreenProps) {
       setLoaded(true) // network settled → reveal (the emit above already rendered messages)
     }
 
-    const loadReactions = async () => {
-      // SQLite is the single source of truth — always read from here and push to componentState.
-      const renderFromCache = async () => {
-        const cached = await getCachedReactions(conversationId)
-        Object.keys(cached).forEach(msgId =>
-          useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
-        )
-      }
-
-      // Immediate render from cache — works offline, same timing as messages.
-      await renderFromCache()
-      if (!networkIsOnline) return
-
-      const { data: rows, error } = await supabase
-        .from('message_reactions')
-        .select('message_id, user_id, emoji')
-        .eq('conversation_id', conversationId)
-      if (error || !rows) return
-
-      // Merge server rows with any pending offline reactions before writing to SQLite.
-      // This prevents a stale server response from wiping locally-queued toggles that
-      // haven't been flushed yet — the same race that causes the offline reaction to
-      // disappear after the app is reopened online.
-      const pending = await getPendingReactions()
-      const pendingForConv = pending.filter(r => r.conversationId === conversationId)
-      const merged = new Map(rows.map(r => [`${r.message_id}:${r.user_id}`, r]))
-      for (const p of pendingForConv) {
-        const k = `${p.messageId}:${p.userId}`
-        if (p.action === 'remove') merged.delete(k)
-        else merged.set(k, { message_id: p.messageId, user_id: p.userId, emoji: p.emoji })
-      }
-
-      // Write merged result to SQLite, then re-read it — SQLite drives componentState, not the raw server rows.
-      await cacheReactions(conversationId, [...merged.values()])
-      await renderFromCache()
-    }
-
     loadMessages()
-    loadReactions()
 
     useUIStore.getState().setComponentState('conversationId', conversationId)
     useUIStore.getState().setComponentState('currentUserId', currentUserId)
 
     const channel = supabase
       .channel('messages:' + conversationId)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
-        const row = payload.new as any
-        if (row.sender_id === currentUserId) return
-
-        useUIStore.getState().setComponentState('otherUserTyping', false)
-        if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
-
-        if (row.status === 'sent') {
-          supabase.from('messages').update({ status: 'delivered' }).eq('id', row.id).then()
-        }
-
-        if (messagesRef.current.some(m => m.id === row.id)) return
-        const msg = decryptRow(row, messagesRef.current)
-        msg.status = row.status === 'sent' ? 'delivered' : row.status
-        await upsertMessage(conversationId, msg) // emit → local-first re-read renders it
-      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + conversationId }, async (payload) => {
         const row = payload.new as any
         const existing = messagesRef.current.find(m => m.id === row.id)
@@ -397,27 +392,6 @@ export function ChatScreen(props: ChatScreenProps) {
           if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
           typingExpireRef.current = setTimeout(() => useUIStore.getState().setComponentState('otherUserTyping', false), 3000)
         }
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.new as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
-        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.new as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, [...cur.filter((r: any) => r.user_id !== row.user_id), { user_id: row.user_id, emoji: row.emoji }])
-        upsertCachedReaction(row.message_id, row.user_id, conversationId, row.emoji).catch(() => {})
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: 'conversation_id=eq.' + conversationId }, (payload) => {
-        const row = payload.old as any
-        const key = 'reactions:' + row.message_id
-        const cur = (useUIStore.getState().componentState?.[key] ?? []) as any[]
-        useUIStore.getState().setComponentState(key, cur.filter((r: any) => r.user_id !== row.user_id))
-        deleteCachedReaction(row.message_id, row.user_id).catch(() => {})
       })
       .subscribe()
 
@@ -966,7 +940,7 @@ export function ChatScreen(props: ChatScreenProps) {
       const mine = current.find((r: any) => r.user_id === liveUserId)
       if (mine && mine.emoji === emoji) {
         useUIStore.getState().setComponentState(key, current.filter((r: any) => r.user_id !== liveUserId))
-        deleteCachedReaction(messageId, liveUserId).catch(() => {})
+        if (liveConversationId) deleteCachedReaction(messageId, liveUserId, liveConversationId).catch(() => {})
         if (isOnline) {
           supabase.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', liveUserId).then()
         } else if (liveConversationId) {

@@ -46,3 +46,8 @@ drop trigger if exists trg_push_community_messages on public.community_messages;
 create trigger trg_push_community_messages
   after insert on public.community_messages
   for each row execute function public.notify_push();
+
+drop trigger if exists trg_push_message_reactions on public.message_reactions;
+create trigger trg_push_message_reactions
+  after insert on public.message_reactions
+  for each row execute function public.notify_push();

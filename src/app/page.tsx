@@ -14,6 +14,7 @@ import GenUIPanel from '@/components/GenUIPanel'
 import { GenUIReveal } from '@/components/GenUIReveal'
 import { callGenUIForUpdate } from '@/lib/genuiClient'
 import { useVolumeKeyTrigger } from '@/hooks/useVolumeKeyTrigger'
+import { useAppRealtime } from '@/hooks/useAppRealtime'
 import { loadFontsFromMutation, loadGoogleFont } from '@/lib/fontLoader'
 import type { Contact } from '@/types'
 import { Pin, BellOff, Archive, ArchiveRestore, Trash2 as Trash, ChevronRight, ChevronLeft } from 'lucide-react'
@@ -162,6 +163,10 @@ export default function Home() {
   const { isAuthenticated, isLoading: authLoading, user, profile, privateKey, needsInitialSync, clearNeedsInitialSync } = useAuthStore()
   const { isOnline, setOnline } = useNetworkStore()
 
+  // App-level realtime: one channel handles DM INSERT + reaction changes for all
+  // conversations. Replaces the per-screen INSERT listeners in ChatScreen.
+  useAppRealtime()
+
   // Track online/offline state globally
   useEffect(() => {
     const goOnline = () => setOnline(true)
@@ -173,6 +178,26 @@ export default function Home() {
       window.removeEventListener('offline', goOffline)
     }
   }, [setOnline])
+
+  // Navigate to the correct chat/community when the user taps a push notification.
+  // nativePush.ts dispatches this custom event with { type, conversationId, communityId }.
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ type?: string; conversationId?: string; communityId?: string }>).detail ?? {}
+      const { type, conversationId, communityId } = detail
+      if ((type === 'dm' || type === 'reaction') && conversationId) {
+        const contact = useContactStore.getState().contacts.find(c => c.conversationId === conversationId)
+        if (contact?.rawProfile) setActiveChatUser(contact.rawProfile)
+      } else if (type === 'community' && communityId) {
+        supabase.from('communities').select('*').eq('id', communityId).maybeSingle().then(({ data }) => {
+          if (data) setActiveCommunity(data)
+        })
+      }
+    }
+    window.addEventListener('push-notification-tap', handler)
+    return () => window.removeEventListener('push-notification-tap', handler)
+  }, [isAuthenticated])
 
   const [showGenUI, setShowGenUI] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)

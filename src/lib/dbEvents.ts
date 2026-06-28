@@ -39,4 +39,5 @@ export const topics = {
   contacts: () => 'contacts',
   communities: () => 'communities',
   communityMessages: (communityId: string) => `community_messages:${communityId}`,
+  reactions: (conversationId: string) => `reactions:${conversationId}`,
 }

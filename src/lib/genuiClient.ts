@@ -66,6 +66,7 @@ myUsername      — @username string
 
 — TABS DEFINITION —
 tabs — array of { id, label, icon } — the current tab list. AI can read this to build a fully custom nav bar. default: chats, communities, profile. AI can also hard-code extra tabs when the user asks (e.g. a direct link to a community or a specific chat).
+IMPORTANT: tabs[i].icon is a Lucide icon NAME string (e.g. 'message-square', 'users', 'user'). Render it with React.createElement(Icon, { name: tab.icon, size: 22, color }). There is NO tab.path or tab.svg property.
 
 — ACCOUNT —
 logout()        — sign the user out
@@ -110,12 +111,14 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - bind the input to 'searchQuery' key via useComponentState — this is what drives live search results
    - call closeSearch() to close; do NOT add onBlur→close unless the user asks
    - the component appears/disappears automatically — no need to gate on showSearch
+   - NOTE: homeSearch always renders BELOW homeHeader in the DOM. To place search ABOVE the header, embed the search input directly inside homeHeader instead of using homeSearch.
 
 3. componentSources.bottomNav — the bottom tab bar. Has access to full global scope.
    - use tabs array for the built-in tab list, or hard-code custom tabs
    - call setTab(id) (or onSelectTab(id)) on tab press to change tabs
-   - always keep all default tabs unless the user explicitly asks to remove one
+   - to ADD extra tabs: map tabs then push new items; to REPLACE or REMOVE a tab: hard-code the items array instead of mapping tabs
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
+   - IMPORTANT: render tab icons with React.createElement(Icon, { name: tab.icon, size: 22, color }) — do NOT use svg + tab.path
 
 4. componentSources.contactList — the scrollable chat list. Has access to full global scope.
    - contacts come from useComponentState('feedContacts', contacts || [])

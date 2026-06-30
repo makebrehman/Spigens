@@ -989,6 +989,9 @@ export default function Home() {
         <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeGlobalScope} />
       )}
 
+      {/* GenUI home-top zone — e.g. community icon rows, pinned shortcuts */}
+      <RenderifyHost code={customComponents?.['home-top'] ?? null} storeActions={homeGlobalScope} />
+
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {activeTab === 'chats' && (() => {
@@ -1110,8 +1113,14 @@ export default function Home() {
         )}
       </div>
 
+      {/* GenUI home-bottom zone — e.g. content below the list, above the nav bar */}
+      <RenderifyHost code={customComponents?.['home-bottom'] ?? null} storeActions={homeGlobalScope} />
+
       {/* Bottom navbar — editable via GenUI (componentSources.bottomNav) */}
       <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={homeGlobalScope} />
+
+      {/* GenUI floating zone — fixed overlays e.g. compose FAB, banners */}
+      <RenderifyHost code={customComponents?.['floating'] ?? null} storeActions={homeGlobalScope} />
 
       {/* Portals + GenUI */}
       {longPressedContact !== null && mounted && createPortal(

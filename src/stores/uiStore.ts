@@ -196,7 +196,7 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 9
+const SOURCES_SCHEMA_VERSION = 10
 const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
@@ -223,6 +223,9 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[
   // v9: contactList source now calls openChat(id) and openLongPressSheet(id) directly
   // instead of the old onContactSelect/onTileLongPress callbacks.
   { version: 9, reset: ['contactList'] },
+  // v10: bottomNav now uses React.createElement(Icon, { name: tab.icon, ... }) instead
+  // of raw SVG with tab.path (which was always undefined, making icons invisible).
+  { version: 10, reset: ['bottomNav'] },
 ]
 
 function migrateComponentSources(

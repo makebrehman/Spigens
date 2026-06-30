@@ -155,7 +155,7 @@ examples of what is now possible:
 - "make a message-compose button that opens search when tapped" → add a button to homeHeader that calls openSearch()
 - "add a Settings gear in the navbar" → add a button to bottomNav that calls openSettings()
 - "replace the chats tab with a direct link to the Alpha community" → edit bottomNav, getCommunities(), find Alpha, that tab calls openCommunity(alpha)
-- "show unread badges on nav tabs from live data" → in bottomNav, read feedContacts via useComponentState('feedContacts',[]), sum unreadCount per tab
+- "show unread badges on nav tabs from live data" → in bottomNav, read feedContacts via useComponentState('feedContacts',[]), sum unreadCount per tab into a number, then RENDER it — e.g. next to the tab's icon: totalUnread > 0 ? React.createElement('span', { style: { background:'#EF4444', color:'#fff', borderRadius:9999, fontSize:10, fontWeight:700, minWidth:16, height:16, padding:'0 4px', display:'flex', alignItems:'center', justifyContent:'center', position:'absolute', top:-2, right:-6 } }, totalUnread > 99 ? '99+' : totalUnread) : null — a computed value that is never placed into the returned JSX has no visible effect
 - "make the header show my avatar" → homeHeader: render React.createElement(ProfileImage, { url: myAvatarUrl, initials: myAvatarInitials, size: 34 })
 
 HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
@@ -167,7 +167,15 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
    - TAB INDICATORS: use the tabs array from scope (or the hard-coded items from bottomNav) — do NOT hard-code only 3 tab ids or indicators will break when custom tabs are added
    - DESTRUCTIVE ACTIONS (logout, delete): NEVER call logout() or any destructive action directly on button tap. Always gate behind a confirm state first.
-     example: var conf = useComponentState('logoutConfirm', false); var show = conf[0]; var setShow = conf[1]; // show a dialog when show===true, call logout() only on confirm
+     CRITICAL — call the state hook ONCE, at the top of Component, during render. NEVER call useComponentState (or any hook) from inside an onClick handler — hooks can only run while the component is rendering, not later when a click happens; calling one inside onClick fails silently and the button will appear to do nothing.
+     correct pattern:
+     function Component() {
+       var conf = useComponentState('logoutConfirm', false);   // hook called here, at the top, during render
+       var showConfirm = conf[0]; var setShowConfirm = conf[1];
+       // ...build the button...
+       // onClick: function() { setShowConfirm(true); }   <- inside onClick you only call the SETTER, never the hook itself
+       // ...then render the confirm dialog when showConfirm is true, with a "Log out" button whose onClick calls logout()
+     }
 
 2. componentSources.homeSearch — the search input, mounted only when search is open. Has access to full global scope.
    - bind the input to 'searchQuery' key via useComponentState — this is what drives live search results
@@ -351,16 +359,16 @@ rules for the source:
 2. use React.createElement (NOT JSX)
 3. no imports — React, useState, useEffect, useRef, motion, AnimatePresence, Icon are all in scope
 4. the title comes from the scope variable "title"
-5. wire buttons to scope actions by name: onMenuTap, onSearchTap, onNewChatTap, openSearch, closeSearch, toggleSearch, openLongPressSheet, setSearchBarConfig, setContactListStyle
+5. wire buttons to scope actions by name: onSearchTap, openSearch, closeSearch, toggleSearch, openLongPressSheet — these are the only header-relevant actions that actually exist in scope; do not invent or call any function name not documented in this prompt, since an undefined function will crash the component the moment it's called
 6. you may use the Icon component for icons: React.createElement(Icon, { name: 'bell', size: 22, color: '#fff' })
-7. keep ALL existing functionality unless the user asks to remove it — when adding a button, KEEP the menu, title, search, and pencil, and ADD the new one cleanly in the layout so nothing overlaps
+7. keep ALL existing functionality unless the user asks to remove it — when adding a button, KEEP every element already in the CURRENT SOURCE exactly as it is (logo, title, search, and any others already there), and ADD the new one cleanly in the layout so nothing overlaps
 8. position elements with proper fl/flexbox spacing so buttons never overlap
 9. PERSISTENT STATE — for any state that must survive screen changes or re-renders (toggles, counters, mode switches), use useComponentState instead of React.useState. syntax is identical: const [isGlobe, setIsGlobe] = useComponentState('globeToggle', false) — the first argument is a unique string key for that piece of state. use React.useState only for truly ephemeral state that is fine to reset on every render.
 
 CRITICAL: when the user says "add a button next to search", start from the current source, keep every existing button exactly as it is (same icon, same action, same position), and insert the new one cleanly into the layout. do NOT change the existing buttons' icons or actions unless asked. do NOT overlap elements.
 
 example — adding a bell button:
-componentSources: { "topAppBar": "function Component() { return React.createElement('div', { style: { display:'flex', alignItems:'center', padding:'12px 16px', background:'#141414', gap:'8px' } }, React.createElement('button', { onClick: onMenuTap, style:{...} }, '☰'), React.createElement('span', { style:{ flex:1, fontSize:'20px', fontWeight:'700', color:'#fff' } }, title), React.createElement('button', { onClick: () => alert('bell'), style:{...} }, React.createElement(Icon,{name:'bell',size:22})), React.createElement('button', { onClick: onSearchTap, style:{...} }, React.createElement(Icon,{name:'search',size:22})), React.createElement('button', { onClick: onNewChatTap, style:{...} }, React.createElement(Icon,{name:'edit',size:22}))) }" }
+componentSources: { "homeHeader": "function Component() { var title = ...; return React.createElement('div', { style: { display:'flex', alignItems:'center', padding:'0 16px', minHeight:60, background:'#141414', gap:8 } }, React.createElement('span', { style:{ flex:1, fontSize:20, fontWeight:700, color:'#fff' } }, title), React.createElement('button', { onClick: function() { alert('bell'); }, style:{...} }, React.createElement(Icon,{name:'bell',size:22})), React.createElement('button', { onClick: onSearchTap, style:{...} }, React.createElement(Icon,{name:'search',size:22}))) }" }
 
 IMPORTANT: prefer editing componentSources.homeHeader for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — edit the source instead.
 
@@ -378,7 +386,7 @@ rules for the source:
 
 examples:
 - "make the search bar stay open when i tap other buttons" → the default already does this (no onBlur close). if a previous version added onBlur, remove it from the input element.
-- "make the search bar dark blue with a glow" → componentSources: { "searchBar": "function Component() { ... background:'#0a0a2e', boxShadow:'0 0 20px rgba(37,99,235,0.4)' ... }" }
+- "make the search bar dark blue with a glow" → componentSources: { "homeSearch": "function Component() { ... background:'#0a0a2e', boxShadow:'0 0 20px rgba(37,99,235,0.4)' ... }" }
 - "add a slide-down animation to the search bar" → wrap the outer div in motion.div with initial:{ opacity:0, y:-8 }, animate:{ opacity:1, y:0 }, transition:{ duration:0.2 }
 - "round the search bar corners more" → change borderRadius on the inner div to '20px' or '9999px'
 - "make the cancel button a red X icon instead of text" → replace the cancel button with an Icon name='x' in color '#EF4444'
@@ -484,6 +492,8 @@ how to do it right:
 4. apply the change to just those lines
 5. return the full result
 
+if the user is re-asking for something that should already exist (e.g. they previously asked for a button or behavior and it isn't working), do NOT delete it and do NOT give up on it. find the specific broken part in the CURRENT SOURCE and repair it in place — the fix is almost always small (a misplaced hook call, a missing handler, a value that's computed but never rendered). removing a feature because it currently doesn't work is never the right response.
+
 only do a complete from-scratch rewrite when the user explicitly asks for it (e.g. "completely redesign this", "start over", "totally different look"). restyling, recoloring, resizing, adding a button, changing a shape, swapping a popup for a sheet, reordering elements — all of these are targeted edits to the existing code, never a full regeneration.
 `
 
@@ -521,7 +531,7 @@ pick fonts that genuinely match the user's request. some good ones by style:
 apply fontFamily inside ANY style slot OR inside custom component inline styles.
 
 examples:
-- "make the title fancy and elegant" → topAppBarStyle: { title: { fontFamily: "Playfair Display, serif" } }
+- "make the title fancy and elegant" → edit componentSources.homeHeader and set fontFamily: "Playfair Display, serif" on the title element's style (topAppBarStyle is not used anymore — see EDITING THE APP BAR above)
 - "make contact names handwritten" → edit componentSources.contactList and set fontFamily: "Caveat, cursive" on the contact name span
 - "use a bold condensed font for the headline" → use "Anton" or "Archivo Black" in the relevant slot
 - mix fonts freely: a "Playfair Display" headline with "Manrope" body text is elegant.

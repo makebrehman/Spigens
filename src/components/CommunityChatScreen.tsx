@@ -99,8 +99,10 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     if (!url) return
     const preview = await fetchServerLinkPreview(url)
     if (!preview) return
-    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
-    const existing = current.find((m: any) => m.id === messageId)
+    // Read from SQLite (not componentState) to avoid a race with the optimistic write.
+    const { getCachedCommunityMessages } = await import('@/lib/offlineCache')
+    const allMsgs = await getCachedCommunityMessages(communityId)
+    const existing = allMsgs?.find((m: any) => m.id === messageId)
     if (!existing) return
     const metadata = { ...(existing.metadata ?? {}), linkPreview: preview }
     await upsertCommunityMessage(communityId, { ...existing, metadata })

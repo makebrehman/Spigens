@@ -7,8 +7,9 @@ import { ProfileImage } from './ProfileImage'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
 import { NativeMediaBubble } from './NativeMediaBubble'
-import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview } from '@/lib/linkPreview'
+import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview, type LinkPreviewData } from '@/lib/linkPreview'
 import { LinkPreviewCard } from './LinkPreviewCard'
+import { queuePreviewFetch } from '@/lib/previewQueue'
 
 export interface CommunityMessageBubbleProps {
   id: string
@@ -60,9 +61,21 @@ export function CommunityMessageBubble(props: CommunityMessageBubbleProps) {
   const isMedia = !isDeleted && !!resolvedType && resolvedType !== 'text' && resolvedType !== 'system'
 
   const previewUrl = !isDeleted && !isMedia ? firstPreviewableUrl(resolvedContent) : null
-  const linkPreview = previewUrl
+
+  const storedPreview = previewUrl
     ? (normalizeLinkPreview(resolvedMeta?.linkPreview, previewUrl) ?? buildFallbackLinkPreview(previewUrl))
     : null
+
+  const [enrichedPreview, setEnrichedPreview] = useState<LinkPreviewData | null>(null)
+
+  useEffect(() => {
+    if (!previewUrl || storedPreview?.status === 'ready') return
+    const cancel = queuePreviewFetch(previewUrl, setEnrichedPreview)
+    return cancel
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewUrl])
+
+  const linkPreview = enrichedPreview ?? storedPreview
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)

@@ -6,6 +6,7 @@ import { dbRun, dbQuery, clearDbForUser, isUsingFallback } from '@/lib/localDb'
 import { emitDb, topics } from '@/lib/dbEvents'
 import { clearMediaCache } from '@/lib/mediaCache'
 import type { LocalMessage } from '@/lib/messageShape'
+import type { LinkPreviewData } from '@/lib/linkPreview'
 
 // ── localStorage fallback helpers (web/dev only) ─────────────────────────────
 
@@ -535,4 +536,100 @@ export async function clearUserCache(userId: string): Promise<void> {
     toRemove.forEach(k => localStorage.removeItem(k))
     try { sessionStorage.removeItem(`spigens_synced_${userId}`) } catch { /* ignore */ }
   } catch { /* ignore */ }
+}
+
+// ── Link Preview Cache (URL-keyed, survives sessions) ─────────────────────────
+// Stores open-graph preview data keyed by the normalized URL. Completely separate
+// from message metadata so the same link previewed in two different conversations
+// only fetches once. Status lifecycle: 'ready' (rich data, long TTL) → re-fetched
+// after expiry. 'failed' (fetch error, short back-off TTL) → retried after expiry.
+
+const LP_READY_TTL_MS  = 7 * 24 * 60 * 60 * 1000 // 7 days
+const LP_FAILED_TTL_MS =      60 * 60 * 1000       // 1 hour back-off before retry
+
+export async function getCachedPreviewByUrl(url: string): Promise<LinkPreviewData | null> {
+  if (isUsingFallback()) {
+    const entry = lsLoad<{ data: LinkPreviewData; expiresAt: string }>(`lp_${url}`)
+    if (!entry) return null
+    if (new Date(entry.expiresAt) <= new Date()) return null
+    return entry.data
+  }
+  const rows = await dbQuery<any>(
+    'SELECT * FROM link_preview_cache WHERE url = ? AND expires_at > ? LIMIT 1',
+    [url, new Date().toISOString()]
+  )
+  const row = rows[0]
+  if (!row) return null
+  return {
+    url: row.url,
+    normalizedUrl: row.url,
+    hostname: row.hostname,
+    title: row.title ?? null,
+    description: row.description ?? null,
+    image: row.image ?? null,
+    siteName: row.site_name ?? null,
+    fetchedAt: row.fetched_at,
+    status: row.status as 'ready' | 'failed' | 'fallback',
+  }
+}
+
+export async function setCachedPreviewByUrl(
+  url: string,
+  preview: LinkPreviewData,
+  ttlMs = LP_READY_TTL_MS,
+): Promise<void> {
+  const fetchedAt = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString()
+  if (isUsingFallback()) {
+    lsSave(`lp_${url}`, { data: preview, expiresAt })
+    return
+  }
+  await dbRun(
+    `INSERT OR REPLACE INTO link_preview_cache
+       (url, title, description, image, site_name, hostname, status, fetched_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      url,
+      preview.title ?? null,
+      preview.description ?? null,
+      preview.image ?? null,
+      preview.siteName ?? null,
+      preview.hostname,
+      preview.status,
+      fetchedAt,
+      expiresAt,
+    ]
+  )
+}
+
+export async function markPreviewPending(url: string): Promise<void> {
+  let hostname = url
+  try { hostname = new URL(url).hostname.replace(/^www\./, '') } catch { /* ok */ }
+  const now = new Date().toISOString()
+  const expiresAt = new Date(Date.now() + LP_FAILED_TTL_MS).toISOString()
+  if (isUsingFallback()) {
+    const entry: { data: LinkPreviewData; expiresAt: string } = {
+      data: { url, normalizedUrl: url, hostname, title: null, description: null, image: null, siteName: null, fetchedAt: now, status: 'failed' },
+      expiresAt,
+    }
+    lsSave(`lp_${url}`, entry)
+    return
+  }
+  await dbRun(
+    `INSERT OR REPLACE INTO link_preview_cache
+       (url, hostname, status, fetched_at, expires_at)
+     VALUES (?, ?, 'failed', ?, ?)`,
+    [url, hostname, now, expiresAt]
+  )
+}
+
+// Returns normalized URLs whose last fetch FAILED and whose back-off window has
+// now expired — i.e. they are eligible for a retry attempt.
+export async function getPendingPreviewUrls(): Promise<string[]> {
+  if (isUsingFallback()) return []
+  const rows = await dbQuery<{ url: string }>(
+    `SELECT url FROM link_preview_cache WHERE status = 'failed' AND expires_at <= ?`,
+    [new Date().toISOString()]
+  )
+  return rows.map(r => r.url)
 }

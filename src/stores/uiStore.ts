@@ -196,7 +196,7 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 10
+const SOURCES_SCHEMA_VERSION = 11
 const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
@@ -226,6 +226,9 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[
   // v10: bottomNav now uses React.createElement(Icon, { name: tab.icon, ... }) instead
   // of raw SVG with tab.path (which was always undefined, making icons invisible).
   { version: 10, reset: ['bottomNav'] },
+  // v11: homeHeader title now derives from the tabs array dynamically, so custom tab ids
+  // (e.g. 'discover', 'saved') show their real label instead of falling back to 'Profile'.
+  { version: 11, reset: ['homeHeader'] },
 ]
 
 function migrateComponentSources(

@@ -2,7 +2,7 @@ import React from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { capacitorStorage } from '@/lib/persistStorage'
-import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources } from '@/types'
+import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources, TabDef } from '@/types'
 import { DEFAULT_HOMEHEADER_SOURCE, DEFAULT_HOMESEARCH_SOURCE, DEFAULT_BOTTOMNAV_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE, DEFAULT_MESSAGESTATUS_SOURCE, DEFAULT_TYPINGINDICATOR_SOURCE, DEFAULT_REPLYPREVIEW_SOURCE, DEFAULT_REPLYQUOTE_SOURCE, DEFAULT_MESSAGEREACTIONS_SOURCE, DEFAULT_REACTIONPICKER_SOURCE, DEFAULT_PROFILESCREEN_SOURCE, DEFAULT_CONTACTPROFILESCREEN_SOURCE, DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, DEFAULT_COMMUNITYLISTSCREEN_SOURCE, DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, DEFAULT_COMMUNITYCHATSCREEN_SOURCE, DEFAULT_COMMUNITYPROFILESCREEN_SOURCE, DEFAULT_SETTINGSSCREEN_SOURCE, DEFAULT_CHATRECORDINGOVERLAY_SOURCE, DEFAULT_CHATFORWARDPICKER_SOURCE, DEFAULT_CHATCONTACTPICKER_SOURCE, DEFAULT_CHATENCRYPTIONTOAST_SOURCE, DEFAULT_CHATATTACHTOAST_SOURCE } from '@/lib/defaultComponents'
 
 // local on-device cache for the GenUI design state (component sources, versions, styles).
@@ -10,6 +10,14 @@ import { DEFAULT_HOMEHEADER_SOURCE, DEFAULT_HOMESEARCH_SOURCE, DEFAULT_BOTTOMNAV
 // falls back to localStorage in the browser, so the customized UI loads instantly on open
 // and works fully offline. The Supabase server sync runs on top of this as source of truth.
 export const PERSISTENCE_ENABLED = true
+
+// the canonical default tab bar — the single source of truth shared by bottomNav,
+// homeHeader, and any other component that reads "tabs" from scope.
+export const DEFAULT_TABS: TabDef[] = [
+  { id: 'chats', label: 'Chats', icon: 'message-square' },
+  { id: 'communities', label: 'Communities', icon: 'users' },
+  { id: 'profile', label: 'Profile', icon: 'user' },
+]
 
 // noop storage: reads return null (defaults always used), writes are silent no-ops
 // used when PERSISTENCE_ENABLED is false so there is no console spam
@@ -63,6 +71,7 @@ type Snapshot = {
   sourcesVersion?: number
   /** Component-source keys the user (or AI) has edited; migrations skip these. */
   editedSources?: string[]
+  tabs: TabDef[]
 }
 
 // a named, restorable point in the customization timeline
@@ -92,6 +101,7 @@ function captureSnapshot(state: any): Snapshot {
     componentSources: state.componentSources,
     sourcesVersion: SOURCES_SCHEMA_VERSION,
     editedSources: state.editedSources ?? [],
+    tabs: state.tabs ?? DEFAULT_TABS,
   }
 }
 
@@ -115,6 +125,7 @@ interface UIStoreState extends UIOverrideState {
   setInteractions: (config: Partial<InteractionConfig>) => void
   setCustomComponent: (zone: string, code: string | Record<string, string | null> | null) => void
   clearCustomComponent: (zone: string) => void
+  setTabs: (tabs: TabDef[]) => void
   setComponentSource: (name: string, source: string) => void
   resetComponentSource: (name: string) => void
   resetAll: () => void
@@ -281,6 +292,7 @@ function normalizeSnapshot(snapshot: any): any {
     componentSources: migrateComponentSources(sources, fromV, edited),
     sourcesVersion: SOURCES_SCHEMA_VERSION,
     editedSources: edited,
+    tabs: Array.isArray(snapshot.tabs) && snapshot.tabs.length > 0 ? snapshot.tabs : DEFAULT_TABS,
   }
 }
 
@@ -317,6 +329,7 @@ const defaultState = {
   activeVersionId: null as string | null,
   ownerUserId: null as string | null,
   editedSources: [] as string[],
+  tabs: DEFAULT_TABS,
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -467,6 +480,11 @@ export const useUIStore = create<UIStoreState>()(
           return { customComponents: next }
         }),
 
+      // the canonical tab list — bottomNav, homeHeader, and anything else that reads
+      // "tabs" from scope all see this same value, so changing it here is the only way
+      // to make a permanent change that every consumer stays in sync with.
+      setTabs: (tabs) => set(() => ({ tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS })),
+
       setComponentSource: (name, source) =>
         set((state) => ({
           componentSources: { ...state.componentSources, [name]: source },
@@ -536,6 +554,7 @@ export const useUIStore = create<UIStoreState>()(
           customComponents: state.customComponents,
           componentSources: state.componentSources,
           sourcesVersion: SOURCES_SCHEMA_VERSION,
+          tabs: state.tabs ?? DEFAULT_TABS,
         }
         // cap at 30, drop oldest
         const newHistory = [...state.history, snapshot].slice(-30)
@@ -577,6 +596,7 @@ export const useUIStore = create<UIStoreState>()(
         history: [],
         componentState: {},
         activeVersionId: null,
+        tabs: DEFAULT_TABS,
       })),
 
       // helper for UI to know if undo is available
@@ -663,6 +683,7 @@ export const useUIStore = create<UIStoreState>()(
         versions: state.versions,
         activeVersionId: state.activeVersionId,
         ownerUserId: state.ownerUserId,
+        tabs: state.tabs,
       }),
     }
   )

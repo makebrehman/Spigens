@@ -654,7 +654,7 @@ export default function Home() {
 
       // record a named version (AI-titled) and sync state + version to the server
       const uid = useAuthStore.getState().user?.id
-      const version = uiStore.addVersion((mutation as any).versionName || message)
+      const version = uiStore.addVersion((mutation as any).versionName || message, message)
       if (uid) {
         saveVersionToServer(uid, version)
         saveGenUIToServer(uid)

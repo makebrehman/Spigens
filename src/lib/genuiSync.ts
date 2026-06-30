@@ -19,7 +19,7 @@ export async function loadGenUIFromServer(userId: string): Promise<boolean> {
         supabase.from('genui_states').select('snapshot').eq('user_id', userId).maybeSingle(),
         supabase
           .from('genui_versions')
-          .select('id, name, snapshot, created_at')
+          .select('id, name, prompt, snapshot, created_at')
           .eq('user_id', userId)
           .order('created_at', { ascending: true }),
       ]),
@@ -31,6 +31,7 @@ export async function loadGenUIFromServer(userId: string): Promise<boolean> {
     const versions: GenUIVersion[] = (versionsRes.data ?? []).map((r: any) => ({
       id: r.id,
       name: r.name,
+      prompt: r.prompt ?? undefined,
       createdAt: r.created_at,
       snapshot: r.snapshot,
     }))
@@ -71,6 +72,7 @@ export async function saveVersionToServer(userId: string, version: GenUIVersion)
       id: version.id,
       user_id: userId,
       name: version.name,
+      prompt: version.prompt ?? null,
       snapshot: version.snapshot,
       created_at: version.createdAt,
     })

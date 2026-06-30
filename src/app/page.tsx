@@ -31,7 +31,7 @@ import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
 import { cacheContacts, getCachedContacts, getCachedMessagesPage, getCachedCommunityList, getCachedReactions } from '@/lib/offlineCache'
 import { dmMirror, reactionMirror } from '@/lib/messageMirror'
-import { warmMediaMirror } from '@/lib/mediaCache'
+import { warmMediaMirror, withMirroredAvatar } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb, isNativeSqliteActive, isUsingFallback, onInitProgress, getInitDiagnostics } from '@/lib/localDb'
 import { warmIconsFromSources } from '@/lib/iconLoader'
@@ -548,6 +548,7 @@ export default function Home() {
     // determine current screen — activeChatUser is the real DM path; selectedContact
     // is the legacy mock-contact path. both mean "user is inside a chat right now".
     const screen = (selectedContact || activeChatUser) ? 'chat' : 'home'
+    const currentActiveTab = (useUIStore.getState().componentState as any)?.['activeTab'] ?? 'chats'
 
     try {
       const mutation = await callGenUIForUpdate({
@@ -555,6 +556,7 @@ export default function Home() {
         screen,
         storeState,
         contactNames,
+        activeTab: currentActiveTab,
       })
 
       // snapshot current state before applying the change (for undo)
@@ -840,6 +842,15 @@ export default function Home() {
       // data access
       getContacts: () => useContactStore.getState().contacts,
       getCommunities: () => (useUIStore.getState().componentState as any)?.communityList ?? [],
+      // on-demand loaders — call in useEffect to ensure data is available even if the user
+      // hasn't visited the relevant tab yet
+      loadCommunities: async () => {
+        if (!user?.id) return
+        const cached = await getCachedCommunityList(user.id)
+        if (cached && cached.length > 0) {
+          useUIStore.getState().setComponentState('communityList', cached.map(withMirroredAvatar))
+        }
+      },
 
       // signed-in user identity
       myUserId: user?.id ?? null,

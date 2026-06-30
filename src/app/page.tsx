@@ -542,6 +542,7 @@ export default function Home() {
       layoutConfig: useUIStore.getState().layoutConfig,
       behaviorConfig: useUIStore.getState().behaviorConfig,
       componentSources: useUIStore.getState().componentSources,
+      customComponents: useUIStore.getState().customComponents,
     } as any
 
     // determine current screen — activeChatUser is the real DM path; selectedContact

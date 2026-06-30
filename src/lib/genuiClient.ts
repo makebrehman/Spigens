@@ -23,6 +23,20 @@ function buildSystemPrompt(
       return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${source}`
     }).join('\n\n')
 
+  const ZONE_DESCRIPTIONS: Record<string, string> = {
+    'home-top': 'Custom zone rendered above the contact list, below the header. Edit via customComponents["home-top"].',
+    'home-bottom': 'Custom zone rendered below the contact list. Edit via customComponents["home-bottom"].',
+    'floating': 'Custom fixed overlay on the home screen. Edit via customComponents["floating"].',
+    'chat-header': 'Custom zone below the chat screen header. Edit via customComponents["chat-header"].',
+  }
+
+  const customSourcesText = Object.entries(storeState.customComponents || {})
+    .filter(([, code]) => typeof code === 'string' && (code as string).trim().length > 0)
+    .map(([zone, code]) => {
+      const description = ZONE_DESCRIPTIONS[zone] || `Custom zone: ${zone}`
+      return `COMPONENT: customComponents["${zone}"]\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${code}`
+    }).join('\n\n')
+
   const homeSlots = `
 HOME SCREEN — GLOBAL ACTION VOCABULARY:
 
@@ -419,7 +433,7 @@ contact names (use exact spelling): ${contactNames.join(', ')}
 current store state: ${JSON.stringify(storeState, null, 2)}
 
 CURRENT EDITABLE COMPONENT SOURCES:
-${sourcesText}
+${sourcesText}${customSourcesText ? '\n\n' + customSourcesText : ''}
 
 ${screen === 'home' ? homeSlots : chatSlots}
 

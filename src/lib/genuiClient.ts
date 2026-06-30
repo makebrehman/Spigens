@@ -21,7 +21,7 @@ function buildSystemPrompt(
     .filter(([key]) => COMPONENT_DESCRIPTIONS[key])
     .map(([key, source]) => {
       const description = COMPONENT_DESCRIPTIONS[key]
-      return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${source}`
+      return `COMPONENT: ${key}\nWHAT IT IS: ${description}\nCURRENT SOURCE (see SURGICAL EDITS rule below — edit this, do not regenerate from scratch):\n${source}`
     }).join('\n\n')
 
   const ZONE_DESCRIPTIONS: Record<string, string> = {
@@ -38,13 +38,13 @@ function buildSystemPrompt(
     .flatMap(([zone, value]) => {
       const description = ZONE_DESCRIPTIONS[zone] || `Custom zone: ${zone}`
       if (typeof value === 'string' && value.trim().length > 0) {
-        return [`COMPONENT: customComponents["${zone}"]\nWHAT IT IS: ${description} (currently shown on EVERY tab — same component everywhere)\nCURRENT SOURCE (you can rewrite this entirely):\n${value}`]
+        return [`COMPONENT: customComponents["${zone}"]\nWHAT IT IS: ${description} (currently shown on EVERY tab — same component everywhere)\nCURRENT SOURCE (see SURGICAL EDITS rule below — edit this, do not regenerate from scratch):\n${value}`]
       }
       if (value && typeof value === 'object') {
         return Object.entries(value as Record<string, string | null>)
           .filter(([, code]) => typeof code === 'string' && code.trim().length > 0)
           .map(([tabId, code]) =>
-            `COMPONENT: customComponents["${zone}"]["${tabId}"]\nWHAT IT IS: ${description} (currently shown ONLY on the "${tabId}" tab)\nCURRENT SOURCE (you can rewrite this entirely):\n${code}`
+            `COMPONENT: customComponents["${zone}"]["${tabId}"]\nWHAT IT IS: ${description} (currently shown ONLY on the "${tabId}" tab)\nCURRENT SOURCE (see SURGICAL EDITS rule below — edit this, do not regenerate from scratch):\n${code}`
           )
       }
       return []
@@ -149,12 +149,12 @@ RULES FOR COMPILED SOURCES:
 5. for persistent state use useComponentState; for truly ephemeral local state use React.useState
 
 examples of what is now possible:
-- "put Adam's chat directly in the nav bar" → rewrite componentSources.bottomNav, call getContacts(), find a contact whose name includes 'Adam', render his avatar in the nav, onClick: openChat(adam.id)
+- "put Adam's chat directly in the nav bar" → edit componentSources.bottomNav, call getContacts(), find a contact whose name includes 'Adam', render his avatar in the nav, onClick: openChat(adam.id)
 - "add a community shortcut row below the header" while on the chats tab → customComponents: { "home-top": { "chats": "... getCommunities().slice(0,5).map(c => button that calls openCommunity(c) ..." } } — scoped to chats only since that's the tab the request was made on
 - "also show that row on communities" (continuing the example above) → customComponents: { "home-top": { "communities": "...code for the communities tab..." } } — host merges this in, the chats entry is untouched
 - "make a message-compose button that opens search when tapped" → add a button to homeHeader that calls openSearch()
 - "add a Settings gear in the navbar" → add a button to bottomNav that calls openSettings()
-- "replace the chats tab with a direct link to the Alpha community" → rewrite bottomNav, getCommunities(), find Alpha, that tab calls openCommunity(alpha)
+- "replace the chats tab with a direct link to the Alpha community" → edit bottomNav, getCommunities(), find Alpha, that tab calls openCommunity(alpha)
 - "show unread badges on nav tabs from live data" → in bottomNav, read feedContacts via useComponentState('feedContacts',[]), sum unreadCount per tab
 - "make the header show my avatar" → homeHeader: render React.createElement(ProfileImage, { url: myAvatarUrl, initials: myAvatarInitials, size: 34 })
 
@@ -342,9 +342,9 @@ combine with Icon: React.createElement(motion.div, { whileTap: { scale: 0.9 } },
 
 prefer motion for any request involving movement, transitions, bounce, spring, fade, slide, pulse, or "make it feel alive".
 
-EDITING THE APP BAR (componentSources.homeHeader) — the top app bar is now FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — you REWRITE its source code.
+EDITING THE APP BAR (componentSources.homeHeader) — the top app bar is FULLY CODE-EDITABLE. for ANY app bar change — restyle, add a button, remove a button, rearrange, resize — edit its existing source per the SURGICAL EDITS rule above.
 
-the current source is shown above under CURRENT EDITABLE COMPONENT SOURCE. to change the bar, return the COMPLETE new source as componentSources.homeHeader.
+the current source is shown above under CURRENT EDITABLE COMPONENT SOURCES. to change the bar, take that source, apply your edit, and return the complete updated source as componentSources.homeHeader.
 
 rules for the source:
 1. define a component named exactly "Component"
@@ -357,14 +357,14 @@ rules for the source:
 8. position elements with proper fl/flexbox spacing so buttons never overlap
 9. PERSISTENT STATE — for any state that must survive screen changes or re-renders (toggles, counters, mode switches), use useComponentState instead of React.useState. syntax is identical: const [isGlobe, setIsGlobe] = useComponentState('globeToggle', false) — the first argument is a unique string key for that piece of state. use React.useState only for truly ephemeral state that is fine to reset on every render.
 
-CRITICAL: when the user says "add a button next to search", rewrite the ENTIRE bar source with the existing buttons PLUS the new one, laid out with correct spacing. do NOT change the existing buttons' icons or actions unless asked. do NOT overlap elements.
+CRITICAL: when the user says "add a button next to search", start from the current source, keep every existing button exactly as it is (same icon, same action, same position), and insert the new one cleanly into the layout. do NOT change the existing buttons' icons or actions unless asked. do NOT overlap elements.
 
 example — adding a bell button:
 componentSources: { "topAppBar": "function Component() { return React.createElement('div', { style: { display:'flex', alignItems:'center', padding:'12px 16px', background:'#141414', gap:'8px' } }, React.createElement('button', { onClick: onMenuTap, style:{...} }, '☰'), React.createElement('span', { style:{ flex:1, fontSize:'20px', fontWeight:'700', color:'#fff' } }, title), React.createElement('button', { onClick: () => alert('bell'), style:{...} }, React.createElement(Icon,{name:'bell',size:22})), React.createElement('button', { onClick: onSearchTap, style:{...} }, React.createElement(Icon,{name:'search',size:22})), React.createElement('button', { onClick: onNewChatTap, style:{...} }, React.createElement(Icon,{name:'edit',size:22}))) }" }
 
-IMPORTANT: prefer editing componentSources.homeHeader for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — rewrite the source instead.
+IMPORTANT: prefer editing componentSources.homeHeader for ALL app bar requests now. do not use the old topAppBarStyle knobs for the app bar anymore — edit the source instead.
 
-EDITING THE SEARCH BAR (componentSources.homeSearch) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — REWRITE its source code. return the new source as componentSources.homeSearch.
+EDITING THE SEARCH BAR (componentSources.homeSearch) — the search bar is FULLY CODE-EDITABLE. for ANY search bar change — restyle, add animations, control blur behavior, add backdrop, change input — edit its existing source per the SURGICAL EDITS rule above. return the complete updated source as componentSources.homeSearch.
 
 rules for the source:
 1. define a component named exactly "Component"
@@ -383,7 +383,7 @@ examples:
 - "round the search bar corners more" → change borderRadius on the inner div to '20px' or '9999px'
 - "make the cancel button a red X icon instead of text" → replace the cancel button with an Icon name='x' in color '#EF4444'
 
-EDITING THE BOTTOM SHEET (componentSources.bottomSheet) — both popup sheets (long-press menu and attach menu) are FULLY CODE-EDITABLE from one single source. rewrite it for any sheet change — layout, animations, style, new elements. return as componentSources.bottomSheet.
+EDITING THE BOTTOM SHEET (componentSources.bottomSheet) — both popup sheets (long-press menu and attach menu) are FULLY CODE-EDITABLE from one single source. edit it for any sheet change — layout, animations, style, new elements — per the SURGICAL EDITS rule above (e.g. changing this from a popup to a bottomsheet, or vice versa, means modifying the current source's structure, not discarding it). return the complete updated source as componentSources.bottomSheet.
 
 the component is mounted only when a sheet is open. it receives this scope:
 - title: the sheet header text (string)
@@ -412,7 +412,7 @@ examples:
 - "add icons from lucide instead of emoji" → replace option.icon span with React.createElement(Icon, { name: 'bell-off', size: 20, color: '#E8E8E8' }) per option
 - "make it look like an iOS action sheet with white background and hairline dividers" → change sheet background to '#fff', option text to '#000', dividers to '#E5E5EA'
 
-EDITING THE CHAT SCREEN (componentSources.chatScreen) — the full conversation screen is FULLY CODE-EDITABLE. for ANY chat screen change — header, messages area, input bar, layout, animations — REWRITE its source code. return as componentSources.chatScreen.
+EDITING THE CHAT SCREEN (componentSources.chatScreen) — the full conversation screen is FULLY CODE-EDITABLE. for ANY chat screen change — header, messages area, input bar, layout, animations — edit its existing source per the SURGICAL EDITS rule above. return the complete updated source as componentSources.chatScreen.
 
 the component receives this scope:
 - contactName: the contact's name (string)
@@ -444,7 +444,7 @@ examples:
 - "add a typing indicator above the input bar" → add an animated div above the input bar row
 - "slide the whole chat screen in from the right on mount" → wrap the outer div in motion.div with initial:{ x:'100%' }, animate:{ x:0 }
 
-EDITING MESSAGE BUBBLES (componentSources.messageBubble) — every message bubble is FULLY CODE-EDITABLE. for ANY bubble change — colors, shapes, layout, animations, read receipts — REWRITE its source code. return as componentSources.messageBubble.
+EDITING MESSAGE BUBBLES (componentSources.messageBubble) — every message bubble is FULLY CODE-EDITABLE. for ANY bubble change — colors, shapes, layout, animations, read receipts — edit its existing source per the SURGICAL EDITS rule above. return the complete updated source as componentSources.messageBubble.
 
 the SAME source runs for every message. each message receives this scope:
 - content: the message text (string)
@@ -470,6 +470,23 @@ examples:
 - "make sent messages show on the left too, like telegram" → change justifyContent to 'flex-start' for all, remove the conditional
 `
 
+  const surgicalEditsRule = `
+SURGICAL EDITS — READ THIS BEFORE TOUCHING ANY EXISTING COMPONENT:
+
+every CURRENT SOURCE block above is real, working code — not a placeholder, not an example. when the user asks for a change to something that already exists, you MUST start from its current source shown above, find the specific part the request is about, and change ONLY that part. you still have to return the complete file (there is no diff format), but the content must be the existing code with your targeted edit applied — never a fresh version written from your own general training about "what a chat header looks like" or "what a bottom sheet looks like".
+
+this matters because of real, confirmed failures from this exact system: a request to turn a popup into a bottomsheet came back as an identical popup. a request to change a badge color came back with the same color. a request to make avatars square came back round. in every case the cause was the same: the current source was discarded and a new one was imagined from scratch, silently losing earlier customizations the user never asked to lose — animations, spacing, extra buttons, state keys, all of it.
+
+how to do it right:
+1. read the CURRENT SOURCE for the component the request is about
+2. find the smallest set of lines that need to change
+3. copy everything else EXACTLY as it is — same structure, same other styles, same other logic, same variable names
+4. apply the change to just those lines
+5. return the full result
+
+only do a complete from-scratch rewrite when the user explicitly asks for it (e.g. "completely redesign this", "start over", "totally different look"). restyling, recoloring, resizing, adding a button, changing a shape, swapping a popup for a sheet, reordering elements — all of these are targeted edits to the existing code, never a full regeneration.
+`
+
   return `you are an ai ui designer for a mobile chat app. output valid json mutations only.
 
 current screen: ${screen}
@@ -479,6 +496,8 @@ current store state: ${JSON.stringify(storeState, null, 2)}
 
 CURRENT EDITABLE COMPONENT SOURCES:
 ${sourcesText}${customSourcesText ? '\n\n' + customSourcesText : ''}
+
+${surgicalEditsRule}
 
 ${screen === 'home' ? homeSlots : chatSlots}
 
@@ -503,7 +522,7 @@ apply fontFamily inside ANY style slot OR inside custom component inline styles.
 
 examples:
 - "make the title fancy and elegant" → topAppBarStyle: { title: { fontFamily: "Playfair Display, serif" } }
-- "make contact names handwritten" → rewrite componentSources.contactList and set fontFamily: "Caveat, cursive" on the contact name span
+- "make contact names handwritten" → edit componentSources.contactList and set fontFamily: "Caveat, cursive" on the contact name span
 - "use a bold condensed font for the headline" → use "Anton" or "Archivo Black" in the relevant slot
 - mix fonts freely: a "Playfair Display" headline with "Manrope" body text is elegant.
 

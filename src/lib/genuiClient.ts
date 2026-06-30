@@ -11,7 +11,8 @@ export type StoreMutation = Partial<UIOverrideState> & {
 function buildSystemPrompt(
   screen: 'home' | 'chat',
   storeState: UIOverrideState,
-  contactNames: string[]
+  contactNames: string[],
+  activeTab?: string
 ): string {
   const sourcesText = Object.entries(storeState.componentSources || {})
     // Only expose components that have a real description AND are actually rendered.
@@ -71,6 +72,12 @@ setTab(id)      — switch the active home tab. id is 'chats', 'communities', or
 getContacts()    — returns the full contacts array: [{ id, name, avatarInitials, avatarColor, avatarUrl, lastMessage, lastMessageTime, unreadCount, isOnline, isPinned, isMuted }, ...]
 getCommunities() — returns the user's community list: [{ id, name, type, avatar_url, member_count, isMember, last_message, unreadCount }, ...]
 
+— ON-DEMAND DATA LOADERS —
+loadCommunities() — fetches community data from local cache and puts it into communityList state.
+  ALWAYS call this in a useEffect inside any component that displays community data, so data is available even if the user hasn't visited the communities tab yet.
+  example: React.useEffect(function() { if (typeof loadCommunities === 'function') loadCommunities(); }, []);
+  After calling it, read the data via: var list = useComponentState('communityList', [])[0];
+
 — SIGNED-IN USER —
 myUserId        — the user's id string
 myAvatarUrl     — avatar image URL or null
@@ -99,6 +106,15 @@ ProfileImage    — renders a profile avatar. EXACT props: url (string|null), in
   IMPORTANT: do NOT use avatarUrl, contactInitials, or contactAvatarColor — those are contact object fields, not ProfileImage props.
 Icon            — renders a Lucide icon: React.createElement(Icon, { name: 'heart', size: 24, color: '#fff' })
 motion, AnimatePresence — Framer Motion for animations (no import needed)
+
+TAB AWARENESS — the user is currently on the "${activeTab ?? 'chats'}" tab.
+When adding a widget to a screen area (home-top, home-bottom, floating):
+- ALWAYS add an activeTab guard at the very top of Component so the widget only shows on the correct tab(s) by default.
+  var _tab = useComponentState('activeTab', 'chats')[0]; if (_tab !== '${activeTab ?? 'chats'}') return null;
+- Only show on a different or additional tab if the user explicitly asks ("show on chats too", "show everywhere").
+- If a screen area already has an activeTab check and the user asks to expand it, update the condition (e.g. change !== 'communities' to !== 'communities' && !== 'chats').
+- If the user asks for the widget on ALL tabs, remove the guard entirely.
+- If the widget needs community data, call loadCommunities() in a useEffect so the data loads on mount regardless of which tab was visited.
 
 RULES FOR COMPILED SOURCES:
 1. define a component named exactly "Component"
@@ -429,6 +445,7 @@ examples:
   return `you are an ai ui designer for a mobile chat app. output valid json mutations only.
 
 current screen: ${screen}
+current active tab: ${activeTab ?? 'chats'}
 contact names (use exact spelling): ${contactNames.join(', ')}
 current store state: ${JSON.stringify(storeState, null, 2)}
 
@@ -516,8 +533,9 @@ export async function callGenUIForUpdate(params: {
   screen: 'home' | 'chat'
   storeState: UIOverrideState
   contactNames: string[]
+  activeTab?: string
 }): Promise<StoreMutation> {
-  const { message, screen, storeState, contactNames } = params
+  const { message, screen, storeState, contactNames, activeTab } = params
 
   const apiKey = process.env.NEXT_PUBLIC_TOGETHER_API_KEY
   if (!apiKey) {
@@ -526,7 +544,7 @@ export async function callGenUIForUpdate(params: {
 
   const together = new Together({ apiKey })
 
-  const systemPrompt = buildSystemPrompt(screen, storeState, contactNames)
+  const systemPrompt = buildSystemPrompt(screen, storeState, contactNames, activeTab)
 
   const response = await callWithRetry(together, {
     model: 'deepseek-ai/DeepSeek-V4-Pro',

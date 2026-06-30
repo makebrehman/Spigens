@@ -196,7 +196,12 @@ export interface ContactListStyleOverride {
 }
 
 export interface CustomComponents {
-  [zone: string]: string
+  // A zone's value is either:
+  // - a single code string — the same component shown on every tab, or
+  // - a map of tab id -> code string — a fully independent component per tab
+  //   (a null value for a tab removes just that tab's variant)
+  // A top-level null clears the entire zone.
+  [zone: string]: string | Record<string, string | null> | null
 }
 
 export interface ComponentSources {

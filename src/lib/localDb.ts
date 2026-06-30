@@ -134,6 +134,23 @@ CREATE TABLE IF NOT EXISTS media_cache (
   created_at TEXT,
   last_access TEXT
 );
+
+-- URL-keyed link preview cache (see previewQueue.ts). Keyed by normalized URL so the
+-- same link shared in multiple conversations is fetched only once and the result
+-- survives app restarts. status = 'ready' | 'failed'. A 'failed' row with a past
+-- expires_at is eligible for retry; a future expires_at is still in the back-off window.
+CREATE TABLE IF NOT EXISTS link_preview_cache (
+  url TEXT PRIMARY KEY,
+  title TEXT,
+  description TEXT,
+  image TEXT,
+  site_name TEXT,
+  hostname TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'failed',
+  fetched_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lpc_status ON link_preview_cache(status, expires_at);
 `
 
 let _db: SQLiteDBConnection | null = null

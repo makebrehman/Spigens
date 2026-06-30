@@ -20,7 +20,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
 import { encryptMessage } from '@/lib/encryption'
-import { buildFallbackLinkPreview, fetchClientLinkPreview, firstPreviewableUrl, type LinkPreviewData } from '@/lib/linkPreview'
+import { buildFallbackLinkPreview, firstPreviewableUrl, type LinkPreviewData } from '@/lib/linkPreview'
+import { fetchPreview } from '@/lib/previewQueue'
 import { makeBlurThumb, makeVideoThumb, getAudioDuration } from '@/lib/thumbnails'
 import { cacheLocalBlob } from '@/lib/mediaCache'
 import imageCompression from 'browser-image-compression'
@@ -284,7 +285,7 @@ export function ChatScreen(props: ChatScreenProps) {
   const enrichDmLinkPreview = async (messageId: string, cacheKeys: string[], content: string) => {
     const url = firstPreviewableUrl(content)
     if (!url) return
-    const preview = await fetchClientLinkPreview(url)
+    const preview = await fetchPreview(url) // cache-first → Edge Function server proxy
     if (!preview) return
     const metadata = { linkPreview: preview }
 

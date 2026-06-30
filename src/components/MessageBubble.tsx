@@ -8,8 +8,9 @@ import { ReplyQuote } from './ReplyQuote'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
 import { NativeMediaBubble } from './NativeMediaBubble'
-import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview } from '@/lib/linkPreview'
+import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview, type LinkPreviewData } from '@/lib/linkPreview'
 import { LinkPreviewCard } from './LinkPreviewCard'
+import { queuePreviewFetch } from '@/lib/previewQueue'
 
 export interface MessageBubbleProps {
   id: string
@@ -62,9 +63,24 @@ export function MessageBubble(props: MessageBubbleProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const messageBubbleSource = componentSources?.messageBubble ?? null
   const previewUrl = !isDeleted && (!resolvedType || resolvedType === 'text') ? firstPreviewableUrl(resolvedContent) : null
-  const linkPreview = previewUrl
+
+  // Stored preview (from message metadata, may be 'fallback' if enrichment hasn't run yet).
+  const storedPreview = previewUrl
     ? (normalizeLinkPreview(resolvedMetadata?.linkPreview, previewUrl) ?? buildFallbackLinkPreview(previewUrl))
     : null
+
+  // Lazy-enriched preview from the URL-keyed local cache. Starts null; populated by
+  // the background queue when the stored preview is only a fallback (no rich data).
+  const [enrichedPreview, setEnrichedPreview] = useState<LinkPreviewData | null>(null)
+
+  useEffect(() => {
+    if (!previewUrl || storedPreview?.status === 'ready') return
+    const cancel = queuePreviewFetch(previewUrl, setEnrichedPreview)
+    return cancel
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewUrl])
+
+  const linkPreview = enrichedPreview ?? storedPreview
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(

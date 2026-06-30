@@ -6,6 +6,7 @@ import { useContactStore } from '@/stores/contactStore'
 import { supabase } from '@/lib/supabase'
 import { upsertMessage, upsertCachedReaction, deleteCachedReaction } from '@/lib/offlineCache'
 import { toLocalMessage } from '@/lib/messageShape'
+import { flushPendingPreviews } from '@/lib/previewQueue'
 
 /**
  * App-level Supabase Realtime subscription (one per signed-in user).
@@ -74,5 +75,12 @@ export function useAppRealtime() {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
+  }, [currentUserId])
+
+  // Retry any link previews that previously failed but whose 1-hour back-off has
+  // now expired. Runs once on sign-in; the queue processor handles throttling.
+  useEffect(() => {
+    if (!currentUserId) return
+    flushPendingPreviews().catch(() => {})
   }, [currentUserId])
 }

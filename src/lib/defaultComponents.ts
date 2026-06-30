@@ -1418,8 +1418,7 @@ export const DEFAULT_CONTACTLIST_SOURCE = `function Component() {
   var timers = React.useRef({});
   function startPress(id) {
     timers.current[id] = setTimeout(function() {
-      var contact = (renderedContacts || []).find(function(c) { return c.id === id; });
-      if (contact) { onTileLongPress && onTileLongPress(contact); }
+      if (typeof openLongPressSheet === 'function') { openLongPressSheet(id); }
     }, 500);
   }
   function cancelPress(id) {
@@ -1432,12 +1431,12 @@ export const DEFAULT_CONTACTLIST_SOURCE = `function Component() {
       var badge = contact.unreadCount > 99 ? '99+' : String(contact.unreadCount);
       return React.createElement('div', {
         key: contact.id,
-        onClick: function() { onContactSelect && onContactSelect(contact); },
+        onClick: function() { if (typeof openChat === 'function') { openChat(contact.id); } },
         onPointerDown: function() { startPress(contact.id); },
         onPointerUp: function() { cancelPress(contact.id); },
         onPointerLeave: function() { cancelPress(contact.id); },
         onPointerCancel: function() { cancelPress(contact.id); },
-        onContextMenu: function(e) { e.preventDefault(); onTileLongPress && onTileLongPress(contact); },
+        onContextMenu: function(e) { e.preventDefault(); if (typeof openLongPressSheet === 'function') { openLongPressSheet(contact.id); } },
         style: {
           display: 'flex', flexDirection: 'row', alignItems: 'center',
           width: '100%', minHeight: '72px', padding: '12px 16px',

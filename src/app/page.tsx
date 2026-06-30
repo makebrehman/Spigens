@@ -7,7 +7,6 @@ import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'motion/react'
 import { useContactStore } from '@/stores/contactStore'
 import { useUIStore } from '@/stores/uiStore'
-import { dispatchAction } from '@/lib/actionDispatcher'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { ContactList } from '@/components/ContactList'
 import { ChatScreen } from '@/components/ChatScreen'
@@ -244,8 +243,6 @@ export default function Home() {
   const [genuiSynced, setGenuiSynced] = useState(false)
 
   const [longPressedContact, setLongPressedContact] = useState<Contact | null>(null)
-  const longPressConfig = useUIStore(state => state.behaviorConfig.longPress)
-  const interactions = useUIStore(state => state.interactions)
   const customComponents = useUIStore(state => state.customComponents)
   const componentSources = useUIStore(state => state.componentSources)
 
@@ -270,8 +267,6 @@ export default function Home() {
     }
   }, [componentSources])
 
-  const topAppBarSource = componentSources?.topAppBar
-  const searchBarSource = componentSources?.searchBar
   const bottomSheetSource = componentSources?.bottomSheet
 
   const contacts = useContactStore(state => state.contacts)
@@ -281,9 +276,6 @@ export default function Home() {
   const selectedContact = getSelectedContact()
   const onlineUserIds = useContactStore(state => state.onlineUserIds)
 
-  const searchBarConfig = useUIStore(state => state.layoutConfig.searchBar)
-  const barPosition = searchBarConfig.barPosition
-  const iconPosition = searchBarConfig.iconPosition
   const canUndoUI = useUIStore(state => state.history.length > 0)
   const genuiVersions = useUIStore(state => state.versions)
   const genuiActiveVersionId = useUIStore(state => state.activeVersionId)
@@ -769,26 +761,25 @@ export default function Home() {
 
   const handleSearchClose = useCallback(() => setShowSearch(false), [])
 
-  const renderifyActions = useMemo(() => ({
-    openChat: (contactId?: string) => {
-      if (contactId) useContactStore.getState().setSelectedContactId(contactId)
-    },
-    openLongPressSheet: () => {},
-    openAttachSheet: () => {},
-    toggleSearch: () => setShowSearch(prev => !prev),
-    navigateBack: () => setSelectedContactId(null),
-    getContacts: () => useContactStore.getState().contacts,
+  const openChat = useCallback((contactId: string) => {
+    const c = useContactStore.getState().contacts.find(x => x.id === contactId)
+    if (c?.rawProfile) setActiveChatUser(c.rawProfile)
+    else setSelectedContactId(contactId)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), []) // created once — setters are stable refs
+  }, [])
 
-  const topBarScope = useMemo(() => {
-    // useComponentState: works like React.useState but value persists across re-renders
-    // the key must be unique per piece of state, e.g. 'globeToggle', 'myCounter'
+  const openLongPressSheet = useCallback((contactId: string) => {
+    const contact = useContactStore.getState().contacts.find(c => c.id === contactId)
+    if (contact) setLongPressedContact(contact)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // single scope object shared by all four home-screen GenUI slots
+  const homeGlobalScope = useMemo(() => {
     function useComponentState(key: string, defaultValue: any) {
       const [value, setValue] = useState(
         () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
       )
-      // subscribe to store changes — re-renders this component when another component writes to this key
       useEffect(() => {
         const unsub = useUIStore.subscribe((state: any, prevState: any) => {
           const next = state.componentState?.[key]
@@ -799,11 +790,7 @@ export default function Home() {
       }, [key, defaultValue])
       return [value, (newVal: any) => {
         if (typeof newVal === 'function') {
-          setValue((prev: any) => {
-            const r = newVal(prev)
-            useUIStore.getState().setComponentState(key, r)
-            return r
-          })
+          setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r })
         } else {
           setValue(newVal)
           useUIStore.getState().setComponentState(key, newVal)
@@ -811,117 +798,81 @@ export default function Home() {
       }] as [any, (v: any) => void]
     }
 
-    const handlers = {
-      openChat: () => {},
-      openLongPressSheet: () => { const first = useContactStore.getState().contacts[0]; if (first) setLongPressedContact(first) },
-      openAttachSheet: () => {},
-      toggleSearch: () => setShowSearch(prev => !prev),
-      navigateBack: () => setSelectedContactId(null),
-    }
-
     return {
-      title: 'messages',
       useComponentState,
-      getContacts: () => useContactStore.getState().contacts,
-      onMenuTap: () => dispatchAction(useUIStore.getState().interactions?.menuTap, handlers),
-      onSearchTap: () => setShowSearch(prev => !prev),
-      onNewChatTap: () => dispatchAction(useUIStore.getState().interactions?.newChatTap, handlers),
+
+      // navigation
+      openChat: (contactId: string) => {
+        const c = useContactStore.getState().contacts.find(x => x.id === contactId)
+        if (c?.rawProfile) setActiveChatUser(c.rawProfile)
+        else setSelectedContactId(contactId)
+      },
+      openLongPressSheet: (contactId: string) => {
+        const contact = useContactStore.getState().contacts.find(c => c.id === contactId)
+        if (contact) setLongPressedContact(contact)
+      },
+      openCommunity: (community: any) => setActiveCommunity(community),
+      openCommunityProfile: (community: any) => setActiveCommunityProfile(community),
+      openContactProfile: (contact: any) => setContactProfileUser({
+        id: contact.id,
+        display_name: contact.display_name || contact.name || contact.username || '',
+        username: contact.username || null,
+        avatar_url: contact.avatar_url || contact.avatarUrl || null,
+      } as any),
+      openProfile: () => setShowProfile(true),
+      openSettings: () => setShowSettings(true),
+      openDiscover: () => setShowDiscover(true),
+      openCreateCommunity: () => setShowCreateCommunity(true),
+
+      // search
       openSearch: () => setShowSearch(true),
-      closeSearch: () => setShowSearch(false),
+      closeSearch: () => { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
       toggleSearch: () => setShowSearch(prev => !prev),
-      openLongPressSheet: () => { const first = useContactStore.getState().contacts[0]; if (first) setLongPressedContact(first) },
-      setSearchBarConfig: (cfg: any) => useUIStore.getState().setSearchBarConfig(cfg),
-      setContactListStyle: (s: any) => useUIStore.getState().setContactListStyle(s),
-      onCommunityTap: () => setShowCommunityList(true),
+
+      // tab navigation
+      setTab: (id: string) => {
+        setActiveTab(id as 'chats' | 'communities' | 'profile')
+        setShowSearch(false)
+        useUIStore.getState().setComponentState('searchQuery', '')
+      },
+
+      // data access
+      getContacts: () => useContactStore.getState().contacts,
+      getCommunities: () => (useUIStore.getState().componentState as any)?.communityList ?? [],
+
+      // signed-in user identity
+      myUserId: user?.id ?? null,
       myAvatarUrl: profile?.avatar_url ?? null,
       myAvatarInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(),
-      myAvatarColor: '#2563EB',
-      onOpenProfile: () => setShowProfile(true),
-      ProfileImage: ProfileImage,
+      myDisplayName: profile?.display_name || profile?.username || '',
+      myUsername: profile?.username || '',
+
+      // tab definitions — AI can read/extend to build any navigation
+      tabs: [
+        { id: 'chats', label: 'Chats', icon: 'message-square' },
+        { id: 'communities', label: 'Communities', icon: 'users' },
+        { id: 'profile', label: 'Profile', icon: 'user' },
+      ],
+
+      // aliases kept for backward compat with previously AI-generated code
+      onSearchTap: () => setShowSearch(s => !s),
+      onCreateCommunity: () => setShowCreateCommunity(true),
+      onClose: () => { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
+      onSelectTab: (id: string) => {
+        setActiveTab(id as 'chats' | 'communities' | 'profile')
+        setShowSearch(false)
+        useUIStore.getState().setComponentState('searchQuery', '')
+      },
+      onPlus: () => setShowDiscover(true),
+
+      // account
+      logout: () => useAuthStore.getState().signOut(),
+
+      // UI components available in generated code
+      ProfileImage,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]) // created once — all functions read from store at call time, all setters are stable refs
-
-  const searchBarScope = useMemo(() => {
-    function useComponentState(key: string, defaultValue: any) {
-      const [value, setValue] = useState(
-        () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
-      )
-      useEffect(() => {
-        const unsub = useUIStore.subscribe((state: any, prevState: any) => {
-          const next = state.componentState?.[key]
-          const prev = prevState.componentState?.[key]
-          if (next !== prev) setValue(next ?? defaultValue)
-        })
-        return unsub
-      }, [key, defaultValue])
-      return [value, (newVal: any) => {
-        if (typeof newVal === 'function') {
-          setValue((prev: any) => {
-            const r = newVal(prev)
-            useUIStore.getState().setComponentState(key, r)
-            return r
-          })
-        } else {
-          setValue(newVal)
-          useUIStore.getState().setComponentState(key, newVal)
-        }
-      }] as [any, (v: any) => void]
-    }
-    return {
-      closeSearch: () => setShowSearch(false),
-      openSearch: () => setShowSearch(true),
-      toggleSearch: () => setShowSearch(prev => !prev),
-      getContacts: () => useContactStore.getState().contacts,
-      useComponentState,
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // setShowSearch is a stable useState setter — safe to omit from deps
-
-  // live persistent-state hook for compiled home-chrome sources (mirrors ContactList's)
-  function useComponentState(key: string, defaultValue: any) {
-    const [value, setValue] = useState(
-      () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
-    )
-    useEffect(() => {
-      const unsub = useUIStore.subscribe((state: any, prevState: any) => {
-        const next = state.componentState?.[key]
-        const prev = prevState.componentState?.[key]
-        if (next !== prev) setValue(next ?? defaultValue)
-      })
-      return unsub
-    }, [key, defaultValue])
-    return [value, (newVal: any) => {
-      if (typeof newVal === 'function') {
-        setValue((prev: any) => { const r = newVal(prev); useUIStore.getState().setComponentState(key, r); return r })
-      } else {
-        setValue(newVal)
-        useUIStore.getState().setComponentState(key, newVal)
-      }
-    }] as [any, (v: any) => void]
-  }
-
-  // editable home-chrome scopes — dynamic values flow via useComponentState (live),
-  // only stable callbacks/static data go through storeActions.
-  const homeHeaderScope = {
-    useComponentState,
-    onSearchTap: () => setShowSearch(s => !s),
-    onCreateCommunity: () => setShowCreateCommunity(true),
-  }
-  const homeSearchScope = {
-    useComponentState,
-    onClose: () => { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
-  }
-  const bottomNavScope = {
-    useComponentState,
-    tabs: [
-      { id: 'chats', label: 'Chats', path: 'M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z' },
-      { id: 'communities', label: 'Communities', path: 'M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z' },
-      { id: 'profile', label: 'Profile', path: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
-    ],
-    onSelectTab: (id: string) => { setActiveTab(id as 'chats' | 'communities' | 'profile'); setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
-    onPlus: () => setShowDiscover(true),
-  }
+  }, [profile, user?.id])
 
   // shared props for every GenUIPanel instance (server-synced undo/reset/restore)
   const uid = user?.id
@@ -1025,57 +976,17 @@ export default function Home() {
 
   const isOverlayActive = activeCommunityProfile || activeCommunity || showCreateCommunity || showDiscover || contactProfileUser;
 
-  // --- determine overlay/floating portal position ---
-  const overlayPosition =
-    barPosition === 'floating' && searchBarConfig.position
-      ? {
-          bottom: String(searchBarConfig.position.bottom ?? '80px'),
-          top: String(searchBarConfig.position.top ?? 'auto'),
-          left: String(searchBarConfig.position.left ?? '16px'),
-          right: String(searchBarConfig.position.right ?? '16px'),
-        }
-      : { bottom: '80px', left: '16px', right: '16px' }
-
-  const showPortalSearch =
-    mounted &&
-    showSearch &&
-    (barPosition === 'bottom-overlay' || barPosition === 'floating')
-
-  const buildHandlers = (contactId?: string) => ({
-    openChat: () => { 
-      if (contactId) {
-        const c = useContactStore.getState().contacts.find(x => x.id === contactId)
-        if (c?.rawProfile) {
-          setActiveChatUser(c.rawProfile)
-        } else {
-          // fallback
-          setSelectedContactId(contactId)
-        }
-      }
-    },
-    openLongPressSheet: () => {
-      const contact = useContactStore.getState().contacts.find(c => c.id === contactId)
-      if (contact) setLongPressedContact(contact)
-    },
-    openAttachSheet: () => { /* attach sheet is inside ChatScreen, not used here */ },
-    toggleSearch: () => setShowSearch(prev => !prev),
-    navigateBack: () => {
-      setActiveChatUser(null)
-      setSelectedContactId(null)
-    },
-  })
-
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', background: '#0A0A0A' }}>
       
       {/* Home Feed Base (Kept mounted to preserve state/scroll, hidden if overlay is active to save rendering) */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 0, display: isOverlayActive ? 'none' : 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
       {/* Top header — editable via GenUI (componentSources.homeHeader) */}
-      <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeHeaderScope} />
+      <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeGlobalScope} />
 
       {/* Search bar — editable via GenUI (componentSources.homeSearch) */}
-      {showSearch && !showPortalSearch && (
-        <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeSearchScope} />
+      {showSearch && (
+        <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeGlobalScope} />
       )}
 
       {/* Tab content */}
@@ -1089,11 +1000,22 @@ export default function Home() {
           const unmutedContactsWithPin = unmutedContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id), isMuted: false }))
           const mutedContactsWithFlag = mutedVisibleContacts.map(c => ({ ...c, isPinned: pinnedIds.has(c.id), isMuted: true }))
           const chatHandlers = {
-            onContactSelect: (contact: Contact) => dispatchAction(interactions?.tileTap, buildHandlers(contact.id)),
-            onTileLongPress: (contact: Contact) => dispatchAction(interactions?.tileLongPress, buildHandlers(contact.id)),
+            openChat: (contactId: string) => openChat(contactId),
+            openLongPressSheet: (contactId: string) => openLongPressSheet(contactId),
+            onContactSelect: (contact: Contact) => openChat(contact.id),
+            onTileLongPress: (contact: Contact) => openLongPressSheet(contact.id),
             onContactAvatarTap: (contact: any) => setContactProfileUser({ id: contact.id, display_name: contact.name, username: contact.username || null, avatar_url: contact.avatarUrl || null }),
           }
           const archivedHandlers = {
+            openChat: (contactId: string) => {
+              const c = archivedContactsList.find(x => x.id === contactId)
+              if ((c as any)?.rawProfile) setActiveChatUser((c as any).rawProfile)
+              else setSelectedContactId(contactId)
+            },
+            openLongPressSheet: (contactId: string) => {
+              const c = archivedContactsList.find(x => x.id === contactId)
+              if (c) setLongPressedArchivedContact(c)
+            },
             onContactSelect: (contact: Contact) => {
               const c = contact as any
               if (c?.rawProfile) setActiveChatUser(c.rawProfile)
@@ -1189,16 +1111,21 @@ export default function Home() {
       </div>
 
       {/* Bottom navbar — editable via GenUI (componentSources.bottomNav) */}
-      <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={bottomNavScope} />
+      <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={homeGlobalScope} />
 
       {/* Portals + GenUI */}
-      {longPressConfig && longPressedContact !== null && mounted && createPortal(
+      {longPressedContact !== null && mounted && createPortal(
         <RenderifyHost
           code={bottomSheetSource ?? null}
           storeActions={{
             sheetId: 'longPressSheet',
-            title: longPressConfig.popup.title,
-            options: longPressConfig.popup.options,
+            title: 'chat options',
+            options: [
+              { id: 'mute', label: 'mute notifications', icon: 'bell-off' },
+              { id: 'pin', label: 'pin to top', icon: 'pin' },
+              { id: 'archive', label: 'archive chat', icon: 'archive' },
+              { id: 'delete', label: 'delete chat', icon: 'trash-2', destructive: true },
+            ],
             onClose: () => setLongPressedContact(null),
             onOptionSelect: (option: any) => {
             const contact = longPressedContact
@@ -1296,13 +1223,6 @@ export default function Home() {
               >Delete</button>
             </div>
           </div>
-        </div>,
-        document.body
-      )}
-      {/* Search bar portal — bottom-overlay and floating positions */}
-      {showPortalSearch && mounted && createPortal(
-        <div style={{ position: 'fixed', bottom: overlayPosition.bottom, left: overlayPosition.left, right: overlayPosition.right, zIndex: 150 }}>
-          <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeSearchScope} />
         </div>,
         document.body
       )}

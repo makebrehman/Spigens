@@ -196,7 +196,7 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 8
+const SOURCES_SCHEMA_VERSION = 9
 const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
@@ -220,6 +220,9 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[
   // v8: force-reset bubble templates even when AI-marked as edited, because the
   // v7 non-force migration left AI-customized bubbles without LinkPreviewCard rendering.
   { version: 8, reset: ['messageBubble', 'communityMessageBubble'], force: true },
+  // v9: contactList source now calls openChat(id) and openLongPressSheet(id) directly
+  // instead of the old onContactSelect/onTileLongPress callbacks.
+  { version: 9, reset: ['contactList'] },
 ]
 
 function migrateComponentSources(

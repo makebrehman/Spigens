@@ -11,9 +11,12 @@ interface ContactListProps {
   onContactSelect?: (contact: Contact) => void
   onTileLongPress?: (contact: Contact) => void
   onContactAvatarTap?: (contact: any) => void
+  openChat?: (contactId: string) => void
+  openLongPressSheet?: (contactId: string) => void
+  openContactProfile?: (contact: any) => void
 }
 
-export function ContactList({ contacts: propContacts, onContactSelect, onTileLongPress, onContactAvatarTap }: ContactListProps) {
+export function ContactList({ contacts: propContacts, onContactSelect, onTileLongPress, onContactAvatarTap, openChat, openLongPressSheet, openContactProfile }: ContactListProps) {
   const storeContacts = useContactStore(state => state.contacts)
   const contacts = propContacts ?? storeContacts
   const componentSources = useUIStore(state => state.componentSources)
@@ -50,9 +53,28 @@ export function ContactList({ contacts: propContacts, onContactSelect, onTileLon
       code={contactListSource}
       storeActions={{
         contacts,
+        // old callback style — kept for backward compat with AI-customized code
         onContactSelect: (contact: Contact) => onContactSelect?.(contact),
         onTileLongPress: (contact: Contact) => onTileLongPress?.(contact),
         onAvatarTap: (contact: any) => onContactAvatarTap?.(contact),
+        // new direct action vocabulary
+        openChat: (contactId: string) => {
+          if (openChat) {
+            openChat(contactId)
+          } else {
+            const c = contacts.find(x => x.id === contactId)
+            if (c) onContactSelect?.(c)
+          }
+        },
+        openLongPressSheet: (contactId: string) => {
+          if (openLongPressSheet) {
+            openLongPressSheet(contactId)
+          } else {
+            const c = contacts.find(x => x.id === contactId)
+            if (c) onTileLongPress?.(c)
+          }
+        },
+        openContactProfile: openContactProfile ?? ((contact: any) => onContactAvatarTap?.(contact)),
         useComponentState,
       }}
     />

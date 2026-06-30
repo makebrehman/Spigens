@@ -108,13 +108,29 @@ Icon            — renders a Lucide icon: React.createElement(Icon, { name: 'he
 motion, AnimatePresence — Framer Motion for animations (no import needed)
 
 TAB AWARENESS — the user is currently on the "${activeTab ?? 'chats'}" tab.
-When adding a widget to a screen area (home-top, home-bottom, floating):
-- ALWAYS add an activeTab guard at the very top of Component so the widget only shows on the correct tab(s) by default.
-  var _tab = useComponentState('activeTab', 'chats')[0]; if (_tab !== '${activeTab ?? 'chats'}') return null;
-- Only show on a different or additional tab if the user explicitly asks ("show on chats too", "show everywhere").
-- If a screen area already has an activeTab check and the user asks to expand it, update the condition (e.g. change !== 'communities' to !== 'communities' && !== 'chats').
-- If the user asks for the widget on ALL tabs, remove the guard entirely.
-- If the widget needs community data, call loadCommunities() in a useEffect so the data loads on mount regardless of which tab was visited.
+When adding a widget to a screen area (home-top, home-bottom, floating), this component stays mounted permanently across ALL tabs — it is never unmounted when the tab changes, it just re-renders. This means EVERY hook (useComponentState, useEffect, useState, useRef, etc.) MUST be called unconditionally, in the same order, on every single render — regardless of which tab is active.
+
+CRITICAL RULE — never put a tab-check "return null" before any hook call. Call ALL hooks FIRST (top of the function, no exceptions), and put the tab-check / "return null" AFTER every hook has already run, immediately before you build the JSX to return. Putting a conditional return between hook calls crashes React ("rendered fewer hooks than expected") the moment the user switches tabs, and the crash persists across the whole screen until the app is reloaded — this is a hard correctness rule, not a style preference.
+
+correct pattern (all hooks first, guard last, right before the return):
+function Component() {
+  var _tab = useComponentState('activeTab', 'chats')[0];        // hook
+  var listState = useComponentState('communityList', []);        // hook
+  var communities = listState[0];
+  React.useEffect(function() {                                    // hook
+    if (typeof loadCommunities === 'function') loadCommunities();
+  }, []);
+  if (_tab !== '${activeTab ?? 'chats'}') return null;             // guard AFTER all hooks, never before
+  var memberCommunities = (communities || []).filter(function(c) { return c.isMember; });
+  return React.createElement(...);
+}
+
+rules:
+- by default, scope the widget to only the tab the user was on when they asked ("${activeTab ?? 'chats'}"), using the guard pattern above placed after all hooks
+- only show on a different or additional tab if the user explicitly asks ("show on chats too", "show everywhere")
+- if a screen area already has a tab check and the user asks to expand it, update the condition (e.g. change !== 'communities' to !== 'communities' && _tab !== 'chats') — keep the guard positioned after all hooks
+- if the user asks for the widget on ALL tabs, remove the guard entirely (but keep calling the same hooks unconditionally)
+- if the widget needs community data, call loadCommunities() in a useEffect (with no dependency array changes based on tab) so the data loads on mount regardless of which tab was visited
 
 RULES FOR COMPILED SOURCES:
 1. define a component named exactly "Component"

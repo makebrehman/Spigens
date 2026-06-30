@@ -69,6 +69,7 @@ type Snapshot = {
 export type GenUIVersion = {
   id: string
   name: string
+  prompt?: string
   createdAt: string
   snapshot: Snapshot
 }
@@ -133,7 +134,7 @@ interface UIStoreState extends UIOverrideState {
   ownerUserId: string | null
   getSnapshot: () => Snapshot
   applySnapshot: (snapshot: Snapshot) => void
-  addVersion: (name: string) => GenUIVersion
+  addVersion: (name: string, prompt?: string) => GenUIVersion
   restoreVersion: (id: string) => void
   hydrateFromServer: (snapshot: Snapshot | null, versions: GenUIVersion[], userId: string) => void
 }
@@ -567,11 +568,12 @@ export const useUIStore = create<UIStoreState>()(
       applySnapshot: (snapshot) => set(() => ({ ...normalizeSnapshot(snapshot) })),
 
       // append a named version capturing the CURRENT state; becomes the active version
-      addVersion: (name) => {
+      addVersion: (name, prompt?) => {
         const snapshot = captureSnapshot(get())
         const version: GenUIVersion = {
           id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `v_${Date.now()}`,
           name: (name && name.trim() ? name.trim() : 'Untitled change').slice(0, 60),
+          prompt: prompt?.trim().slice(0, 500),
           createdAt: new Date().toISOString(),
           snapshot,
         }

@@ -113,7 +113,7 @@ interface UIStoreState extends UIOverrideState {
   setBehaviorConfig: (config: Partial<BehaviorConfig>) => void
   setInteraction: (key: keyof InteractionConfig, action: AppAction) => void
   setInteractions: (config: Partial<InteractionConfig>) => void
-  setCustomComponent: (zone: string, code: string) => void
+  setCustomComponent: (zone: string, code: string | Record<string, string | null> | null) => void
   clearCustomComponent: (zone: string) => void
   setComponentSource: (name: string, source: string) => void
   resetComponentSource: (name: string) => void
@@ -433,10 +433,32 @@ export const useUIStore = create<UIStoreState>()(
           interactions: { ...state.interactions, ...config }
         })),
 
+      // a plain string (or null) replaces/clears the WHOLE zone — same content on
+      // every tab, or removed entirely.
+      // an object merges into the zone's existing per-tab map — only the tabs
+      // mentioned change, so editing one tab's variant never touches another's;
+      // a null value for a tab removes just that tab's variant.
       setCustomComponent: (zone, code) =>
-        set((state) => ({
-          customComponents: { ...state.customComponents, [zone]: code }
-        })),
+        set((state) => {
+          if (typeof code === 'string') {
+            return { customComponents: { ...state.customComponents, [zone]: code } }
+          }
+          if (code === null) {
+            const next = { ...state.customComponents }
+            delete next[zone]
+            return { customComponents: next }
+          }
+          const existing = state.customComponents?.[zone]
+          // invariant: a stored tab-map never holds null entries — nulls are deleted
+          // immediately below, never persisted — so this cast is safe.
+          const mergedMap: Record<string, string> =
+            existing && typeof existing === 'object' ? { ...(existing as Record<string, string>) } : {}
+          Object.entries(code).forEach(([tabId, tabCode]) => {
+            if (tabCode === null || tabCode === undefined) delete mergedMap[tabId]
+            else mergedMap[tabId] = tabCode
+          })
+          return { customComponents: { ...state.customComponents, [zone]: mergedMap } }
+        }),
 
       clearCustomComponent: (zone) =>
         set((state) => {

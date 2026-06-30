@@ -31,11 +31,23 @@ function buildSystemPrompt(
     'chat-header': 'Custom zone below the chat screen header. Edit via customComponents["chat-header"].',
   }
 
+  // A zone's stored value is either a plain string (one component, same on every
+  // tab) or an object keyed by tab id (a separate, independent component per tab).
+  // Flatten both shapes so the AI sees every existing variant as its own editable block.
   const customSourcesText = Object.entries(storeState.customComponents || {})
-    .filter(([, code]) => typeof code === 'string' && (code as string).trim().length > 0)
-    .map(([zone, code]) => {
+    .flatMap(([zone, value]) => {
       const description = ZONE_DESCRIPTIONS[zone] || `Custom zone: ${zone}`
-      return `COMPONENT: customComponents["${zone}"]\nWHAT IT IS: ${description}\nCURRENT SOURCE (you can rewrite this entirely):\n${code}`
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return [`COMPONENT: customComponents["${zone}"]\nWHAT IT IS: ${description} (currently shown on EVERY tab — same component everywhere)\nCURRENT SOURCE (you can rewrite this entirely):\n${value}`]
+      }
+      if (value && typeof value === 'object') {
+        return Object.entries(value as Record<string, string | null>)
+          .filter(([, code]) => typeof code === 'string' && code.trim().length > 0)
+          .map(([tabId, code]) =>
+            `COMPONENT: customComponents["${zone}"]["${tabId}"]\nWHAT IT IS: ${description} (currently shown ONLY on the "${tabId}" tab)\nCURRENT SOURCE (you can rewrite this entirely):\n${code}`
+          )
+      }
+      return []
     }).join('\n\n')
 
   const homeSlots = `
@@ -107,30 +119,27 @@ ProfileImage    — renders a profile avatar. EXACT props: url (string|null), in
 Icon            — renders a Lucide icon: React.createElement(Icon, { name: 'heart', size: 24, color: '#fff' })
 motion, AnimatePresence — Framer Motion for animations (no import needed)
 
-TAB AWARENESS — the user is currently on the "${activeTab ?? 'chats'}" tab.
-When adding a widget to a screen area (home-top, home-bottom, floating), this component stays mounted permanently across ALL tabs — it is never unmounted when the tab changes, it just re-renders. This means EVERY hook (useComponentState, useEffect, useState, useRef, etc.) MUST be called unconditionally, in the same order, on every single render — regardless of which tab is active.
+TAB-SCOPED ZONES — the user is currently on the "${activeTab ?? 'chats'}" tab.
+home-top, home-bottom, and floating live on the tabbed home screen. The HOST APP decides which tab(s) each one is visible on — you do NOT write any tab-checking code inside Component. You only decide WHICH tab(s) a zone's code belongs to by the JSON SHAPE you return for customComponents.
 
-CRITICAL RULE — never put a tab-check "return null" before any hook call. Call ALL hooks FIRST (top of the function, no exceptions), and put the tab-check / "return null" AFTER every hook has already run, immediately before you build the JSX to return. Putting a conditional return between hook calls crashes React ("rendered fewer hooks than expected") the moment the user switches tabs, and the crash persists across the whole screen until the app is reloaded — this is a hard correctness rule, not a style preference.
+THIS APPLIES ONLY TO home-top, home-bottom, and floating. chat-header has no tab concept (it lives inside a single open conversation) — always return a plain code string for it.
 
-correct pattern (all hooks first, guard last, right before the return):
-function Component() {
-  var _tab = useComponentState('activeTab', 'chats')[0];        // hook
-  var listState = useComponentState('communityList', []);        // hook
-  var communities = listState[0];
-  React.useEffect(function() {                                    // hook
-    if (typeof loadCommunities === 'function') loadCommunities();
-  }, []);
-  if (_tab !== '${activeTab ?? 'chats'}') return null;             // guard AFTER all hooks, never before
-  var memberCommunities = (communities || []).filter(function(c) { return c.isMember; });
-  return React.createElement(...);
-}
+SHAPE — customComponents[zone] is EITHER:
+(a) a plain code string — this exact component shows identically on every tab, OR
+(b) an object mapping tab id → code string — a fully independent component per tab. Each tab's code is separate; editing one tab's entry never touches another's.
+  example: customComponents: { "home-top": { "chats": "function Component(){...row of community shortcuts...}" } }
+  a tab id of "all" inside the object is a fallback shown on any tab that has no more specific entry of its own.
 
-rules:
-- by default, scope the widget to only the tab the user was on when they asked ("${activeTab ?? 'chats'}"), using the guard pattern above placed after all hooks
-- only show on a different or additional tab if the user explicitly asks ("show on chats too", "show everywhere")
-- if a screen area already has a tab check and the user asks to expand it, update the condition (e.g. change !== 'communities' to !== 'communities' && _tab !== 'chats') — keep the guard positioned after all hooks
-- if the user asks for the widget on ALL tabs, remove the guard entirely (but keep calling the same hooks unconditionally)
-- if the widget needs community data, call loadCommunities() in a useEffect (with no dependency array changes based on tab) so the data loads on mount regardless of which tab was visited
+DECIDING WHICH FORM TO USE:
+- If the request is clearly about ONE tab (e.g. asked while on "${activeTab ?? 'chats'}", or mentions that screen by name), return form (b) scoped to ONLY that tab id: { "${activeTab ?? 'chats'}": "...code..." }. Do not invent entries for other tabs.
+- If the request is tab-agnostic (e.g. "add a floating help button" with nothing tying it to one screen), return form (a), a plain string.
+- If the user asks to add the SAME or similar widget to another tab too ("show this on communities as well"), return form (b) with an ADDITIONAL key for the new tab — write that tab's code, and do not repeat the other tab's existing code (the host merges your update into what already exists, leaving other tabs' entries untouched).
+- If the user asks to remove the widget from one specific tab while keeping it on another, set that tab's value to null inside the object: { "home-top": { "communities": null } } — this deletes only that tab's variant.
+- If the user asks for it on every tab with identical content, switch the zone to form (a), a plain string (this fully replaces any existing per-tab map).
+
+Because the host — not your code — decides what mounts on each tab, you never need an activeTab check inside Component for this purpose, and there is no risk of a hook-count mismatch between tabs.
+
+if the widget needs community data, call loadCommunities() in a useEffect on mount so the data loads even if the user hasn't visited the communities tab yet.
 
 RULES FOR COMPILED SOURCES:
 1. define a component named exactly "Component"
@@ -141,7 +150,8 @@ RULES FOR COMPILED SOURCES:
 
 examples of what is now possible:
 - "put Adam's chat directly in the nav bar" → rewrite componentSources.bottomNav, call getContacts(), find a contact whose name includes 'Adam', render his avatar in the nav, onClick: openChat(adam.id)
-- "add a community shortcut row below the header" → customComponents: { "home-top": "... getCommunities().slice(0,5).map(c => button that calls openCommunity(c) ..." }
+- "add a community shortcut row below the header" while on the chats tab → customComponents: { "home-top": { "chats": "... getCommunities().slice(0,5).map(c => button that calls openCommunity(c) ..." } } — scoped to chats only since that's the tab the request was made on
+- "also show that row on communities" (continuing the example above) → customComponents: { "home-top": { "communities": "...code for the communities tab..." } } — host merges this in, the chats entry is untouched
 - "make a message-compose button that opens search when tapped" → add a button to homeHeader that calls openSearch()
 - "add a Settings gear in the navbar" → add a button to bottomNav that calls openSettings()
 - "replace the chats tab with a direct link to the Alpha community" → rewrite bottomNav, getCommunities(), find Alpha, that tab calls openCommunity(alpha)
@@ -209,8 +219,10 @@ rules:
 2. inline styles only
 3. keep it SELF-CONTAINED — one function, no nested component definitions
 
+REMEMBER for home-top / home-bottom / floating: wrap the code below in { "<tabId>": "...this code..." } scoped to the tab the request was made on, per TAB-SCOPED ZONES above — only use the bare string form when the widget is explicitly meant to appear on every tab identically.
+
 examples:
-- "add a pinned community row at the top" → customComponents: { "home-top": "function Component() { var list = getCommunities().filter(function(c) { return c.isMember; }).slice(0,5); return React.createElement('div', { style: { display:'flex', gap:12, padding:'12px 16px', overflowX:'auto' } }, list.map(function(c) { return React.createElement('div', { key: c.id, onClick: function() { openCommunity(c); }, style: { display:'flex', flexDirection:'column', alignItems:'center', gap:4, cursor:'pointer' } }, c.avatar_url ? React.createElement('img', { src: c.avatar_url, style: { width:44, height:44, borderRadius:'50%', objectFit:'cover' } }) : React.createElement('div', { style: { width:44, height:44, borderRadius:'50%', background:'#2563EB', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:16, fontWeight:700 } }, c.name[0]), React.createElement('span', { style: { fontSize:10, color:'#9ca3af', maxWidth:44, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, c.name)); })); }" }
+- "add a pinned community row at the top" (asked while on the chats tab) → customComponents: { "home-top": { "chats": "function Component() { var list = getCommunities().filter(function(c) { return c.isMember; }).slice(0,5); return React.createElement('div', { style: { display:'flex', gap:12, padding:'12px 16px', overflowX:'auto' } }, list.map(function(c) { return React.createElement('div', { key: c.id, onClick: function() { openCommunity(c); }, style: { display:'flex', flexDirection:'column', alignItems:'center', gap:4, cursor:'pointer' } }, c.avatar_url ? React.createElement('img', { src: c.avatar_url, style: { width:44, height:44, borderRadius:'50%', objectFit:'cover' } }) : React.createElement('div', { style: { width:44, height:44, borderRadius:'50%', background:'#2563EB', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:16, fontWeight:700 } }, c.name[0]), React.createElement('span', { style: { fontSize:10, color:'#9ca3af', maxWidth:44, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } }, c.name)); })); }" } }
 
 ICONS (Lucide) — use the <Icon> component in scope:
 React.createElement(Icon, { name: 'heart', size: 24, color: '#fff' })

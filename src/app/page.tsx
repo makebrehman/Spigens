@@ -50,6 +50,19 @@ import { App as CapApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { Network } from '@capacitor/network'
 
+// Resolves a customComponents zone value for the currently active tab.
+// A plain string means "same component on every tab". An object maps tab id
+// -> code, so each tab can have a fully independent component; 'all' is a
+// fallback for tabs with no specific entry of their own.
+function resolveZoneCode(
+  raw: string | Record<string, string | null> | null | undefined,
+  activeTab: string
+): string | null {
+  if (!raw) return null
+  if (typeof raw === 'string') return raw
+  return raw[activeTab] ?? raw['all'] ?? null
+}
+
 function UserSearchResults({ searchQuery, onSelectUser, onAvatarTap }: { searchQuery: string, onSelectUser?: (user: any) => void, onAvatarTap?: (user: any) => void }) {
   const [results, setResults] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -1001,8 +1014,10 @@ export default function Home() {
         <RenderifyHost code={componentSources?.homeSearch ?? null} storeActions={homeGlobalScope} />
       )}
 
-      {/* GenUI home-top zone — e.g. community icon rows, pinned shortcuts */}
-      <RenderifyHost code={customComponents?.['home-top'] ?? null} storeActions={homeGlobalScope} />
+      {/* GenUI home-top zone — e.g. community icon rows, pinned shortcuts.
+          Resolved per-tab: a tab with no matching variant renders nothing,
+          so a widget never leaks onto a screen it wasn't built for. */}
+      <RenderifyHost code={resolveZoneCode(customComponents?.['home-top'], activeTab)} storeActions={homeGlobalScope} />
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -1126,13 +1141,13 @@ export default function Home() {
       </div>
 
       {/* GenUI home-bottom zone — e.g. content below the list, above the nav bar */}
-      <RenderifyHost code={customComponents?.['home-bottom'] ?? null} storeActions={homeGlobalScope} />
+      <RenderifyHost code={resolveZoneCode(customComponents?.['home-bottom'], activeTab)} storeActions={homeGlobalScope} />
 
       {/* Bottom navbar — editable via GenUI (componentSources.bottomNav) */}
       <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={homeGlobalScope} />
 
       {/* GenUI floating zone — fixed overlays e.g. compose FAB, banners */}
-      <RenderifyHost code={customComponents?.['floating'] ?? null} storeActions={homeGlobalScope} />
+      <RenderifyHost code={resolveZoneCode(customComponents?.['floating'], activeTab)} storeActions={homeGlobalScope} />
 
       {/* Portals + GenUI */}
       {longPressedContact !== null && mounted && createPortal(

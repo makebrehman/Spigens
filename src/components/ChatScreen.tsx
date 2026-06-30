@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageBubble } from './MessageBubble'
 import { DateSeparator } from './DateSeparator'
@@ -10,7 +10,9 @@ import { ProfileImage } from './ProfileImage'
 import { ChatName } from './ChatName'
 import { OnlineStatus } from './OnlineStatus'
 import { TypingIndicator } from './TypingIndicator'
+import { ChatMessageViewport } from './ChatMessageViewport'
 import { RenderifyHost } from '@/components/RenderifyHost'
+import { DEFAULT_CHATSCREEN_SOURCE } from '@/lib/defaultComponents'
 import { useMessageStore } from '@/stores/messageStore'
 import { useUIStore } from '@/stores/uiStore'
 import { useContactStore } from '@/stores/contactStore'
@@ -18,12 +20,14 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNetworkStore } from '@/stores/networkStore'
 import { supabase } from '@/lib/supabase'
 import { encryptMessage } from '@/lib/encryption'
+import { buildFallbackLinkPreview, fetchClientLinkPreview, firstPreviewableUrl, type LinkPreviewData } from '@/lib/linkPreview'
 import { makeBlurThumb, makeVideoThumb, getAudioDuration } from '@/lib/thumbnails'
 import { cacheLocalBlob } from '@/lib/mediaCache'
 import imageCompression from 'browser-image-compression'
 import {
   cacheMessages,
   getCachedMessages,
+  getCachedMessagesPage,
   upsertMessage,
   deleteCachedMessage,
   savePendingMessage,
@@ -39,14 +43,37 @@ import {
   queueReadReceipt,
   getPendingReadReceipts,
   clearReadReceipt,
+  updateCachedContactMessage,
 } from '@/lib/offlineCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
-import { dmMirror as msgCache } from '@/lib/messageMirror'
+import { dmMirror as msgCache, reactionMirror } from '@/lib/messageMirror'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
+const MESSAGE_PAGE_SIZE = 50
+const CHAT_SCOPED_COMPONENT_KEYS = new Set([
+  'chatMessages',
+  'conversationId',
+  'currentUserId',
+  'chatContactName',
+  'chatAvatarUrl',
+  'chatContactInitials',
+  'chatContactAvatarColor',
+  'chatIsOnline',
+  'chatLastSeen',
+  'chatRecordingDuration',
+  'chatAttachToastText',
+  'activeMessageActions',
+  'dmDeleteTarget',
+  'reactionDetail',
+  'openReactionMessageId',
+  'otherUserTyping',
+  'replyingTo',
+  'highlightedMessageId',
+  'composerText',
+])
 
 export interface ChatScreenProps {
   contactId?: string
@@ -73,17 +100,19 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const storeMessages = useMessageStore(state => (contactId ? state.messagesByContact[contactId] : undefined)) ?? EMPTY_MESSAGES
 
-  useEffect(() => {
-    if (contactId) useUIStore.getState().setComponentState('chatMessages', storeMessages)
-  }, [contactId, storeMessages])
-
   const attachConfig = useUIStore(state => state.behaviorConfig.attachButton)
   const componentSources = useUIStore(state => state.componentSources)
-  const chatScreenSource = componentSources?.chatScreen ?? null
+  const savedChatScreenSource = componentSources?.chatScreen ?? null
+  const chatScreenSource = savedChatScreenSource && savedChatScreenSource.includes('ChatMessageViewport')
+    ? savedChatScreenSource
+    : DEFAULT_CHATSCREEN_SOURCE
   const bottomSheetSource = componentSources?.bottomSheet ?? null
+  const initialConversationId = otherUserId
+    ? useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId ?? null
+    : null
 
   const [showAttachSheet, setShowAttachSheet] = useState(false)
-  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<string | null>(initialConversationId)
   const [realMessages, setRealMessages] = useState<any[]>([])
   // Always-current mirror of the rendered messages, for read-side logic inside async
   // realtime/send handlers (they must not depend on a stale render closure).
@@ -96,6 +125,8 @@ export function ChatScreen(props: ChatScreenProps) {
   const [replyingTo, setReplyingTo] = useState<any>(null)
   const [encWarning, setEncWarning] = useState(false)
   const [attachToast, setAttachToast] = useState<string | null>(null)
+  const [hasOlderMessages, setHasOlderMessages] = useState(false)
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [showContactPicker, setShowContactPicker] = useState(false)
@@ -115,44 +146,72 @@ export function ChatScreen(props: ChatScreenProps) {
   const recordingCancelledRef = useRef(false)
   const recordingStartRef = useRef<number>(0)
   const prevOtherUserIdRef = useRef<string | undefined | null>(null)
-
-  // Mirror live overlay values into componentState so the GenUI sources read them
-  // (RenderifyHost freezes scope at mount, so changing values must flow via componentState).
-  useEffect(() => { useUIStore.getState().setComponentState('chatRecordingDuration', recordingDuration) }, [recordingDuration])
-  useEffect(() => { useUIStore.getState().setComponentState('chatAttachToastText', attachToast) }, [attachToast])
+  const loadedMessageLimitRef = useRef(MESSAGE_PAGE_SIZE)
+  // Stable refs for callback props — the GenUI compiled scope is frozen (useMemo
+  // in RenderifyHost), but ref.current always points to the latest function.
+  const onBackRef = useRef(onBack)
+  const onViewContactProfileRef = useRef(onViewContactProfile)
+  useEffect(() => {
+    onBackRef.current = onBack
+    onViewContactProfileRef.current = onViewContactProfile
+  }, [onBack, onViewContactProfile])
 
   const currentUserId = useAuthStore(state => state.user?.id)
   const myPublicKey = useAuthStore(state => state.profile?.public_key)
   const myPrivateKey = useAuthStore(state => state.privateKey)
   const networkIsOnline = useNetworkStore(state => state.isOnline)
   const contacts = useContactStore(state => state.contacts)
+  const chatKey = otherUserId || contactId || 'unknown'
+  const scopeId = `dm:${chatKey}`
+  const mapComponentKey = useCallback(
+    (key: string) => CHAT_SCOPED_COMPONENT_KEYS.has(key) ? `${scopeId}:${key}` : key,
+    [scopeId]
+  )
+  const getChatComponentState = useCallback(
+    (key: string, defaultValue?: any) => {
+      const mapped = mapComponentKey(key)
+      return (useUIStore.getState().componentState as Record<string, any>)?.[mapped] ?? defaultValue
+    },
+    [mapComponentKey]
+  )
+  const setChatComponentState = useCallback(
+    (key: string, value: any) => useUIStore.getState().setComponentState(mapComponentKey(key), value),
+    [mapComponentKey]
+  )
+  const conversationIdRef = useRef<string | null>(initialConversationId)
 
-  // Seed chatMessages DURING render — before RenderifyHost mounts and snapshots it —
-  // so opening a chat shows its messages instantly and never flashes the previous
-  // chat's. An effect runs too late (the GenUI has already mounted with stale state).
-  const seededRef = useRef<string | undefined>(undefined)
-  if (otherUserId && seededRef.current !== otherUserId) {
-    seededRef.current = otherUserId
-    useUIStore.getState().setComponentState('chatMessages', msgCache.get(otherUserId) ?? [])
-    // CRITICAL: reset the live conversation id for THIS chat (null for a brand-new
-    // user). componentState.conversationId is global and the send path reads it; if it
-    // isn't reset on chat open it keeps the PREVIOUS chat's id and the first message is
-    // sent to that old conversation instead of this user. Seed from the cached contact.
-    const seedCid = useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId ?? null
-    useUIStore.getState().setComponentState('conversationId', seedCid)
-  }
+  useEffect(() => {
+    conversationIdRef.current = conversationId
+    setChatComponentState('conversationId', conversationId ?? null)
+  }, [conversationId, setChatComponentState])
 
-  // Keep the GenUI-visible conversation id in lockstep with the resolved one (incl.
-  // null) so the send path can never reuse a previous chat's conversation.
-  useEffect(() => { useUIStore.getState().setComponentState('conversationId', conversationId ?? null) }, [conversationId])
+  // Mirror live overlay values into scoped componentState so the GenUI sources keep
+  // their old key names without sharing one global "current chat" bucket.
+  useEffect(() => { setChatComponentState('chatRecordingDuration', recordingDuration) }, [recordingDuration, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatAttachToastText', attachToast) }, [attachToast, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatContactName', contactName) }, [contactName, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatAvatarUrl', avatarUrl ?? null) }, [avatarUrl, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatContactInitials', contactInitials) }, [contactInitials, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatContactAvatarColor', contactAvatarColor ?? null) }, [contactAvatarColor, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatIsOnline', isOnline) }, [isOnline, setChatComponentState])
+  useEffect(() => { setChatComponentState('chatLastSeen', lastSeen ?? null) }, [lastSeen, setChatComponentState])
+  useEffect(() => { setChatComponentState('currentUserId', currentUserId ?? null) }, [currentUserId, setChatComponentState])
+  useEffect(() => {
+    if (contactId) setChatComponentState('chatMessages', storeMessages)
+  }, [contactId, storeMessages, setChatComponentState])
 
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
 
-    // Reset the conversation id when the contact changes (message state is seeded
-    // synchronously, before paint, by the useLayoutEffect below).
+    // Reset the conversation id when the contact changes. The first render still
+    // gets local messages through chatScreenScope.messages below.
     if (prevOtherUserIdRef.current !== otherUserId) {
       prevOtherUserIdRef.current = otherUserId
+      conversationIdRef.current = null
+      loadedMessageLimitRef.current = MESSAGE_PAGE_SIZE
+      messagesRef.current = []
+      setRealMessages([])
+      setHasOlderMessages(false)
       setConversationId(null)
     }
 
@@ -160,7 +219,7 @@ export function ChatScreen(props: ChatScreenProps) {
     // under the real conversation id, so this is what makes them load offline (and load
     // instantly online, without waiting on the server lookup below).
     const cachedCid = useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId
-    if (cachedCid) setConversationId(cachedCid)
+    if (cachedCid) { conversationIdRef.current = cachedCid; setConversationId(cachedCid) }
 
     // Offline: keep current conversationId (don't null it — Effect 2 reads cache by it)
     if (!networkIsOnline) { setLoaded(true); return }
@@ -171,7 +230,7 @@ export function ChatScreen(props: ChatScreenProps) {
         .select('conversation_id')
         .eq('user_id', currentUserId)
 
-      if (error || !mine?.length) { setConversationId(null); setLoaded(true); return }
+      if (error || !mine?.length) { conversationIdRef.current = null; setConversationId(null); setLoaded(true); return }
 
       const myIds = mine.map(r => r.conversation_id)
       const { data: shared, error: sharedErr } = await supabase
@@ -182,6 +241,7 @@ export function ChatScreen(props: ChatScreenProps) {
         .limit(1)
 
       const cid = !sharedErr && shared?.length ? shared[0].conversation_id : null
+      conversationIdRef.current = cid
       setConversationId(cid)
       // No existing conversation → brand-new empty chat; nothing to load, reveal now.
       if (!cid) setLoaded(true)
@@ -211,6 +271,35 @@ export function ChatScreen(props: ChatScreenProps) {
       prev: prevMessages,
     })
 
+  const encryptedPreviewMetadata = (metadata: any | null | undefined): any | null => {
+    const preview = metadata?.linkPreview as LinkPreviewData | undefined
+    if (!preview || !myPrivateKey || !otherUserPublicKey) return null
+    try {
+      return { enc: true, linkPreview: encryptMessage(JSON.stringify(preview), otherUserPublicKey, myPrivateKey) }
+    } catch {
+      return null
+    }
+  }
+
+  const enrichDmLinkPreview = async (messageId: string, cacheKeys: string[], content: string) => {
+    const url = firstPreviewableUrl(content)
+    if (!url) return
+    const preview = await fetchClientLinkPreview(url)
+    if (!preview) return
+    const metadata = { linkPreview: preview }
+
+    for (const key of cacheKeys) {
+      const existing = messagesRef.current.find(m => m.id === messageId)
+      if (existing) await upsertMessage(key, { ...existing, metadata })
+    }
+
+    const cid = conversationIdRef.current
+    const dbMeta = encryptedPreviewMetadata(metadata)
+    if (cid && currentUserId && dbMeta) {
+      await supabase.from('messages').update({ metadata: dbMeta }).eq('id', messageId).eq('sender_id', currentUserId)
+    }
+  }
+
   // ── LOCAL-FIRST READ ──────────────────────────────────────────────────────
   // The UI renders from componentState.chatMessages. Keep that (and realMessages)
   // as a pure reflection of local SQLite: read on mount, then re-read whenever a
@@ -223,8 +312,20 @@ export function ChatScreen(props: ChatScreenProps) {
     let active = true
 
     const reload = async () => {
-      const primary = (await getCachedMessages(convKey)) ?? []
+      const limit = Math.max(MESSAGE_PAGE_SIZE, loadedMessageLimitRef.current)
+      const primary = (await getCachedMessagesPage(convKey, { limit })) ?? []
       let merged = primary
+      if (primary.length && messagesRef.current.length) {
+        const firstCreated = primary[0]?.createdAt ?? ''
+        const seen = new Set(primary.map(m => m.id))
+        const preservedOlder = messagesRef.current.filter(m =>
+          !seen.has(m.id) && (!firstCreated || (m.createdAt || '') < firstCreated)
+        )
+        if (preservedOlder.length) {
+          merged = [...preservedOlder, ...primary]
+            .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+        }
+      }
       // During the brief window after a conversation id resolves, optimistic msgs
       // may still sit under the pending key — fold them in so nothing flickers out.
       if (conversationId) {
@@ -241,9 +342,12 @@ export function ChatScreen(props: ChatScreenProps) {
         // CommunityListScreen) so an empty DB read never wipes messages that
         // are about to arrive via the network load below.
         if (otherUserId) msgCache.set(otherUserId, merged)
+        loadedMessageLimitRef.current = Math.max(loadedMessageLimitRef.current, merged.length)
         messagesRef.current = merged
         setRealMessages(merged)
-        useUIStore.getState().setComponentState('chatMessages', merged)
+        setChatComponentState('chatMessages', merged)
+        if (primary.length < limit) setHasOlderMessages(false)
+        else if (primary.length >= MESSAGE_PAGE_SIZE) setHasOlderMessages(true)
         setLoaded(true)
       } else if (!useNetworkStore.getState().isOnline) {
         // Offline + empty cache: reveal the screen to show "no messages yet"
@@ -255,7 +359,33 @@ export function ChatScreen(props: ChatScreenProps) {
     const unsubA = subscribeDb(topics.messages(convKey), reload)
     const unsubB = convKey !== pendKey ? subscribeDb(topics.messages(pendKey), reload) : () => {}
     return () => { active = false; unsubA(); unsubB() }
-  }, [otherUserId, conversationId])
+  }, [otherUserId, conversationId, setChatComponentState])
+
+  const loadOlderMessages = useCallback(async (): Promise<boolean> => {
+    if (!otherUserId || loadingOlderMessages) return false
+    const first = messagesRef.current[0]
+    if (!first?.createdAt) { setHasOlderMessages(false); return false }
+
+    const convKey = conversationIdRef.current ?? `pending_${otherUserId}`
+    setLoadingOlderMessages(true)
+    try {
+      const older = (await getCachedMessagesPage(convKey, { limit: MESSAGE_PAGE_SIZE, beforeCreatedAt: first.createdAt })) ?? []
+      if (!older.length) { setHasOlderMessages(false); return false }
+
+      const seen = new Set(messagesRef.current.map(m => m.id))
+      const merged = [...older.filter(m => !seen.has(m.id)), ...messagesRef.current]
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+      loadedMessageLimitRef.current = Math.max(loadedMessageLimitRef.current, merged.length)
+      messagesRef.current = merged
+      setRealMessages(merged)
+      setChatComponentState('chatMessages', merged)
+      if (otherUserId) msgCache.set(otherUserId, merged)
+      setHasOlderMessages(older.length >= MESSAGE_PAGE_SIZE)
+      return true
+    } finally {
+      setLoadingOlderMessages(false)
+    }
+  }, [loadingOlderMessages, otherUserId, setChatComponentState])
 
   // ── REACTIONS: LOCAL-FIRST READ ───────────────────────────────────────────
   // Reads from SQLite immediately (works offline) and subscribes to any future
@@ -267,6 +397,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
     const renderFromCache = async () => {
       const cached = await getCachedReactions(conversationId)
+      if (conversationId) reactionMirror.set(conversationId, cached)
       if (!active) return
       Object.keys(cached).forEach(msgId =>
         useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
@@ -318,12 +449,13 @@ export function ChatScreen(props: ChatScreenProps) {
         .from('messages')
         .select('id, conversation_id, sender_id, content, encrypted_content, message_type, metadata, status, reply_to, created_at, updated_at, deleted_at')
         .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
+        .limit(50)
 
       if (error || !data) { console.error('Failed to load messages:', error); setLoaded(true); return }
 
       const msgs: any[] = []
-      data.forEach(row => msgs.push(decryptRow(row, msgs)))
+      ;[...data].reverse().forEach(row => msgs.push(decryptRow(row, msgs)))
 
       // Merge any still-pending offline messages so they survive the DB refresh.
       // Without this, loadMessages overwrites realMessages and pending msgs disappear
@@ -338,7 +470,7 @@ export function ChatScreen(props: ChatScreenProps) {
           id: pm.id,
           content: pm.content,
           messageType: (pm.messageType ?? 'text') as string,
-          metadata: null,
+          metadata: pm.metadata ?? null,
           timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           createdAt: pm.createdAt,
           isSent: true,
@@ -352,15 +484,15 @@ export function ChatScreen(props: ChatScreenProps) {
       // Write the fresh server state to the DB — the local-first effect re-reads
       // and re-renders. We do NOT setRealMessages here (single source of truth = DB).
       await cacheMessages(conversationId, allMsgs)
-      useUIStore.getState().setComponentState('conversationId', conversationId)
-      useUIStore.getState().setComponentState('currentUserId', currentUserId)
+      setChatComponentState('conversationId', conversationId)
+      setChatComponentState('currentUserId', currentUserId)
       setLoaded(true) // network settled → reveal (the emit above already rendered messages)
     }
 
     loadMessages()
 
-    useUIStore.getState().setComponentState('conversationId', conversationId)
-    useUIStore.getState().setComponentState('currentUserId', currentUserId)
+    setChatComponentState('conversationId', conversationId)
+    setChatComponentState('currentUserId', currentUserId)
 
     const channel = supabase
       .channel('messages:' + conversationId)
@@ -368,11 +500,22 @@ export function ChatScreen(props: ChatScreenProps) {
         const row = payload.new as any
         const existing = messagesRef.current.find(m => m.id === row.id)
         if (!existing) return
+        const fresh = decryptRow(row, messagesRef.current)
         let updated: LocalMessage | null = null
         if (row.deleted_at && !existing.isDeleted) {
           updated = { ...existing, isDeleted: true, content: '' }
-        } else if (row.sender_id === currentUserId && existing.status !== row.status) {
-          updated = { ...existing, status: row.status }
+        } else {
+          const next = { ...existing }
+          let changed = false
+          if (row.sender_id === currentUserId && existing.status !== row.status) {
+            next.status = row.status
+            changed = true
+          }
+          if (JSON.stringify(existing.metadata ?? null) !== JSON.stringify(fresh.metadata ?? null)) {
+            next.metadata = fresh.metadata
+            changed = true
+          }
+          updated = changed ? next : null
         }
         if (!updated) return
         await upsertMessage(conversationId, updated)
@@ -388,9 +531,9 @@ export function ChatScreen(props: ChatScreenProps) {
             delete m2[p.userId]
             useUIStore.getState().setComponentState('dmTypingMap', m2)
           }, 3000)
-          useUIStore.getState().setComponentState('otherUserTyping', true)
+          setChatComponentState('otherUserTyping', true)
           if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
-          typingExpireRef.current = setTimeout(() => useUIStore.getState().setComponentState('otherUserTyping', false), 3000)
+          typingExpireRef.current = setTimeout(() => setChatComponentState('otherUserTyping', false), 3000)
         }
       })
       .subscribe()
@@ -401,12 +544,12 @@ export function ChatScreen(props: ChatScreenProps) {
       supabase.removeChannel(channel)
       if (typingExpireRef.current) clearTimeout(typingExpireRef.current)
       typingChannelRef.current = null
-      useUIStore.getState().setComponentState('otherUserTyping', false)
-      useUIStore.getState().setComponentState('openReactionMessageId', null)
-      useUIStore.getState().setComponentState('activeMessageActions', null)
-      useUIStore.getState().setComponentState('reactionDetail', null)
+      setChatComponentState('otherUserTyping', false)
+      setChatComponentState('openReactionMessageId', null)
+      setChatComponentState('activeMessageActions', null)
+      setChatComponentState('reactionDetail', null)
     }
-  }, [conversationId, currentUserId, myPublicKey, otherUserPublicKey, networkIsOnline])
+  }, [conversationId, currentUserId, myPublicKey, otherUserPublicKey, networkIsOnline, setChatComponentState])
 
   useEffect(() => {
     if (!networkIsOnline || !conversationId || !currentUserId) return
@@ -422,7 +565,7 @@ export function ChatScreen(props: ChatScreenProps) {
         let cid = conversationId
         if (!cid) {
           const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: pm.otherUserId })
-          if (data) { cid = data; setConversationId(data) } else continue
+          if (data) { cid = data; conversationIdRef.current = data; setConversationId(data) } else continue
         }
         const { error } = await supabase.from('messages').insert({
           id: pm.id,
@@ -431,6 +574,7 @@ export function ChatScreen(props: ChatScreenProps) {
           content: pm.encryptedContent ? null : pm.content,
           encrypted_content: pm.encryptedContent,
           message_type: pm.messageType ?? 'text',
+          metadata: encryptedPreviewMetadata(pm.metadata),
           status: 'sent',
           reply_to: pm.replyToId,
           created_at: pm.createdAt,
@@ -441,12 +585,13 @@ export function ChatScreen(props: ChatScreenProps) {
           const msg: LocalMessage = existing
             ? { ...existing, status: 'sent' }
             : {
-                id: pm.id, content: pm.content, messageType: pm.messageType ?? 'text', metadata: null,
+                id: pm.id, content: pm.content, messageType: pm.messageType ?? 'text', metadata: pm.metadata ?? null,
                 timestamp: new Date(pm.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 createdAt: pm.createdAt, isSent: true, isRead: true, status: 'sent',
                 replyTo: null, isDeleted: false,
               }
           await upsertMessage(cid, msg) // store under the now-resolved conversation key
+          enrichDmLinkPreview(pm.id, [cid], pm.content).catch(() => {})
         }
       }
     }
@@ -525,27 +670,28 @@ export function ChatScreen(props: ChatScreenProps) {
   }, [networkIsOnline, currentUserId])
 
   function useComponentState(key: string, defaultValue: any) {
+    const mappedKey = mapComponentKey(key)
     const [value, setValue] = useState(
-      () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
+      () => (useUIStore.getState().componentState as Record<string, any>)?.[mappedKey] ?? defaultValue
     )
     useEffect(() => {
       const unsub = useUIStore.subscribe((state: any, prevState: any) => {
-        const next = state.componentState?.[key]
-        const prev = prevState.componentState?.[key]
+        const next = state.componentState?.[mappedKey]
+        const prev = prevState.componentState?.[mappedKey]
         if (next !== prev) setValue(next ?? defaultValue)
       })
       return unsub
-    }, [key, defaultValue])
+    }, [mappedKey, defaultValue])
     return [value, (newVal: any) => {
       if (typeof newVal === 'function') {
         setValue((prev: any) => {
           const r = newVal(prev)
-          useUIStore.getState().setComponentState(key, r)
+          useUIStore.getState().setComponentState(mappedKey, r)
           return r
         })
       } else {
         setValue(newVal)
-        useUIStore.getState().setComponentState(key, newVal)
+        useUIStore.getState().setComponentState(mappedKey, newVal)
       }
     }] as [any, (v: any) => void]
   }
@@ -602,7 +748,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
     // Key the optimistic row under the active conversation (or the pending key if
     // the conversation isn't created yet). All writes go through the DB → emit.
-    const mediaKey = ((useUIStore.getState().componentState as any)?.conversationId as string | null) ?? `pending_${otherUserId}`
+    const mediaKey = conversationIdRef.current ?? `pending_${otherUserId}`
 
     // Display metadata (plaintext, kept locally so the sender sees the right card /
     // thumbnail instantly and offline). Filenames + thumbnails are encrypted before
@@ -678,7 +824,7 @@ export function ChatScreen(props: ChatScreenProps) {
     await upsertMessage(mediaKey, realMsg)
 
     const isOnline = useNetworkStore.getState().isOnline
-    const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+    const liveCid = conversationIdRef.current
 
     if (!isOnline) {
       await savePendingMessage(currentUserId, {
@@ -697,7 +843,7 @@ export function ChatScreen(props: ChatScreenProps) {
     let cid = liveCid
     if (!cid) {
       const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
-      if (data) { cid = data; setConversationId(data) } else return
+      if (data) { cid = data; conversationIdRef.current = data; setConversationId(data) } else return
     }
 
     let encContent: string | null = null
@@ -748,7 +894,7 @@ export function ChatScreen(props: ChatScreenProps) {
     })
 
     const isOnline = useNetworkStore.getState().isOnline
-    const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+    const liveCid = conversationIdRef.current
     const newId = crypto.randomUUID()
     const createdAt = new Date().toISOString()
 
@@ -784,7 +930,7 @@ export function ChatScreen(props: ChatScreenProps) {
     let cid = liveCid
     if (!cid) {
       const { data } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
-      if (data) { cid = data; setConversationId(data) } else return
+      if (data) { cid = data; conversationIdRef.current = data; setConversationId(data) } else return
     }
 
     const { error } = await supabase.from('messages').insert({
@@ -889,6 +1035,18 @@ export function ChatScreen(props: ChatScreenProps) {
     }
   }
 
+  const ScopedMessageBubble = (bubbleProps: any) => (
+    <MessageBubble
+      {...bubbleProps}
+      useComponentState={useComponentState}
+      getComponentState={getChatComponentState}
+      scopeKey={scopeId}
+    />
+  )
+  const ScopedComposerBar = (composerProps: any) => (
+    <ComposerBar {...composerProps} useComponentState={useComponentState} scopeKey={scopeId} />
+  )
+
   const chatScreenScope = {
     contactId,
     otherUserId,
@@ -899,41 +1057,45 @@ export function ChatScreen(props: ChatScreenProps) {
     contactAvatarColor,
     isOnline,
     lastSeen,
-    messages: otherUserId ? realMessages : storeMessages,
+    messages: otherUserId ? (realMessages.length ? realMessages : (msgCache.get(otherUserId) ?? EMPTY_MESSAGES)) : storeMessages,
     isOffline: !networkIsOnline,
-    MessageBubble,
+    MessageBubble: ScopedMessageBubble,
+    ChatMessageViewport,
     DateSeparator,
-    ComposerBar,
+    ComposerBar: ScopedComposerBar,
     BackButton,
     ProfileImage,
     ChatName,
     OnlineStatus,
     TypingIndicator,
-    onBack: () => onBack?.(),
-    onViewContactProfile: () => onViewContactProfile?.(),
+    onBack: () => onBackRef.current?.(),
+    onViewContactProfile: () => onViewContactProfileRef.current?.(),
     onAttach: () => setShowAttachSheet(true),
     replyingTo,
     onReplyTo: (target: any) => {
       const next = { id: target.id, content: target.content, senderLabel: target.isSent ? 'You' : contactName }
       setReplyingTo(next)
-      useUIStore.getState().setComponentState('replyingTo', next)
+      setChatComponentState('replyingTo', next)
     },
     onCancelReply: () => {
       setReplyingTo(null)
-      useUIStore.getState().setComponentState('replyingTo', null)
+      setChatComponentState('replyingTo', null)
     },
     onJumpToReply: (targetId: string) => {
       if (typeof document === 'undefined') return
       const el = document.getElementById('msg-' + targetId)
       if (!el) return
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      useUIStore.getState().setComponentState('highlightedMessageId', targetId)
-      setTimeout(() => useUIStore.getState().setComponentState('highlightedMessageId', null), 1500)
+      setChatComponentState('highlightedMessageId', targetId)
+      setTimeout(() => setChatComponentState('highlightedMessageId', null), 1500)
     },
+    loadOlderMessages,
+    hasOlderMessages,
     currentUserId,
     onToggleReaction: (messageId: string, emoji: string) => {
-      const liveUserId = useUIStore.getState().componentState?.currentUserId
-      const liveConversationId = useUIStore.getState().componentState?.conversationId
+      const liveUserId = currentUserId
+      const liveConversationId = conversationIdRef.current
+      if (!liveUserId) return
       const isOnline = useNetworkStore.getState().isOnline
       const key = 'reactions:' + messageId
       const current = (useUIStore.getState().componentState?.[key] ?? []) as any[]
@@ -949,7 +1111,7 @@ export function ChatScreen(props: ChatScreenProps) {
       } else {
         useUIStore.getState().setComponentState(key, [...current.filter((r: any) => r.user_id !== liveUserId), { user_id: liveUserId, emoji }])
         if (liveConversationId) upsertCachedReaction(messageId, liveUserId, liveConversationId, emoji).catch(() => {})
-        if (isOnline) {
+        if (isOnline && liveConversationId) {
           supabase.from('message_reactions').upsert({ message_id: messageId, conversation_id: liveConversationId, user_id: liveUserId, emoji }, { onConflict: 'message_id,user_id' }).then()
         } else if (liveConversationId) {
           savePendingReaction({ messageId, userId: liveUserId, conversationId: liveConversationId, emoji, action: 'add' }).catch(() => {})
@@ -977,11 +1139,13 @@ export function ChatScreen(props: ChatScreenProps) {
       // Read live values from stores — the scope is frozen at compile time so
       // closed-over React state (networkIsOnline, conversationId) would be stale
       const isOnline = useNetworkStore.getState().isOnline
-      const liveCid = (useUIStore.getState().componentState as any)?.conversationId as string | null ?? null
+      const liveCid = conversationIdRef.current
 
       const newId = crypto.randomUUID()
-      const replyToSnapshot = useUIStore.getState().componentState?.replyingTo ?? null
+      const replyToSnapshot = getChatComponentState('replyingTo', null)
       const replyToId = replyToSnapshot?.id ?? null
+      const previewUrl = firstPreviewableUrl(content)
+      const localMetadata = previewUrl ? { linkPreview: buildFallbackLinkPreview(previewUrl) } : null
 
       let encryptedContent: string | null = null
       if (myPrivateKey && otherUserPublicKey) {
@@ -998,7 +1162,7 @@ export function ChatScreen(props: ChatScreenProps) {
         id: newId,
         content,
         messageType: 'text',
-        metadata: null,
+        metadata: localMetadata,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         createdAt: new Date().toISOString(),
         isSent: true,
@@ -1009,10 +1173,11 @@ export function ChatScreen(props: ChatScreenProps) {
       }
 
       setReplyingTo(null)
-      useUIStore.getState().setComponentState('replyingTo', null)
+      setChatComponentState('replyingTo', null)
 
       // optimistic write → DB → emit → local-first re-read shows it instantly
       await upsertMessage(cacheKey, newMsg)
+      await updateCachedContactMessage(currentUserId, otherUserId, content, newMsg.timestamp)
 
       if (!isOnline) {
         await savePendingMessage(currentUserId, {
@@ -1023,6 +1188,7 @@ export function ChatScreen(props: ChatScreenProps) {
           encryptedContent,
           replyToId,
           createdAt: newMsg.createdAt,
+          metadata: localMetadata,
         })
         return
       }
@@ -1030,7 +1196,7 @@ export function ChatScreen(props: ChatScreenProps) {
       let cid = liveCid
       if (!cid) {
         const { data, error } = await supabase.rpc('get_or_create_conversation', { p_user_a: currentUserId, p_user_b: otherUserId })
-        if (data) { cid = data; setConversationId(data) }
+        if (data) { cid = data; conversationIdRef.current = data; setConversationId(data) }
         else { console.error('Failed to get or create conversation:', error); return }
       }
 
@@ -1040,6 +1206,7 @@ export function ChatScreen(props: ChatScreenProps) {
         sender_id: currentUserId,
         content: encryptedContent ? null : content,
         encrypted_content: encryptedContent,
+        metadata: encryptedPreviewMetadata(localMetadata),
         status: 'sent',
         reply_to: replyToId,
       }).select('id, created_at').single()
@@ -1048,6 +1215,13 @@ export function ChatScreen(props: ChatScreenProps) {
         console.error('Failed to insert message:', error)
         const existing = messagesRef.current.find(m => m.id === newId)
         if (existing) await upsertMessage(cacheKey, { ...existing, status: 'failed', content: '🔒 failed to send' })
+      } else {
+        const resolvedCid = cid
+        if (!resolvedCid) return
+        const sentMsg: LocalMessage = { ...newMsg, status: 'sent' }
+        await upsertMessage(cacheKey, sentMsg)
+        if (resolvedCid !== cacheKey) await upsertMessage(resolvedCid, sentMsg)
+        enrichDmLinkPreview(newId, resolvedCid === cacheKey ? [cacheKey] : [cacheKey, resolvedCid], content).catch(() => {})
       }
     },
     LucideReply: CornerUpLeft,
@@ -1058,7 +1232,7 @@ export function ChatScreen(props: ChatScreenProps) {
     onDeleteMessage: async (messageId: string) => {
       // optimistic local delete → DB → emit → re-read; then persist to server
       const existing = messagesRef.current.find(m => m.id === messageId)
-      const key = conversationId ?? (otherUserId ? `pending_${otherUserId}` : null)
+      const key = conversationIdRef.current ?? (otherUserId ? `pending_${otherUserId}` : null)
       if (existing && key) await upsertMessage(key, { ...existing, isDeleted: true, content: '' })
       await supabase.from('messages').update({ deleted_at: new Date().toISOString() }).eq('id', messageId).eq('sender_id', currentUserId)
     },
@@ -1070,14 +1244,16 @@ export function ChatScreen(props: ChatScreenProps) {
       const { data: profs } = await supabase.from('profiles').select('id, display_name, username').in('id', userIds)
       const nameMap: Record<string, string> = {}
       if (profs) profs.forEach((p: any) => { nameMap[p.id] = p.display_name || p.username || 'Unknown' })
-      const liveUid = useUIStore.getState().componentState?.currentUserId as string
+      const liveUid = currentUserId as string
       const enriched = reactions.map((r: any) => ({ emoji: r.emoji, name: nameMap[r.user_id] || 'Unknown', isMe: r.user_id === liveUid }))
-      useUIStore.getState().setComponentState('reactionDetail', { messageId, reactions: enriched })
+      setChatComponentState('reactionDetail', { messageId, reactions: enriched })
     },
     useComponentState,
   }
 
-  sendMsgRef.current = chatScreenScope.sendMessage as any
+  useEffect(() => {
+    sendMsgRef.current = chatScreenScope.sendMessage as any
+  })
 
   // Plain serializable contacts for the forward / share-contact picker sources.
   const pickerContacts = contacts.map(c => ({
@@ -1126,11 +1302,11 @@ export function ChatScreen(props: ChatScreenProps) {
 
   return (
     <>
-      <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} />
+      <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} scopeKey={scopeId} />
 
       {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}
 
-      <RenderifyHost code={componentSources?.chatAttachToast ?? null} storeActions={{ useComponentState }} />
+      <RenderifyHost code={componentSources?.chatAttachToast ?? null} storeActions={{ useComponentState }} scopeKey={scopeId} />
 
       {/* Hidden file inputs */}
       <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={async e => {
@@ -1150,6 +1326,7 @@ export function ChatScreen(props: ChatScreenProps) {
       {attachConfig?.popup && showAttachSheet && createPortal(
         <RenderifyHost
           code={bottomSheetSource}
+          scopeKey={scopeId}
           storeActions={{
             sheetId: 'attachSheet',
             title: attachConfig.popup.title,
@@ -1163,19 +1340,19 @@ export function ChatScreen(props: ChatScreenProps) {
 
       {/* Voice recording overlay */}
       {isRecording && createPortal(
-        <RenderifyHost code={componentSources?.chatRecordingOverlay ?? null} storeActions={recordingOverlayScope} />,
+        <RenderifyHost code={componentSources?.chatRecordingOverlay ?? null} storeActions={recordingOverlayScope} scopeKey={scopeId} />,
         document.body
       )}
 
       {/* Forward picker */}
       {showForwardPicker && createPortal(
-        <RenderifyHost code={componentSources?.chatForwardPicker ?? null} storeActions={forwardPickerScope} />,
+        <RenderifyHost code={componentSources?.chatForwardPicker ?? null} storeActions={forwardPickerScope} scopeKey={scopeId} />,
         document.body
       )}
 
       {/* Spigens contact picker */}
       {showContactPicker && createPortal(
-        <RenderifyHost code={componentSources?.chatContactPicker ?? null} storeActions={contactPickerScope} />,
+        <RenderifyHost code={componentSources?.chatContactPicker ?? null} storeActions={contactPickerScope} scopeKey={scopeId} />,
         document.body
       )}
     </>

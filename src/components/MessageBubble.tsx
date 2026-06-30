@@ -8,7 +8,7 @@ import { ReplyQuote } from './ReplyQuote'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
 import { NativeMediaBubble } from './NativeMediaBubble'
-import { firstPreviewableUrl } from '@/lib/linkPreview'
+import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview } from '@/lib/linkPreview'
 import { LinkPreviewCard } from './LinkPreviewCard'
 
 export interface MessageBubbleProps {
@@ -29,6 +29,9 @@ export interface MessageBubbleProps {
   onShowReactors?: (messageId: string) => void
   onOpenContactCard?: (contact: { id: string; name: string; username?: string; avatarUrl?: string | null }) => void
   isDeleted?: boolean
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  getComponentState?: (key: string, defaultValue?: any) => any
+  scopeKey?: string
 }
 
 export function MessageBubble(props: MessageBubbleProps) {
@@ -43,7 +46,9 @@ export function MessageBubble(props: MessageBubbleProps) {
   let resolvedContent = content
   let resolvedMetadata = metadata ?? null
   {
-    const all = (useUIStore.getState().componentState as any)?.chatMessages as any[] | undefined
+    const all = props.getComponentState
+      ? props.getComponentState('chatMessages', [])
+      : ((useUIStore.getState().componentState as any)?.chatMessages as any[] | undefined)
     const self = all && all.find((m: any) => m.id === id)
     if (self) {
       if (!resolvedType) {
@@ -57,6 +62,9 @@ export function MessageBubble(props: MessageBubbleProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const messageBubbleSource = componentSources?.messageBubble ?? null
   const previewUrl = !isDeleted && (!resolvedType || resolvedType === 'text') ? firstPreviewableUrl(resolvedContent) : null
+  const linkPreview = previewUrl
+    ? (normalizeLinkPreview(resolvedMetadata?.linkPreview, previewUrl) ?? buildFallbackLinkPreview(previewUrl))
+    : null
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -84,6 +92,14 @@ export function MessageBubble(props: MessageBubbleProps) {
     }] as [any, (v: any) => void]
   }
 
+  const scopedUseComponentState = props.useComponentState ?? useComponentState
+  const ScopedMessageReactions = (reactionProps: any) => (
+    <MessageReactions {...reactionProps} useComponentState={scopedUseComponentState} scopeKey={props.scopeKey} />
+  )
+  const ScopedReactionPicker = (pickerProps: any) => (
+    <ReactionPicker {...pickerProps} useComponentState={scopedUseComponentState} scopeKey={props.scopeKey} />
+  )
+
   const isMedia = resolvedType && resolvedType !== 'text'
 
   if (isMedia) {
@@ -105,6 +121,8 @@ export function MessageBubble(props: MessageBubbleProps) {
         onShowReactors={onShowReactors}
         onOpenContactCard={onOpenContactCard}
         isDeleted={isDeleted}
+        useComponentState={scopedUseComponentState}
+        scopeKey={props.scopeKey}
       />
     )
   }
@@ -113,9 +131,9 @@ export function MessageBubble(props: MessageBubbleProps) {
     <>
       <RenderifyHost
         code={messageBubbleSource}
-        storeActions={{ id, content, messageType: messageType || 'text', timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors: onShowReactors ?? null, isDeleted: isDeleted ?? false, MessageStatus, ReplyQuote, MessageReactions, ReactionPicker, useComponentState }}
+        scopeKey={props.scopeKey}
+        storeActions={{ id, content: resolvedContent, messageType: resolvedType || 'text', metadata: resolvedMetadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors: onShowReactors ?? null, isDeleted: isDeleted ?? false, linkPreview, LinkPreviewCard, MessageStatus, ReplyQuote, MessageReactions: ScopedMessageReactions, ReactionPicker: ScopedReactionPicker, useComponentState: scopedUseComponentState }}
       />
-      {previewUrl && <LinkPreviewCard url={previewUrl} isSent={isSent} />}
     </>
   )
 }

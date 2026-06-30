@@ -6,13 +6,15 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 
 export interface AttachButtonProps {
   onAttach: () => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function AttachButton(props: AttachButtonProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.attachButton ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -41,7 +43,8 @@ export function AttachButton(props: AttachButtonProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ ...props, useComponentState }}
+      scopeKey={props.scopeKey}
+      storeActions={{ ...props, useComponentState: props.useComponentState ?? useLocalComponentState }}
     />
   )
 }

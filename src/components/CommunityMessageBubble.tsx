@@ -7,7 +7,7 @@ import { ProfileImage } from './ProfileImage'
 import { MessageReactions } from './MessageReactions'
 import { ReactionPicker } from './ReactionPicker'
 import { NativeMediaBubble } from './NativeMediaBubble'
-import { firstPreviewableUrl } from '@/lib/linkPreview'
+import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview } from '@/lib/linkPreview'
 import { LinkPreviewCard } from './LinkPreviewCard'
 
 export interface CommunityMessageBubbleProps {
@@ -60,6 +60,9 @@ export function CommunityMessageBubble(props: CommunityMessageBubbleProps) {
   const isMedia = !isDeleted && !!resolvedType && resolvedType !== 'text' && resolvedType !== 'system'
 
   const previewUrl = !isDeleted && !isMedia ? firstPreviewableUrl(resolvedContent) : null
+  const linkPreview = previewUrl
+    ? (normalizeLinkPreview(resolvedMeta?.linkPreview, previewUrl) ?? buildFallbackLinkPreview(previewUrl))
+    : null
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(() => (useUIStore.getState().componentState as Record<string,any>)?.[key] ?? defaultValue)
@@ -115,8 +118,7 @@ export function CommunityMessageBubble(props: CommunityMessageBubbleProps) {
   // ── Text / deleted / system: the GenUI bubble source (+ link preview) ──
   return (
     <>
-      <RenderifyHost code={source} storeActions={{ id, content: resolvedContent, timestamp, isMine, senderName, senderAvatar: senderAvatar ?? null, senderInitials, senderId: senderId ?? null, onSenderTap: onSenderTap ?? null, isDeleted: isDeleted ?? false, currentUserId, onToggleReaction: onToggleReaction ?? null, onShowReactors: onShowReactors ?? null, replyToData: replyToData ?? null, onJumpToReply: onJumpToReply ?? null, onReplyTo: onReplyTo ?? null, MessageReactions, ReactionPicker, ProfileImage, useComponentState }} />
-      {previewUrl && <LinkPreviewCard url={previewUrl} isSent={isMine} leftInset={52} />}
+      <RenderifyHost code={source} storeActions={{ id, content: resolvedContent, messageType: resolvedType || 'text', metadata: resolvedMeta, timestamp, isMine, senderName, senderAvatar: senderAvatar ?? null, senderInitials, senderId: senderId ?? null, onSenderTap: onSenderTap ?? null, isDeleted: isDeleted ?? false, currentUserId, onToggleReaction: onToggleReaction ?? null, onShowReactors: onShowReactors ?? null, replyToData: replyToData ?? null, onJumpToReply: onJumpToReply ?? null, onReplyTo: onReplyTo ?? null, linkPreview, LinkPreviewCard, MessageReactions, ReactionPicker, ProfileImage, useComponentState }} />
     </>
   )
 }

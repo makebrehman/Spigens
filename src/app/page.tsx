@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { preloadGenUI } from '@/lib/renderify'
+import { ArrowLeft, Search, Plus, MessageSquare, Users, User, LayoutGrid, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
+import { motion, AnimatePresence } from 'motion/react'
 import { useContactStore } from '@/stores/contactStore'
 import { useUIStore } from '@/stores/uiStore'
 import { dispatchAction } from '@/lib/actionDispatcher'
@@ -27,8 +30,8 @@ import { useNetworkStore } from '@/stores/networkStore'
 import { AuthScreen } from '@/components/AuthScreen'
 import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
-import { cacheContacts, getCachedContacts, getCachedMessages, getCachedCommunityList } from '@/lib/offlineCache'
-import { dmMirror } from '@/lib/messageMirror'
+import { cacheContacts, getCachedContacts, getCachedMessagesPage, getCachedCommunityList, getCachedReactions } from '@/lib/offlineCache'
+import { dmMirror, reactionMirror } from '@/lib/messageMirror'
 import { warmMediaMirror } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb, isNativeSqliteActive, isUsingFallback, onInitProgress, getInitDiagnostics } from '@/lib/localDb'
@@ -111,6 +114,8 @@ export default function Home() {
   const [showSearch, setShowSearch] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [hydrated, setHydrated] = useState(false)
+  const [mediaWarmingStatus, setMediaWarmingStatus] = useState<'idle' | 'warming' | 'done'>('idle')
+  const [hasInitiallyWarmed, setHasInitiallyWarmed] = useState(false)
   const [activeChatUser, setActiveChatUser] = useState<any>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [contactProfileUser, setContactProfileUser] = useState<any>(null)
@@ -130,6 +135,23 @@ export default function Home() {
   const [pendingDeleteContact, setPendingDeleteContact] = useState<Contact | null>(null)
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set())
   const [longPressedArchivedContact, setLongPressedArchivedContact] = useState<Contact | null>(null)
+
+  // Kept-alive cache states for non-DM overlays. DM chats are keyed per contact so
+  // send/header/message state cannot bleed between conversations.
+  const [cachedContactProfileUser, setCachedContactProfileUser] = useState<any>(null)
+  if (contactProfileUser && cachedContactProfileUser?.id !== contactProfileUser.id) setCachedContactProfileUser(contactProfileUser)
+
+  const [cachedCommunity, setCachedCommunity] = useState<any>(null)
+  if (activeCommunity && cachedCommunity?.id !== activeCommunity.id) setCachedCommunity(activeCommunity)
+
+  const [cachedCommunityProfile, setCachedCommunityProfile] = useState<any>(null)
+  if (activeCommunityProfile && cachedCommunityProfile?.id !== activeCommunityProfile.id) setCachedCommunityProfile(activeCommunityProfile)
+
+  const [cachedCreateCommunity, setCachedCreateCommunity] = useState(false)
+  if (showCreateCommunity && !cachedCreateCommunity) setCachedCreateCommunity(true)
+
+  const [cachedDiscover, setCachedDiscover] = useState(false)
+  if (showDiscover && !cachedDiscover) setCachedDiscover(true)
 
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
 
@@ -233,6 +255,21 @@ export default function Home() {
     if (isOnline && componentSources) warmIconsFromSources(componentSources)
   }, [isOnline, componentSources])
 
+  // Pre-warm the heavily used GenUI components silently in the background
+  useEffect(() => {
+    if (componentSources) {
+      preloadGenUI([
+        componentSources.chatScreen,
+        componentSources.discover,
+        componentSources.communityChat,
+        componentSources.communityProfile,
+        componentSources.contactProfile,
+        componentSources.createCommunity,
+        componentSources.bottomSheet,
+      ])
+    }
+  }, [componentSources])
+
   const topAppBarSource = componentSources?.topAppBar
   const searchBarSource = componentSources?.searchBar
   const bottomSheetSource = componentSources?.bottomSheet
@@ -253,14 +290,15 @@ export default function Home() {
   const genuiOwnerUserId = useUIStore(state => state.ownerUserId)
   const homeLayoutOrder = useUIStore(state => (state.componentState as any)?.['homeLayout.order']) as string[] | undefined
   const genUIEnabled = useNavStore(state => state.isGenUIEnabled())
-  const navScreen = useNavStore(state => state.screen)
+  const navScreen = useNavStore(state => state.stack[state.stack.length - 1]?.name)
   const navigateTo = useNavStore(state => state.navigateTo)
+  const replaceNav = useNavStore(state => state.replace)
 
   useEffect(() => {
     if (isAuthenticated && profile?.public_key && navScreen === 'auth') {
-      navigateTo('home')
+      replaceNav('home')
     }
-  }, [isAuthenticated, profile?.public_key, navScreen, navigateTo])
+  }, [isAuthenticated, profile?.public_key, navScreen, replaceNav])
 
   // load conversations on mount and when returning from chat
   const fetchConversations = useCallback(async () => {
@@ -344,12 +382,30 @@ export default function Home() {
       // first open after a cold start (the mirror is empty until this runs).
       for (const c of cached) {
         if (c.conversationId) {
-          getCachedMessages(c.conversationId).then(m => { if (m) dmMirror.set(c.id, m) }).catch(() => {})
+            getCachedMessagesPage(c.conversationId, { limit: 50 }).then(m => { if (m) dmMirror.set(c.id, m) }).catch(() => {})
+          getCachedReactions(c.conversationId).then(r => { if (r) reactionMirror.set(c.conversationId, r) }).catch(() => {})
         }
       }
       // Pre-warm community avatars into the media mirror so community photos resolve
       // to their on-device file the moment the Communities tab/profile opens.
-      if (user?.id) getCachedCommunityList(user.id).then(list => { if (list) warmMediaMirror(list.map((c: any) => c.avatar_url)) }).catch(() => {})
+      if (user?.id) {
+        setMediaWarmingStatus('warming')
+        try {
+          const list = await getCachedCommunityList(user.id)
+          const avatarUrls = []
+          if (list) avatarUrls.push(...list.map((c: any) => c.avatar_url))
+          for (const c of cached) if (c.avatarUrl) avatarUrls.push(c.avatarUrl)
+          await warmMediaMirror(avatarUrls)
+        } catch {
+          // ignore
+        } finally {
+          setMediaWarmingStatus('done')
+          setHasInitiallyWarmed(true)
+        }
+      } else {
+        setMediaWarmingStatus('done')
+        setHasInitiallyWarmed(true)
+      }
     }
     reload()
     const unsub = subscribeDb(topics.contacts(), reload)
@@ -883,7 +939,7 @@ export default function Home() {
   }
 
   // auth splash — checking session
-  if (authLoading || dbStatus === 'failed') return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
+  if (authLoading || dbStatus === 'failed') return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} mediaStatus={mediaWarmingStatus} />
 
   // auth screen — locked from GenUI entirely
   if (!isAuthenticated) return <AuthScreen />
@@ -910,103 +966,16 @@ export default function Home() {
   //  - fresh device / different account / no cache, online -> wait for the server fetch
   const cacheMatchesUser = genuiOwnerUserId != null && genuiOwnerUserId === user?.id
   const waitingForGenUI = isOnline && !genuiSynced && (genuiVersions.length === 0 || !cacheMatchesUser)
-  if (!hydrated || waitingForGenUI) return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} />
+  if (!hydrated || waitingForGenUI || !hasInitiallyWarmed) return <LaunchSplash dbStatus={dbStatus} dbStep={dbStep} dbDiag={dbDiag} mediaStatus={hasInitiallyWarmed ? 'done' : mediaWarmingStatus} />
 
   if (showSettings) {
     return <SettingsScreen onBack={() => setShowSettings(false)} />
   }
 
-  if (activeCommunityProfile) {
-    return (
-      <CommunityProfileScreen
-        communityId={activeCommunityProfile.id}
-        communityName={activeCommunityProfile.name}
-        communityType={activeCommunityProfile.type}
-        communityDescription={activeCommunityProfile.description}
-        communityAvatarUrl={activeCommunityProfile.avatar_url}
-        memberCount={activeCommunityProfile.member_count}
-        inviteMessageId={activeCommunityProfile._inviteMessageId || undefined}
-        userRole={activeCommunityProfile.userRole}
-        isMember={activeCommunityProfile.isMember ?? false}
-        onBack={() => setActiveCommunityProfile(null)}
-        onLeaveAndExit={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
-        onCommunityDeleted={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
-        onStartDMWithUser={(userId, displayName, username, avatarUrl) => {
-          setReturnToProfile(activeCommunityProfile)
-          setActiveCommunityProfile(null)
-          setActiveCommunity(null)
-          setShowCommunityList(false)
-          setActiveChatUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
-        }}
-        onViewMemberProfile={(userId, displayName, username, avatarUrl) => {
-          setContactProfileUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
-        }}
-      />
-    )
-  }
-
-  if (activeCommunity) {
-    return (
-      <CommunityChatScreen
-        key={activeCommunity.id}
-        communityId={activeCommunity.id}
-        communityName={activeCommunity.name}
-        communityType={activeCommunity.type}
-        isMember={activeCommunity.isMember ?? false}
-        userRole={activeCommunity.userRole}
-        memberCount={activeCommunity.member_count || 0}
-        onBack={() => setActiveCommunity(null)}
-        onViewCommunityProfile={() => setActiveCommunityProfile(activeCommunity)}
-        onSenderTap={(userId: string, name: string, avatarUrl: string | null) => {
-          setReturnToCommunity(activeCommunity)
-          setActiveCommunity(null)
-          setActiveChatUser({ id: userId, display_name: name, avatar_url: avatarUrl })
-        }}
-        communityAvatarUrl={activeCommunity.avatar_url ?? null}
-      />
-    )
-  }
-
-  if (showCreateCommunity) {
-    return (
-      <CreateCommunityScreen
-        onBack={() => setShowCreateCommunity(false)}
-        onCreated={(community) => { setShowCreateCommunity(false); setActiveCommunity(community) }}
-      />
-    )
-  }
-
-  if (showDiscover) {
-    return (
-      <DiscoverScreen
-        onBack={() => setShowDiscover(false)}
-        onOpenChat={(u) => { setShowDiscover(false); setActiveChatUser(u) }}
-      />
-    )
-  }
-
-  if (contactProfileUser) {
-    return (
-      <ContactProfileScreen
-        userId={contactProfileUser.id}
-        displayName={contactProfileUser.display_name || contactProfileUser.username}
-        username={contactProfileUser.username}
-        avatarUrl={contactProfileUser.avatar_url}
-        onBack={() => setContactProfileUser(null)}
-        onBlocked={() => { setContactProfileUser(null); fetchConversations() }}
-        onStartChat={() => { const u = contactProfileUser; setContactProfileUser(null); setActiveChatUser(u) }}
-        onOpenCommunity={(communityId: string, name: string, type: string, memberCount: number, avatarUrl: string | null) => {
-          setContactProfileUser(null)
-          setActiveCommunityProfile(null)
-          setReturnToProfile(null)
-          setActiveCommunity({ id: communityId, name, type, member_count: memberCount, avatar_url: avatarUrl, isMember: true, userRole: 'member' })
-          setShowCommunityList(false)
-        }}
-      />
-    )
-  }
-
   // --- chat screen ---
+  // DM chats use the old direct full-screen path. This avoids the overlay's blank
+  // background appearing before the GenUI chat tree is ready, while ChatScreen still
+  // owns the per-conversation state isolation fixes.
   if (activeChatUser) {
     return (
       <>
@@ -1054,6 +1023,8 @@ export default function Home() {
     )
   }
 
+  const isOverlayActive = activeCommunityProfile || activeCommunity || showCreateCommunity || showDiscover || contactProfileUser;
+
   // --- determine overlay/floating portal position ---
   const overlayPosition =
     barPosition === 'floating' && searchBarConfig.position
@@ -1095,7 +1066,10 @@ export default function Home() {
   })
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', background: '#0A0A0A' }}>
+      
+      {/* Home Feed Base (Kept mounted to preserve state/scroll, hidden if overlay is active to save rendering) */}
+      <div style={{ position: 'fixed', inset: 0, zIndex: 0, display: isOverlayActive ? 'none' : 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
       {/* Top header — editable via GenUI (componentSources.homeHeader) */}
       <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeHeaderScope} />
 
@@ -1332,7 +1306,101 @@ export default function Home() {
         </div>,
         document.body
       )}
-      <GenUIPanel isOpen={showGenUI} {...genuiPanelProps} />
+      <GenUIPanel isOpen={showGenUI && !isOverlayActive} {...genuiPanelProps} />
+      </div>
+
+      {/* Slide-in Overlays using Framer Motion (Kept-Alive Navigation Stack) */}
+      <>
+        <motion.div initial={{ x: '100%' }} animate={{ x: activeCommunityProfile ? 0 : '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 260 }} style={{ position: 'fixed', inset: 0, zIndex: 10, background: '#0A0A0A', pointerEvents: activeCommunityProfile ? 'auto' : 'none' }}>
+          {cachedCommunityProfile && (
+            <CommunityProfileScreen
+              communityId={cachedCommunityProfile.id}
+              communityName={cachedCommunityProfile.name}
+              communityType={cachedCommunityProfile.type}
+              communityDescription={cachedCommunityProfile.description}
+              communityAvatarUrl={cachedCommunityProfile.avatar_url}
+              memberCount={cachedCommunityProfile.member_count}
+              inviteMessageId={cachedCommunityProfile._inviteMessageId || undefined}
+              userRole={cachedCommunityProfile.userRole}
+              isMember={cachedCommunityProfile.isMember ?? false}
+              onBack={() => setActiveCommunityProfile(null)}
+              onLeaveAndExit={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
+              onCommunityDeleted={() => { setActiveCommunityProfile(null); setActiveCommunity(null) }}
+              onStartDMWithUser={(userId, displayName, username, avatarUrl) => {
+                setReturnToProfile(cachedCommunityProfile)
+                setActiveCommunityProfile(null)
+                setActiveCommunity(null)
+                setShowCommunityList(false)
+                setActiveChatUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
+              }}
+              onViewMemberProfile={(userId, displayName, username, avatarUrl) => {
+                setContactProfileUser({ id: userId, display_name: displayName, username, avatar_url: avatarUrl })
+              }}
+            />
+          )}
+        </motion.div>
+
+        <motion.div initial={{ x: '100%' }} animate={{ x: activeCommunity ? 0 : '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 260 }} style={{ position: 'fixed', inset: 0, zIndex: 10, background: '#0A0A0A', pointerEvents: activeCommunity ? 'auto' : 'none' }}>
+          {cachedCommunity && (
+            <CommunityChatScreen
+              communityId={cachedCommunity.id}
+              communityName={cachedCommunity.name}
+              communityType={cachedCommunity.type}
+              isMember={cachedCommunity.isMember ?? false}
+              userRole={cachedCommunity.userRole}
+              memberCount={cachedCommunity.member_count || 0}
+              onBack={() => setActiveCommunity(null)}
+              onViewCommunityProfile={() => setActiveCommunityProfile(cachedCommunity)}
+              onSenderTap={(userId: string, name: string, avatarUrl: string | null) => {
+                setReturnToCommunity(cachedCommunity)
+                setActiveCommunity(null)
+                setActiveChatUser({ id: userId, display_name: name, avatar_url: avatarUrl })
+              }}
+              communityAvatarUrl={cachedCommunity.avatar_url ?? null}
+            />
+          )}
+        </motion.div>
+
+        <motion.div initial={{ y: '100%' }} animate={{ y: showCreateCommunity ? 0 : '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 260 }} style={{ position: 'fixed', inset: 0, zIndex: 10, background: '#0A0A0A', pointerEvents: showCreateCommunity ? 'auto' : 'none' }}>
+          {cachedCreateCommunity && (
+            <CreateCommunityScreen
+              onBack={() => setShowCreateCommunity(false)}
+              onCreated={(community) => { setShowCreateCommunity(false); setActiveCommunity(community) }}
+            />
+          )}
+        </motion.div>
+
+        <motion.div initial={{ x: '100%' }} animate={{ x: showDiscover ? 0 : '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 260 }} style={{ position: 'fixed', inset: 0, zIndex: 10, background: '#0A0A0A', pointerEvents: showDiscover ? 'auto' : 'none' }}>
+          {cachedDiscover && (
+            <DiscoverScreen
+              onBack={() => setShowDiscover(false)}
+              onOpenChat={(u) => { setShowDiscover(false); setActiveChatUser(u) }}
+            />
+          )}
+        </motion.div>
+
+        <motion.div initial={{ x: '100%' }} animate={{ x: contactProfileUser ? 0 : '100%' }} transition={{ type: 'spring', damping: 26, stiffness: 260 }} style={{ position: 'fixed', inset: 0, zIndex: 10, background: '#0A0A0A', pointerEvents: contactProfileUser ? 'auto' : 'none' }}>
+          {cachedContactProfileUser && (
+            <ContactProfileScreen
+              userId={cachedContactProfileUser.id}
+              displayName={cachedContactProfileUser.display_name || cachedContactProfileUser.username}
+              username={cachedContactProfileUser.username}
+              avatarUrl={cachedContactProfileUser.avatar_url}
+              onBack={() => setContactProfileUser(null)}
+              onBlocked={() => { setContactProfileUser(null); fetchConversations() }}
+              onStartChat={() => { const u = cachedContactProfileUser; setContactProfileUser(null); setActiveChatUser(u) }}
+              onOpenCommunity={(communityId: string, name: string, type: string, memberCount: number, avatarUrl: string | null) => {
+                setContactProfileUser(null)
+                setActiveCommunityProfile(null)
+                setReturnToProfile(null)
+                setActiveCommunity({ id: communityId, name, type, member_count: memberCount, avatar_url: avatarUrl, isMember: true, userRole: 'member' })
+                setShowCommunityList(false)
+              }}
+            />
+          )}
+        </motion.div>
+
+      </>
     </div>
   )
 }

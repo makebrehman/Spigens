@@ -9,6 +9,8 @@ export interface MessageReactionsProps {
   currentUserId?: string
   onToggleReaction?: (messageId: string, emoji: string) => void
   onShowReactors?: (messageId: string) => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function MessageReactions(props: MessageReactionsProps) {
@@ -16,7 +18,7 @@ export function MessageReactions(props: MessageReactionsProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.messageReactions ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -45,7 +47,8 @@ export function MessageReactions(props: MessageReactionsProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ messageId, currentUserId, onToggleReaction, onShowReactors, useComponentState }}
+      scopeKey={props.scopeKey}
+      storeActions={{ messageId, currentUserId, onToggleReaction, onShowReactors, useComponentState: props.useComponentState ?? useLocalComponentState }}
     />
   )
 }

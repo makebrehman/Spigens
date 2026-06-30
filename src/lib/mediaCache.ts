@@ -165,13 +165,59 @@ export async function cacheLocalBlob(remoteUrl: string, blob: Blob, kind?: strin
 }
 
 /** Download a remote URL and store it on disk. Returns a displayable local URI. */
-export async function cacheRemoteMedia(remoteUrl: string | null | undefined, kind?: string): Promise<string | null> {
+export async function cacheRemoteMedia(remoteUrl: string | null | undefined, kind?: string, opts?: { manual?: boolean }): Promise<string | null> {
   if (!remoteUrl) return null
   if (!isNative()) return remoteUrl
   if (isUsingFallback()) return remoteUrl
   const existing = await getCachedMediaUri(remoteUrl)
   if (existing) return existing
   try {
+    const ext = (remoteUrl.split('?')[0].split('.').pop()?.toLowerCase()) || 'bin'
+    const name = `${hashUrl(remoteUrl)}.${ext}`
+    const path = `${ROOT}/${name}`
+
+    if (isNative() && opts?.manual) {
+      try {
+        const { CapacitorDownloader: Downloader } = await import('@capgo/capacitor-downloader')
+      await Filesystem.mkdir({ directory: DIR, path: ROOT, recursive: true }).catch(() => {})
+      const { uri } = await Filesystem.getUri({ directory: DIR, path })
+
+      const downloadedUri = await new Promise<string>((resolve, reject) => {
+        let done = false
+        let l1: any, l2: any
+        const cleanup = () => { if(l1) l1.remove(); if(l2) l2.remove(); }
+
+        Downloader.addListener('downloadCompleted', async (res) => {
+          if (res.id === name && !done) {
+            done = true; cleanup();
+            const stat = await Filesystem.stat({ directory: DIR, path }).catch(() => null)
+            await recordCache(remoteUrl, path, kind, Number((stat as any)?.size) || 0)
+            const displayUri = Capacitor.convertFileSrc(uri)
+            displayMirror.set(remoteUrl, displayUri)
+            resolve(displayUri)
+          }
+        }).then(l => l1 = l)
+
+        Downloader.addListener('downloadFailed', (err) => {
+          if (err.id === name && !done) {
+            done = true; cleanup(); reject(new Error('Native download failed: ' + err.error))
+          }
+        }).then(l => l2 = l)
+
+        Downloader.download({
+          id: name,
+          url: remoteUrl,
+          destination: uri.replace('file://', '')
+        }).catch(e => {
+          if (!done) { done = true; cleanup(); reject(e); }
+        })
+      })
+      return downloadedUri
+    } catch (e) {
+      console.warn('Native download fallback', e)
+    }
+    }
+
     const res = await fetch(remoteUrl)
     if (!res.ok) return null
     const blob = await res.blob()
@@ -189,14 +235,14 @@ export async function cacheRemoteMedia(remoteUrl: string | null | undefined, kin
 export async function resolveMedia(
   remoteUrl: string | null | undefined,
   kind?: string,
-  opts?: { download?: boolean },
+  opts?: { download?: boolean, manual?: boolean },
 ): Promise<string | null> {
   if (!remoteUrl) return null
   if (!isNative()) return remoteUrl
   const cached = await getCachedMediaUri(remoteUrl)
   if (cached) return cached
   if (opts?.download === false) return null
-  return cacheRemoteMedia(remoteUrl, kind)
+  return cacheRemoteMedia(remoteUrl, kind, opts)
 }
 
 export async function isMediaCached(remoteUrl: string | null | undefined): Promise<boolean> {

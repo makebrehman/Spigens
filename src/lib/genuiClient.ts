@@ -301,7 +301,8 @@ the component receives this scope:
 - contactAvatarColor: hex color string
 - isOnline: boolean
 - messages: array of { id, contactId, content, timestamp, isSent, isRead }
-- MessageBubble: the message bubble component — render via React.createElement(MessageBubble, { key: msg.id, ...msg })
+- ChatMessageViewport: the app-owned professional message list. Render messages ONLY through this component.
+- MessageBubble: the message bubble component used by ChatMessageViewport
 - onBack(): navigate back to contact list
 - onAttach(): open the attach sheet
 - useComponentState: persistent state hook, same syntax as React.useState
@@ -309,16 +310,17 @@ the component receives this scope:
 rules for the source:
 1. define a component named exactly "Component"
 2. use React.createElement (NOT JSX)
-3. no imports — React, useState, useEffect, useRef, motion, AnimatePresence, Icon, MessageBubble are all in scope
+3. no imports — React, useState, useEffect, useRef, motion, AnimatePresence, Icon, ChatMessageViewport, MessageBubble are all in scope
 4. the component must fill the full screen (height: '100vh')
 5. always wire onBack to the back button and onAttach to the attach/plus button
-6. render messages using (messages || []).map(function(msg) { return React.createElement(MessageBubble, { key: msg.id, ...msg }); })
-7. use useRef + useEffect for scroll-to-bottom: var ref = React.useRef(null); React.useEffect(function() { if (ref.current) ref.current.scrollIntoView({ behavior: 'auto' }); }, []);
+6. render the message area using ChatMessageViewport, passing messages, MessageBubble, DateSeparator, currentUserId, onReplyTo, onJumpToReply, onToggleReaction, onShowReactors, onOpenContactCard, onOpenCommunityInvite, loadOlderMessages, and hasOlderMessages.
+7. never manually map messages in chatScreen and never implement scroll-to-bottom with refs; ChatMessageViewport owns scrolling, bottom anchoring, media resize correction, and older-message paging.
 
 examples:
 - "make the chat screen background dark navy" → change the outer div background to '#0a0a1a'
 - "make the header show the contact avatar on the left next to the back button" → reorder header elements
 - "add a gradient header that uses the contact's avatar color" → header background: 'linear-gradient(135deg, ' + contactAvatarColor + '33, #141414)'
+- "make the message area padding tighter" → wrap ChatMessageViewport in a div with the desired spacing, but still render ChatMessageViewport itself
 - "make the input bar taller with a rounded pill shape" → change input borderRadius and padding
 - "add a typing indicator above the input bar" → add an animated div above the input bar row
 - "slide the whole chat screen in from the right on mount" → wrap the outer div in motion.div with initial:{ x:'100%' }, animate:{ x:0 }
@@ -521,7 +523,8 @@ the component receives this scope:
 - contactAvatarColor: hex color string
 - isOnline: boolean
 - messages: array of { id, contactId, content, timestamp, isSent, isRead }
-- MessageBubble: the message bubble component — render via React.createElement(MessageBubble, { key: msg.id, ...msg })
+- ChatMessageViewport: the app-owned professional message list. Render messages ONLY through this component.
+- MessageBubble: the message bubble component used by ChatMessageViewport
 - onBack(): navigate back to contact list
 - onAttach(): open the attach sheet
 - useComponentState: persistent state hook, same syntax as React.useState
@@ -529,16 +532,17 @@ the component receives this scope:
 rules for the source:
 1. define a component named exactly "Component"
 2. use React.createElement (NOT JSX)
-3. no imports — React, useState, useEffect, useRef, motion, AnimatePresence, Icon, MessageBubble are all in scope
+3. no imports — React, useState, useEffect, useRef, motion, AnimatePresence, Icon, ChatMessageViewport, MessageBubble are all in scope
 4. the component must fill the full screen (height: '100vh')
 5. always wire onBack to the back button and onAttach to the attach/plus button
-6. render messages using (messages || []).map(function(msg) { return React.createElement(MessageBubble, { key: msg.id, ...msg }); })
-7. use useRef + useEffect for scroll-to-bottom: var ref = React.useRef(null); React.useEffect(function() { if (ref.current) ref.current.scrollIntoView({ behavior: 'auto' }); }, []);
+6. render the message area using ChatMessageViewport, passing messages, MessageBubble, DateSeparator, currentUserId, onReplyTo, onJumpToReply, onToggleReaction, onShowReactors, onOpenContactCard, onOpenCommunityInvite, loadOlderMessages, and hasOlderMessages.
+7. never manually map messages in chatScreen and never implement scroll-to-bottom with refs; ChatMessageViewport owns scrolling, bottom anchoring, media resize correction, and older-message paging.
 
 examples:
 - "make the chat screen background dark navy" → change the outer div background to '#0a0a1a'
 - "make the header show the contact avatar on the left next to the back button" → reorder header elements
 - "add a gradient header that uses the contact's avatar color" → header background: 'linear-gradient(135deg, ' + contactAvatarColor + '33, #141414)'
+- "make the message area padding tighter" → wrap ChatMessageViewport in a div with the desired spacing, but still render ChatMessageViewport itself
 - "make the input bar taller with a rounded pill shape" → change input borderRadius and padding
 - "add a typing indicator above the input bar" → add an animated div above the input bar row
 - "slide the whole chat screen in from the right on mount" → wrap the outer div in motion.div with initial:{ x:'100%' }, animate:{ x:0 }

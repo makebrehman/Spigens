@@ -7,3 +7,4 @@ import type { LocalMessage } from '@/lib/messageShape'
 
 export const dmMirror = new Map<string, LocalMessage[]>()   // key: otherUserId
 export const communityMirror = new Map<string, any[]>()      // key: communityId
+export const reactionMirror = new Map<string, Record<string, Array<{ user_id: string; emoji: string }>>>() // key: conversationId

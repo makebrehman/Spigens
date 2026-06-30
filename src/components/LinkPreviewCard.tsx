@@ -1,32 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { fetchLinkPreview } from '@/lib/linkPreview'
-
-// A link preview that ALWAYS renders something: a basic card (favicon + site +
-// the URL) shows immediately for any link, and it's quietly upgraded with the
-// page image / title / description if the (best-effort, free) preview service
-// responds. So a link is never just dead text — it's a tappable card.
+import { buildFallbackLinkPreview, normalizeLinkPreview, type LinkPreviewData } from '@/lib/linkPreview'
 
 export interface LinkPreviewCardProps {
   url: string
   isSent: boolean
+  preview?: LinkPreviewData | null
   /** Left inset for received bubbles (e.g. past a sender avatar). Defaults to 16. */
   leftInset?: number
+  embedded?: boolean
 }
 
-export function LinkPreviewCard({ url, isSent, leftInset = 16 }: LinkPreviewCardProps) {
-  const [meta, setMeta] = useState<any>(null)
-
-  useEffect(() => {
-    let active = true
-    setMeta(null)
-    fetchLinkPreview(url).then(p => { if (active && p?.title) setMeta(p) })
-    return () => { active = false }
-  }, [url])
-
-  let hostname = ''
-  try { hostname = new URL(url).hostname.replace(/^www\./, '') } catch { hostname = url }
+export function LinkPreviewCard({ url, isSent, preview, leftInset = 16, embedded = false }: LinkPreviewCardProps) {
+  const meta = normalizeLinkPreview(preview, url) ?? buildFallbackLinkPreview(url)
+  const hostname = meta.hostname || url
 
   const open = () => { try { window.open(url, '_blank', 'noopener,noreferrer') } catch { /* ignore */ } }
 
@@ -35,8 +22,9 @@ export function LinkPreviewCard({ url, isSent, leftInset = 16 }: LinkPreviewCard
       onClick={open}
       onPointerDown={(e) => e.stopPropagation()}
       style={{
-        margin: isSent ? '2px 16px 6px auto' : `2px auto 6px ${leftInset}px`,
-        maxWidth: 280,
+        margin: embedded ? '8px 0 2px' : (isSent ? '2px 16px 6px auto' : `2px auto 6px ${leftInset}px`),
+        maxWidth: embedded ? '100%' : 280,
+        width: embedded ? '100%' : undefined,
         background: isSent ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.05)',
         border: `1px solid ${isSent ? 'rgba(37,99,235,0.25)' : 'rgba(255,255,255,0.08)'}`,
         borderRadius: 12,
@@ -63,15 +51,15 @@ export function LinkPreviewCard({ url, isSent, leftInset = 16 }: LinkPreviewCard
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
           <span style={{ fontSize: 11, color: '#9ca3af', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {meta?.siteName || hostname}
+            {meta.siteName || hostname}
           </span>
         </div>
-        {meta?.title && (
+        {meta.title && (
           <div style={{ fontSize: 13, color: '#e5e7eb', fontWeight: 600, lineHeight: 1.3, marginBottom: 3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>
             {meta.title}
           </div>
         )}
-        {meta?.description && (
+        {meta.description && (
           <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4, marginBottom: 3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } as any}>
             {meta.description}
           </div>

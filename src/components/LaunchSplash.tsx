@@ -16,20 +16,26 @@ interface LaunchSplashProps {
   dbStatus?: 'initializing' | 'ready' | 'failed'
   dbStep?: string
   dbDiag?: DbDiag | null
+  mediaStatus?: 'idle' | 'warming' | 'done'
 }
 
-export function LaunchSplash({ dbStatus = 'initializing', dbStep = '', dbDiag = null }: LaunchSplashProps) {
+export function LaunchSplash({ dbStatus = 'initializing', dbStep = '', dbDiag = null, mediaStatus = 'idle' }: LaunchSplashProps) {
+  const isWarmingMedia = dbStatus === 'ready' && mediaStatus === 'warming'
+  
   const dotColor =
+    isWarmingMedia        ? '#60a5fa' :
     dbStatus === 'ready'  ? '#4ade80' :
     dbStatus === 'failed' ? '#f87171' :
                             'rgba(255,255,255,0.35)'
 
   const statusLabel =
+    isWarmingMedia        ? 'Downloading media...' :
     dbStatus === 'ready'  ? 'Local storage ready' :
     dbStatus === 'failed' ? 'Local storage unavailable' :
                             'Setting up local storage...'
 
   const statusColor =
+    isWarmingMedia        ? 'rgba(96,165,250,0.85)' :
     dbStatus === 'ready'  ? 'rgba(74,222,128,0.85)' :
     dbStatus === 'failed' ? 'rgba(248,113,113,0.85)' :
                             'rgba(255,255,255,0.45)'

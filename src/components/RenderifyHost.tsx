@@ -36,9 +36,10 @@ class RenderErrorBoundary extends React.Component<BoundaryProps, BoundaryState> 
 interface RenderifyHostProps {
   code: string | null
   storeActions?: Record<string, any>
+  scopeKey?: string | number | null
 }
 
-export function RenderifyHost({ code, storeActions = {} }: RenderifyHostProps) {
+export function RenderifyHost({ code, storeActions = {}, scopeKey = null }: RenderifyHostProps) {
   const [renderError, setRenderError] = React.useState<string | null>(null)
 
   // reset error when code changes
@@ -46,14 +47,12 @@ export function RenderifyHost({ code, storeActions = {} }: RenderifyHostProps) {
     setTimeout(() => setRenderError(null), 0)
   }, [code])
 
-  // memoize compilation — only recompile when code actually changes.
-  // storeActions is intentionally excluded from deps because it is stable from the caller.
-  // this prevents the compiled component from remounting on every parent re-render,
-  // which would wipe its internal useState values.
+  // Rebind when scopeKey changes (e.g. a different chat conversation) while keeping
+  // the transformed source cached in renderify.tsx.
   const compiled = React.useMemo(
     () => code ? compileJSX(code, storeActions) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [code]
+    [code, scopeKey]
   )
 
   if (!code) return null

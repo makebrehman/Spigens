@@ -8,7 +8,6 @@ import { MessageReactions } from './MessageReactions'
 import { AudioMessage } from './AudioMessage'
 import { ProfileImage } from './ProfileImage'
 import { getCachedMediaUri, resolveMedia } from '@/lib/mediaCache'
-import { useNetworkStore } from '@/stores/networkStore'
 import { useUIStore } from '@/stores/uiStore'
 
 export interface NativeMediaBubbleProps {
@@ -35,6 +34,34 @@ export interface NativeMediaBubbleProps {
   // isMine/senderName) works the same as in DMs.
   embedded?: boolean
   senderName?: string
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
+}
+
+function useLocalComponentState(key: string, defaultValue: any) {
+  const [value, setValue] = useState(
+    () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
+  )
+  useEffect(() => {
+    const unsub = useUIStore.subscribe((state: any, prevState: any) => {
+      const next = state.componentState?.[key]
+      const prev = prevState.componentState?.[key]
+      if (next !== prev) setValue(next ?? defaultValue)
+    })
+    return unsub
+  }, [key, defaultValue])
+  return [value, (newVal: any) => {
+    if (typeof newVal === 'function') {
+      setValue((prev: any) => {
+        const r = newVal(prev)
+        useUIStore.getState().setComponentState(key, r)
+        return r
+      })
+    } else {
+      setValue(newVal)
+      useUIStore.getState().setComponentState(key, newVal)
+    }
+  }] as [any, (v: any) => void]
 }
 
 function fmtBytes(n?: number): string {
@@ -58,6 +85,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     onToggleReaction, onShowReactors, onOpenContactCard, isDeleted,
     embedded, senderName,
   } = props
+  const scopedUseComponentState = props.useComponentState ?? useLocalComponentState
+  const [, setActiveMessageActions] = scopedUseComponentState('activeMessageActions', null)
+  const [, setOpenReactionMessageId] = scopedUseComponentState('openReactionMessageId', null)
 
   const isImage = messageType === 'image'
   const isContact = messageType === 'contact'
@@ -81,6 +111,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
   const [loaded, setLoaded] = useState(false)
   const [missing, setMissing] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const revealImageTimerRef = useRef<any>(null)
 
   // ── Non-image media (video/audio/file): local-first, download-first ─────────
   // localSrc is ONLY ever a local file (or a blob:/data: we already hold), never a
@@ -95,6 +126,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     if (!isImage || isDeleted || !content) return
     let cancelled = false
     const run = async () => {
+      if (revealImageTimerRef.current) {
+        clearTimeout(revealImageTimerRef.current)
+        revealImageTimerRef.current = null
+      }
       setLoaded(false)
       setMissing(false)
       setFullSrc(null)
@@ -102,18 +137,25 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       const cached = await getCachedMediaUri(content)
       if (cancelled) return
       if (cached) { setFullSrc(cached); return }
-      if (useNetworkStore.getState().isOnline) {
-        setDownloading(true)
-        const dl = await resolveMedia(content, 'image')
-        if (cancelled) return
-        setDownloading(false)
-        if (dl) { setFullSrc(dl); return }
-      }
       setMissing(true)
     }
     run()
     return () => { cancelled = true }
   }, [content, isImage, isDeleted])
+
+  useEffect(() => {
+    return () => {
+      if (revealImageTimerRef.current) clearTimeout(revealImageTimerRef.current)
+    }
+  }, [])
+
+  const revealLoadedImage = () => {
+    if (revealImageTimerRef.current) clearTimeout(revealImageTimerRef.current)
+    revealImageTimerRef.current = setTimeout(() => {
+      revealImageTimerRef.current = null
+      setLoaded(true)
+    }, thumb ? 140 : 0)
+  }
 
   useEffect(() => {
     if (isImage || isContact || isDeleted || !content) return
@@ -125,15 +167,6 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
       const cached = await getCachedMediaUri(content)
       if (cancelled) return
       if (cached) { setLocalSrc(cached); return }
-      // Auto-fetch small audio so the player is ready; video/files wait for a tap
-      // (so we never silently pull a big file over mobile data).
-      if (messageType === 'audio' && useNetworkStore.getState().isOnline) {
-        setResolving(true)
-        const dl = await resolveMedia(content, 'audio')
-        if (cancelled) return
-        setResolving(false)
-        if (dl) setLocalSrc(dl)
-      }
     }
     run()
     return () => { cancelled = true }
@@ -143,7 +176,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     if (downloading) return
     setMissing(false)
     setDownloading(true)
-    const dl = await resolveMedia(content, 'image')
+    const dl = await resolveMedia(content, 'image', { manual: true })
     setDownloading(false)
     if (dl) setFullSrc(dl)
     else setMissing(true)
@@ -156,7 +189,7 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
     if (resolving) return null
     setResolving(true)
     const kind = messageType === 'video' ? 'video' : messageType === 'audio' ? 'audio' : 'file'
-    const dl = await resolveMedia(content, kind)
+    const dl = await resolveMedia(content, kind, { manual: true })
     setResolving(false)
     if (dl) { setLocalSrc(dl); return dl }
     return null
@@ -193,10 +226,9 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
 
   const openActions = () => {
     if (isDeleted) return
-    const ui = useUIStore.getState()
     // isSent for the DM action tray; isMine + senderName for the community one.
-    ui.setComponentState('activeMessageActions', { id, isSent, isMine: isSent, senderName: senderName ?? undefined, content: mediaLabel() })
-    ui.setComponentState('openReactionMessageId', id)
+    setActiveMessageActions({ id, isSent, isMine: isSent, senderName: senderName ?? undefined, content: mediaLabel() })
+    setOpenReactionMessageId(id)
   }
 
   // The primary tap action depends on the media type. Audio has its own inline
@@ -299,8 +331,15 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           {fullSrc && (
             <img
               src={fullSrc} alt="image" draggable={false}
-              onLoad={() => setLoaded(true)}
-              onError={() => { setLoaded(false); setMissing(true) }}
+              onLoad={revealLoadedImage}
+              onError={() => {
+                if (revealImageTimerRef.current) {
+                  clearTimeout(revealImageTimerRef.current)
+                  revealImageTimerRef.current = null
+                }
+                setLoaded(false)
+                setMissing(true)
+              }}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: loaded ? 1 : 0, transition: 'opacity 0.35s ease', pointerEvents: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
             />
           )}
@@ -345,8 +384,10 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           )}
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.18)' }} />
           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {resolving || (isSent && status === 'sending') ? spinner(26) : (
+            {resolving || (isSent && status === 'sending') ? spinner(26) : localSrc ? (
               <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" style={{ marginLeft: 3 }}><path d="M8 5v14l11-7z" /></svg>
+            ) : (
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
             )}
           </div>
           <div style={{ position: 'absolute', left: 8, top: 8, display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(0,0,0,0.55)', borderRadius: 6, padding: '2px 7px' }}>
@@ -447,6 +488,8 @@ export function NativeMediaBubble(props: NativeMediaBubbleProps) {
           currentUserId={currentUserId}
           onToggleReaction={onToggleReaction}
           onShowReactors={onShowReactors}
+          useComponentState={scopedUseComponentState}
+          scopeKey={props.scopeKey}
         />
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 4, paddingRight: 2 }}>

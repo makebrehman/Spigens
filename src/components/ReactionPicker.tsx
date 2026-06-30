@@ -7,6 +7,8 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 export interface ReactionPickerProps {
   messageId: string
   onToggleReaction?: (messageId: string, emoji: string) => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function ReactionPicker(props: ReactionPickerProps) {
@@ -14,7 +16,7 @@ export function ReactionPicker(props: ReactionPickerProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.reactionPicker ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -43,7 +45,8 @@ export function ReactionPicker(props: ReactionPickerProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ messageId, onToggleReaction, useComponentState }}
+      scopeKey={props.scopeKey}
+      storeActions={{ messageId, onToggleReaction, useComponentState: props.useComponentState ?? useLocalComponentState }}
     />
   )
 }

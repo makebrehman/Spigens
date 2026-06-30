@@ -13,13 +13,15 @@ export interface ComposerBarProps {
   onTyping?: () => void
   replyingTo?: { content: string; senderLabel: string } | null
   onCancelReply?: () => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function ComposerBar(props: ComposerBarProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const composerBarSource = componentSources?.composerBar ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -45,10 +47,28 @@ export function ComposerBar(props: ComposerBarProps) {
     }] as [any, (v: any) => void]
   }
 
+  const scopedUseComponentState = props.useComponentState ?? useLocalComponentState
+  const ScopedAttachButton = (buttonProps: any) => (
+    <AttachButton {...buttonProps} useComponentState={scopedUseComponentState} scopeKey={props.scopeKey} />
+  )
+  const ScopedSendButton = (buttonProps: any) => (
+    <SendButton {...buttonProps} useComponentState={scopedUseComponentState} scopeKey={props.scopeKey} />
+  )
+  const ScopedReplyPreview = (previewProps: any) => (
+    <ReplyPreview {...previewProps} useComponentState={scopedUseComponentState} scopeKey={props.scopeKey} />
+  )
+
   return (
     <RenderifyHost
       code={composerBarSource}
-      storeActions={{ ...props, useComponentState, AttachButton, SendButton, ReplyPreview }}
+      scopeKey={props.scopeKey}
+      storeActions={{
+        ...props,
+        useComponentState: scopedUseComponentState,
+        AttachButton: ScopedAttachButton,
+        SendButton: ScopedSendButton,
+        ReplyPreview: ScopedReplyPreview,
+      }}
     />
   )
 }

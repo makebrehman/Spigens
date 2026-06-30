@@ -6,13 +6,15 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 
 export interface SendButtonProps {
   onSend: () => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function SendButton(props: SendButtonProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.sendButton ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -41,7 +43,8 @@ export function SendButton(props: SendButtonProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ ...props, useComponentState }}
+      scopeKey={props.scopeKey}
+      storeActions={{ ...props, useComponentState: props.useComponentState ?? useLocalComponentState }}
     />
   )
 }

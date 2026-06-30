@@ -14,7 +14,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
     // Store session in Capacitor Preferences (native app container) instead of
     // localStorage so it is wiped when the app is uninstalled on device.
-    storage: capacitorStorage,
+    storage: capacitorStorage as any,
   },
   realtime: {
     params: {
@@ -60,6 +60,9 @@ export type Database = {
           sender_id: string
           content: string | null
           encrypted_content: string | null
+          encrypted_content_sender: string | null
+          message_type: 'text' | 'system' | 'invite' | 'image' | 'video' | 'audio' | 'file' | 'contact'
+          metadata: any | null
           status: 'sending' | 'sent' | 'delivered' | 'read'
           reply_to: string | null
           created_at: string
@@ -72,11 +75,14 @@ export type Database = {
           sender_id: string
           content?: string
           encrypted_content?: string
+          encrypted_content_sender?: string
+          message_type?: string
+          metadata?: any
           status?: string
           reply_to?: string
           created_at?: string
         }
-        Update: { status?: string; deleted_at?: string }
+        Update: { status?: string; deleted_at?: string; metadata?: any }
       }
       communities: {
         Row: {
@@ -111,13 +117,42 @@ export type Database = {
           community_id: string
           sender_id: string
           content: string
+          message_type: 'text' | 'system' | 'invite' | 'image' | 'video' | 'audio' | 'file' | 'contact'
+          metadata: any | null
           reply_to: string | null
           created_at: string
           updated_at: string
           deleted_at: string | null
         }
-        Insert: { community_id: string; sender_id: string; content: string; reply_to?: string }
-        Update: { content?: string; deleted_at?: string }
+        Insert: { id?: string; community_id: string; sender_id: string; content: string; message_type?: string; metadata?: any; reply_to?: string; created_at?: string }
+        Update: { content?: string; deleted_at?: string; metadata?: any }
+      }
+      link_previews: {
+        Row: {
+          normalized_url: string
+          original_url: string
+          hostname: string
+          title: string | null
+          description: string | null
+          image_url: string | null
+          site_name: string | null
+          status: 'ready' | 'failed'
+          fetched_at: string
+          expires_at: string
+        }
+        Insert: {
+          normalized_url: string
+          original_url: string
+          hostname: string
+          title?: string | null
+          description?: string | null
+          image_url?: string | null
+          site_name?: string | null
+          status: 'ready' | 'failed'
+          fetched_at?: string
+          expires_at: string
+        }
+        Update: Partial<Database['public']['Tables']['link_previews']['Insert']>
       }
     }
   }

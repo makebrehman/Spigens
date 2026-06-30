@@ -6,6 +6,8 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 
 export interface ReplyPreviewProps {
   onCancelReply?: () => void
+  useComponentState?: (key: string, defaultValue: any) => [any, (v: any) => void]
+  scopeKey?: string
 }
 
 export function ReplyPreview(props: ReplyPreviewProps) {
@@ -13,7 +15,7 @@ export function ReplyPreview(props: ReplyPreviewProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.replyPreview ?? null
 
-  function useComponentState(key: string, defaultValue: any) {
+  function useLocalComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
       () => (useUIStore.getState().componentState as Record<string, any>)?.[key] ?? defaultValue
     )
@@ -42,7 +44,8 @@ export function ReplyPreview(props: ReplyPreviewProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ onCancelReply, useComponentState }}
+      scopeKey={props.scopeKey}
+      storeActions={{ onCancelReply, useComponentState: props.useComponentState ?? useLocalComponentState }}
     />
   )
 }

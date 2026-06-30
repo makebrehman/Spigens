@@ -76,6 +76,26 @@ export async function getCachedContacts(userId: string): Promise<any[] | null> {
   return rows.map(r => JSON.parse(r.data))
 }
 
+// Optimistically update a single contact's last message and move them to the top of the feed
+export async function updateCachedContactMessage(userId: string, contactId: string, lastMessage: string, lastMessageTime: string): Promise<void> {
+  const contacts = await getCachedContacts(userId)
+  if (!contacts) return
+
+  const idx = contacts.findIndex((c: any) => c.id === contactId)
+  if (idx > -1) {
+    const contact = contacts[idx]
+    contact.lastMessage = lastMessage
+    contact.lastMessageTime = lastMessageTime
+    
+    // Move to the top (index 0)
+    contacts.splice(idx, 1)
+    contacts.unshift(contact)
+    
+    // Write back to cache which emits topics.contacts()
+    await cacheContacts(userId, contacts)
+  }
+}
+
 // ── DM Messages ──────────────────────────────────────────────────────────────
 
 // Persist canonical LocalMessage rows for a conversation, then announce the change
@@ -102,6 +122,31 @@ export async function getCachedMessages(conversationId: string): Promise<LocalMe
   )
   if (!rows.length) return null
   return rows.map(r => JSON.parse(r.data) as LocalMessage)
+}
+
+export async function getCachedMessagesPage(
+  conversationId: string,
+  opts: { limit?: number; beforeCreatedAt?: string | null } = {},
+): Promise<LocalMessage[] | null> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100))
+  const before = opts.beforeCreatedAt ?? null
+  if (isUsingFallback()) {
+    const all = lsLoad<LocalMessage[]>(`msgs_${conversationId}`) ?? []
+    const filtered = before ? all.filter(m => (m.createdAt || '') < before) : all
+    const page = filtered.slice(-limit)
+    return page.length ? page : null
+  }
+  const rows = before
+    ? await dbQuery<{ data: string }>(
+        'SELECT data FROM dm_messages WHERE conversation_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?',
+        [conversationId, before, limit]
+      )
+    : await dbQuery<{ data: string }>(
+        'SELECT data FROM dm_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?',
+        [conversationId, limit]
+      )
+  if (!rows.length) return null
+  return rows.reverse().map(r => JSON.parse(r.data) as LocalMessage)
 }
 
 export async function upsertMessage(conversationId: string, msg: LocalMessage): Promise<void> {
@@ -360,6 +405,7 @@ export interface PendingMsg {
   replyToId: string | null
   createdAt: string
   messageType?: string
+  metadata?: any | null
 }
 
 export async function savePendingMessage(userId: string, msg: PendingMsg): Promise<void> {
@@ -373,10 +419,11 @@ export async function savePendingMessage(userId: string, msg: PendingMsg): Promi
     return
   }
   await dbRun(
-    `INSERT OR REPLACE INTO pending_messages (id, conversation_id, other_user_id, content, encrypted_content, reply_to_id, created_at, message_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO pending_messages (id, conversation_id, other_user_id, content, encrypted_content, reply_to_id, created_at, message_type, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [msg.id, msg.conversationId ?? null, msg.otherUserId, msg.content,
-     msg.encryptedContent ?? null, msg.replyToId ?? null, msg.createdAt, msg.messageType ?? 'text']
+     msg.encryptedContent ?? null, msg.replyToId ?? null, msg.createdAt, msg.messageType ?? 'text',
+     msg.metadata == null ? null : JSON.stringify(msg.metadata)]
   )
 }
 
@@ -390,6 +437,7 @@ export async function getPendingMessages(userId: string): Promise<PendingMsg[]> 
     id: r.id, conversationId: r.conversation_id, otherUserId: r.other_user_id,
     content: r.content, encryptedContent: r.encrypted_content,
     replyToId: r.reply_to_id, createdAt: r.created_at, messageType: r.message_type,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null,
   }))
 }
 
@@ -413,6 +461,7 @@ export interface PendingCommunityMsg {
   content: string
   replyToId: string | null
   createdAt: string
+  metadata?: any | null
 }
 
 export async function savePendingCommunityMessage(userId: string, msg: PendingCommunityMsg): Promise<void> {
@@ -426,9 +475,10 @@ export async function savePendingCommunityMessage(userId: string, msg: PendingCo
     return
   }
   await dbRun(
-    `INSERT OR REPLACE INTO pending_community_messages (id, community_id, content, reply_to_id, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [msg.id, msg.communityId, msg.content, msg.replyToId ?? null, msg.createdAt]
+    `INSERT OR REPLACE INTO pending_community_messages (id, community_id, content, reply_to_id, created_at, metadata)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [msg.id, msg.communityId, msg.content, msg.replyToId ?? null, msg.createdAt,
+     msg.metadata == null ? null : JSON.stringify(msg.metadata)]
   )
 }
 
@@ -441,6 +491,7 @@ export async function getPendingCommunityMessages(userId: string): Promise<Pendi
   return rows.map(r => ({
     id: r.id, communityId: r.community_id, content: r.content,
     replyToId: r.reply_to_id, createdAt: r.created_at,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null,
   }))
 }
 

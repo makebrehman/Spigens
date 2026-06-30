@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS pending_messages (
   encrypted_content TEXT,
   reply_to_id TEXT,
   created_at TEXT,
-  message_type TEXT DEFAULT 'text'
+  message_type TEXT DEFAULT 'text',
+  metadata TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pending_community_messages (
@@ -85,7 +86,8 @@ CREATE TABLE IF NOT EXISTS pending_community_messages (
   community_id TEXT,
   content TEXT,
   reply_to_id TEXT,
-  created_at TEXT
+  created_at TEXT,
+  metadata TEXT
 );
 
 -- Per-message emoji reactions. Primary key (message_id, user_id) means a user can
@@ -218,6 +220,8 @@ async function openSQLite(): Promise<void> {
   // the column already exists on upgraded installs — expected, so we swallow it.
   const migrations = [
     `ALTER TABLE profiles ADD COLUMN data TEXT;`,
+    `ALTER TABLE pending_messages ADD COLUMN metadata TEXT;`,
+    `ALTER TABLE pending_community_messages ADD COLUMN metadata TEXT;`,
   ]
   for (const m of migrations) {
     try { await db.execute(m) } catch { /* column already present — fine */ }

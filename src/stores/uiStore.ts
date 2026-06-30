@@ -30,6 +30,8 @@ const RUNTIME_COMPONENT_STATE_KEYS = new Set<string>([
   'profileSaveError', 'contactProfileData', 'contactMutualCommunities', 'highlightedMessageId',
   'communityDeleteTarget', 'chatRecordingDuration', 'chatAttachToastText',
   'settingsBlocked', 'settingsBlockedLoading', 'settingsBlockedError', 'settingsUnblockSuccess',
+  'chatContactName', 'chatAvatarUrl', 'chatContactInitials', 'chatContactAvatarColor',
+  'chatIsOnline', 'chatLastSeen',
 ])
 
 function filterPersistentComponentState(cs: Record<string, any> | undefined): Record<string, any> {
@@ -194,8 +196,8 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 5
-const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
+const SOURCES_SCHEMA_VERSION = 7
+const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
   { version: 1, reset: ['composerBar', 'chatScreen'] },
@@ -208,6 +210,13 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[] }[] = [
   // v5: composer + sendButton refactored to be independent (sendButton can live
   // anywhere). Edited copies are preserved by editedSources; only defaults swap.
   { version: 5, reset: ['composerBar', 'sendButton'] },
+  // v6: DM chat screen must use the app-owned ChatMessageViewport. During testing
+  // we intentionally discard old/custom chatScreen sources so the fragile
+  // scrollIntoView message list can never run.
+  { version: 6, reset: ['chatScreen'], force: true },
+  // v7: link previews now render inside message bubbles instead of as detached
+  // sibling cards, so stale bubble sources must be refreshed.
+  { version: 7, reset: ['messageBubble', 'communityMessageBubble'] },
 ]
 
 function migrateComponentSources(
@@ -223,7 +232,7 @@ function migrateComponentSources(
       for (const key of m.reset) {
         // Only replace untouched (default) copies. If the AI / a user customized this
         // key, keep their version — never silently overwrite a real edit.
-        if (edited.has(key)) continue
+        if (!m.force && edited.has(key)) continue
         if (DEFAULT_COMPONENT_SOURCES[key]) out[key] = DEFAULT_COMPONENT_SOURCES[key]
       }
     }

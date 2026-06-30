@@ -86,7 +86,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
 
         // Step 2 — last 50 messages for every conversation (25 → 65 %)
         setLabel('syncing messages...')
-        const imageUrls: string[] = []
         for (let i = 0; i < conversations.length; i++) {
           if (!active) return
           const conv = conversations[i]
@@ -111,11 +110,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
               }))
             }
             await cacheMessages(conv.conversationId, local)
-            for (const m of local) {
-              if (m.messageType === 'image' && typeof m.content === 'string' && m.content.startsWith('http')) {
-                imageUrls.push(m.content)
-              }
-            }
           }
           setProgress(25 + Math.round(((i + 1) / Math.max(conversations.length, 1)) * 40))
         }
@@ -224,7 +218,6 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
           ...myComms.map((c: any) => c.avatar_url).filter((u: any): u is string => !!u),
         ]
         void warmMediaCache(avatarUrls, 'image')
-        void warmMediaCache(imageUrls.slice(-30), 'image')
 
         await markInitialSyncDone(userId)
         setProgress(100)

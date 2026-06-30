@@ -25,6 +25,14 @@ function decryptMeta(metadata: any, ctx: ToLocalMessageCtx): any {
   if (metadata.name) {
     out.name = canDecrypt ? (decryptMessage(metadata.name, ctx.otherPublicKey!, ctx.myPrivateKey!) ?? null) : null
   }
+  if (metadata.linkPreview) {
+    if (!canDecrypt) {
+      out.linkPreview = null
+    } else if (typeof metadata.linkPreview === 'string') {
+      const plain = decryptMessage(metadata.linkPreview, ctx.otherPublicKey!, ctx.myPrivateKey!)
+      try { out.linkPreview = plain ? JSON.parse(plain) : null } catch { out.linkPreview = null }
+    }
+  }
   return out
 }
 

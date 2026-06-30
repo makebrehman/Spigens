@@ -56,18 +56,53 @@ function buildScope(storeActions: Record<string, any>) {
   }
 }
 
+const transformCache = new Map<string, string>()
+
+export function preloadGenUI(codes: (string | null | undefined)[]) {
+  const validCodes = codes.filter((c): c is string => typeof c === 'string' && !transformCache.has(c))
+  if (!validCodes.length) return
+
+  let i = 0
+  const processNext = () => {
+    if (i >= validCodes.length) return
+    const code = validCodes[i++]
+    if (code && !transformCache.has(code)) {
+      try {
+        const transformed = Babel.transform(code, {
+          presets: [['react', { runtime: 'classic' }]],
+        }).code
+        if (transformed) {
+          transformCache.set(code, transformed)
+        }
+      } catch (err) {
+        console.error('Preload compile error:', err)
+      }
+    }
+    // Yield to main thread to prevent jank
+    setTimeout(processNext, 50)
+  }
+  
+  // Start preloading after a short delay so initial app paint isn't blocked
+  setTimeout(processNext, 1000)
+}
+
 export function compileJSX(
   code: string,
   storeActions: Record<string, any> = {}
 ): RenderifyResult {
   try {
-    // transform JSX to plain JS using babel
-    const transformed = Babel.transform(code, {
-      presets: [['react', { runtime: 'classic' }]],
-    }).code
-
+    let transformed = transformCache.get(code)
+    
     if (!transformed) {
-      return { Component: null, error: 'transform produced no output' }
+      // transform JSX to plain JS using babel
+      transformed = Babel.transform(code, {
+        presets: [['react', { runtime: 'classic' }]],
+      }).code || undefined
+
+      if (!transformed) {
+        return { Component: null, error: 'transform produced no output' }
+      }
+      transformCache.set(code, transformed)
     }
 
     const scope = buildScope(storeActions)

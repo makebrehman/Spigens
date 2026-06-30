@@ -257,6 +257,12 @@ export const DEFAULT_BOTTOMSHEET_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
+  var _cName = useComponentState('chatContactName', contactName || '')[0];
+  var _cAvatar = useComponentState('chatAvatarUrl', avatarUrl || null)[0];
+  var _cInitials = useComponentState('chatContactInitials', contactInitials || '')[0];
+  var _cAvatarColor = useComponentState('chatContactAvatarColor', contactAvatarColor || null)[0];
+  var _cOnline = useComponentState('chatIsOnline', !!isOnline)[0];
+  var _cLastSeen = useComponentState('chatLastSeen', lastSeen || null)[0];
   var messagesState = useComponentState('chatMessages', messages || []);
   var renderedMessages = messagesState[0];
   var actionsState = useComponentState('activeMessageActions', null);
@@ -268,20 +274,6 @@ export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
   var openTrayMsgId = openTrayAct[0]; var setOpenTrayAct = openTrayAct[1];
   var typingState = useComponentState('otherUserTyping', false);
   var isOtherTyping = typingState[0];
-  var bottomRef = React.useRef(null);
-  var initialScrollCount = React.useRef(0);
-  React.useLayoutEffect(function() {
-    if (bottomRef.current) {
-      if (initialScrollCount.current < 2) {
-        bottomRef.current.scrollIntoView({ behavior: 'auto' });
-        if ((renderedMessages || []).length > 0) {
-          initialScrollCount.current += 1;
-        }
-      } else {
-        bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
-  }, [(renderedMessages || []).length]);
   return React.createElement('div', {
     style: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', background: '#0a0a0a' }
   },
@@ -297,82 +289,13 @@ export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
       React.createElement('div', { style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px' } },
         React.createElement(BackButton, { onBack: onBack }),
         React.createElement('div', { style: { display: 'flex', flexDirection: 'column' } },
-          React.createElement(ChatName, { contactName: contactName }),
-          isOtherTyping ? React.createElement(TypingIndicator, {}) : React.createElement(OnlineStatus, { isOnline: isOnline, lastSeen: lastSeen })
+          React.createElement(ChatName, { contactName: _cName }),
+          isOtherTyping ? React.createElement(TypingIndicator, {}) : React.createElement(OnlineStatus, { isOnline: _cOnline, lastSeen: _cLastSeen })
         )
       ),
-      React.createElement('div', { onClick: function(e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); if (typeof onViewContactProfile === 'function') onViewContactProfile(); }, style: { cursor: 'pointer', WebkitTapHighlightColor: 'transparent', userSelect: 'none', flexShrink: 0 } }, React.createElement(ProfileImage, { avatarUrl: avatarUrl, contactInitials: contactInitials, contactAvatarColor: contactAvatarColor }))
+      React.createElement('div', { onClick: function(e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); if (typeof onViewContactProfile === 'function') onViewContactProfile(); }, style: { cursor: 'pointer', WebkitTapHighlightColor: 'transparent', userSelect: 'none', flexShrink: 0 } }, React.createElement(ProfileImage, { avatarUrl: _cAvatar, contactInitials: _cInitials, contactAvatarColor: _cAvatarColor }))
     ),
-    React.createElement('div', {
-      className: 'chat-scrollbar-hide',
-      style: { flex: 1, overflowY: 'auto', padding: '8px 0 12px', display: 'flex', flexDirection: 'column', gap: '6px', scrollbarWidth: 'none', msOverflowStyle: 'none', position: 'relative', zIndex: 101 }
-    },
-      (renderedMessages || []).length === 0
-        ? React.createElement('div', { style: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A8A8A' } }, 'no messages yet')
-        : (renderedMessages || []).map(function(msg, index, arr) {
-            var separator = null;
-            if (msg.createdAt) {
-              var currentDt = new Date(msg.createdAt);
-              if (!isNaN(currentDt)) {
-                var prevDt = index > 0 && arr[index-1].createdAt ? new Date(arr[index-1].createdAt) : null;
-                var dayChanged = true;
-                if (prevDt && !isNaN(prevDt)) {
-                  if (currentDt.getFullYear() === prevDt.getFullYear() && currentDt.getMonth() === prevDt.getMonth() && currentDt.getDate() === prevDt.getDate()) {
-                    dayChanged = false;
-                  }
-                }
-                if (dayChanged) {
-                  var now = new Date();
-                  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                  var dDay = new Date(currentDt.getFullYear(), currentDt.getMonth(), currentDt.getDate());
-                  var diff = Math.round((today - dDay) / 86400000);
-                  var label = '';
-                  if (diff === 0) label = 'Today';
-                  else if (diff === 1) label = 'Yesterday';
-                  else label = currentDt.toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
-                  
-                  separator = React.createElement(DateSeparator, {
-                    key: 'sep-' + msg.id,
-                    label: label
-                  });
-                }
-              }
-            }
-            var bubble;
-            if (msg.messageType === 'invite' && msg.metadata && msg.metadata.communityId) {
-              var meta = msg.metadata;
-              var isUsed = !!meta.usedAt;
-              var invTypeLabel = meta.communityType === 'protected' ? 'Protected' : meta.communityType === 'private' ? 'Private' : 'Public';
-              bubble = React.createElement('div', { key: msg.id, style: { display: 'flex', justifyContent: msg.isSent ? 'flex-end' : 'flex-start', padding: '4px 16px' } },
-                React.createElement('div', {
-                  onClick: function() { if (typeof onOpenCommunityInvite === 'function') onOpenCommunityInvite(meta, msg.id); },
-                  style: { maxWidth: '72%', minWidth: '210px', background: '#161B2E', borderRadius: '16px', overflow: 'hidden', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)', WebkitTapHighlightColor: 'transparent' }
-                },
-                  React.createElement('div', { style: { padding: '12px 14px', display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px' } },
-                    React.createElement('div', { style: { width: '44px', height: '44px', borderRadius: '12px', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 } },
-                      meta.avatarUrl ? React.createElement('img', { src: meta.avatarUrl, style: { width: '100%', height: '100%', objectFit: 'cover' } }) : React.createElement('span', { style: { fontSize: '18px', fontWeight: '700', color: '#E8E8E8' } }, (meta.communityName || '?').charAt(0).toUpperCase())
-                    ),
-                    React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-                      React.createElement('div', { style: { fontSize: '14px', fontWeight: '600', color: '#F3F4F6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, meta.communityName || 'Community'),
-                      React.createElement('div', { style: { fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' } }, invTypeLabel + ' \u00B7 ' + (meta.memberCount || 0) + ' members')
-                    )
-                  ),
-                  React.createElement('div', { style: { height: '1px', background: 'rgba(255,255,255,0.06)' } }),
-                  React.createElement('div', { style: { padding: '10px 14px' } },
-                    React.createElement('div', { style: { background: isUsed ? 'rgba(255,255,255,0.06)' : '#2563EB', borderRadius: '999px', padding: '9px 0', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: isUsed ? 'rgba(255,255,255,0.3)' : '#FFF' } },
-                      isUsed ? 'Already joined' : (msg.isSent ? 'View community' : 'Join community')
-                    )
-                  ),
-                  React.createElement('div', { style: { padding: '0 14px 10px', textAlign: 'right', fontSize: '10px', color: 'rgba(255,255,255,0.2)' } }, msg.timestamp)
-                )
-              );
-            } else {
-              bubble = React.createElement(MessageBubble, { key: msg.id + '-' + msg.status + (msg.isDeleted ? '-deleted' : ''), id: msg.id, contactId: msg.contactId, content: msg.content, messageType: msg.messageType, metadata: msg.metadata, timestamp: msg.timestamp, isSent: msg.isSent, isRead: msg.isRead, status: msg.status, replyTo: msg.replyTo, isDeleted: !!msg.isDeleted, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined });
-            }
-            return separator ? React.createElement(React.Fragment, { key: 'frag-' + msg.id }, separator, bubble) : bubble;
-          }),
-      React.createElement('div', { ref: bottomRef })
-    ),
+    React.createElement(ChatMessageViewport, { messages: renderedMessages || [], MessageBubble: MessageBubble, DateSeparator: DateSeparator, currentUserId: currentUserId, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined, onOpenCommunityInvite: typeof onOpenCommunityInvite !== 'undefined' ? onOpenCommunityInvite : undefined, loadOlderMessages: loadOlderMessages, hasOlderMessages: !!hasOlderMessages }),
     React.createElement(ComposerBar, { sendMessage: sendMessage, onAttach: onAttach, onTyping: onTyping, replyingTo: replyingTo, onCancelReply: onCancelReply }),
   React.createElement('div', { onClick: function() { setActions(null); setOpenTrayAct(null); }, style: { position: 'fixed', inset: 0, zIndex: 100, display: actions ? 'block' : 'none', background: 'transparent' } }),
   React.createElement('div', {
@@ -861,6 +784,7 @@ export const DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE = `function Component() {
           React.createElement('div', { style: { fontSize: '12px', color: isMine ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' } }, replyToData.content || '')
         ) : null,
         React.createElement('div', { style: { fontSize: '14px', lineHeight: '1.45', color: isMine ? '#F0F0F0' : '#E8E8E8', wordBreak: 'break-word' } }, linkify(content)),
+        linkPreview ? React.createElement(LinkPreviewCard, { url: linkPreview.url || content, preview: linkPreview, isSent: isMine, embedded: true }) : null,
         React.createElement(MessageReactions, { messageId: id, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors }),
         React.createElement('div', { style: { display: 'flex', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', marginTop: '2px' } },
           React.createElement('div', { style: { fontSize: '10px', color: isMine ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.35)' } }, timestamp)
@@ -1463,6 +1387,7 @@ export const DEFAULT_MESSAGEBUBBLE_SOURCE = `function Component() {
           color: isSent ? '#F0F0F0' : '#E8E8E8',
         }
       }, linkify(content)),
+      linkPreview ? React.createElement(LinkPreviewCard, { url: linkPreview.url || content, preview: linkPreview, isSent: isSent, embedded: true }) : null,
       React.createElement(MessageReactions, { messageId: id, currentUserId: currentUserId, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors }),
       React.createElement('div', {
         style: { display: 'flex', flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'flex-end', alignItems: 'center', marginTop: '2px', gap: '6px' }

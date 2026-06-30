@@ -11,6 +11,7 @@ import { cacheCommunityMessages, getCachedCommunityMessages, upsertCommunityMess
 import { communityMirror as commMsgCache } from '@/lib/messageMirror'
 import { getMirroredMediaUri, warmMediaMirror, cacheLocalBlob } from '@/lib/mediaCache'
 import { makeBlurThumb, makeVideoThumb, getAudioDuration } from '@/lib/thumbnails'
+import { buildFallbackLinkPreview, fetchServerLinkPreview, firstPreviewableUrl } from '@/lib/linkPreview'
 import imageCompression from 'browser-image-compression'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { useNetworkStore } from '@/stores/networkStore'
@@ -93,6 +94,18 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     isDeleted: !!row.deleted_at,
     replyTo: row.reply_to || null,
   })
+  const enrichCommunityLinkPreview = async (messageId: string, content: string) => {
+    const url = firstPreviewableUrl(content)
+    if (!url) return
+    const preview = await fetchServerLinkPreview(url)
+    if (!preview) return
+    const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
+    const existing = current.find((m: any) => m.id === messageId)
+    if (!existing) return
+    const metadata = { ...(existing.metadata ?? {}), linkPreview: preview }
+    await upsertCommunityMessage(communityId, { ...existing, metadata })
+    await supabase.from('community_messages').update({ metadata }).eq('id', messageId).eq('sender_id', currentUserId)
+  }
   useEffect(() => {
     if (!communityId || !currentUserId) return
     const markRead = () => { supabase.rpc('mark_community_read', { p_community_id: communityId }).then() }
@@ -178,11 +191,16 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'community_messages', filter: 'community_id=eq.' + communityId }, async (payload: any) => {
         const row = payload.new
-        if (!row.deleted_at) return
         const current = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
         const existing = current.find((m: any) => m.id === row.id)
-        if (!existing || existing.isDeleted) return
-        await upsertCommunityMessage(communityId, { ...existing, isDeleted: true, content: '' })
+        if (!existing) return
+        if (row.deleted_at && !existing.isDeleted) {
+          await upsertCommunityMessage(communityId, { ...existing, isDeleted: true, content: '' })
+          return
+        }
+        if (JSON.stringify(existing.metadata ?? null) !== JSON.stringify(row.metadata ?? null)) {
+          await upsertCommunityMessage(communityId, { ...existing, metadata: row.metadata ?? null })
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'community_message_reactions', filter: 'community_id=eq.' + communityId }, async () => {
         const msgs = (useUIStore.getState().componentState?.['communityMessages'] ?? []) as any[]
@@ -266,9 +284,10 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
       const pending = allPending.filter(m => m.communityId === communityId)
       if (!pending.length) return
       for (const pm of pending) {
-        const { error } = await supabase.from('community_messages').insert({ id: pm.id, community_id: pm.communityId, sender_id: currentUserId, content: pm.content, reply_to: pm.replyToId, created_at: pm.createdAt })
+        const { error } = await supabase.from('community_messages').insert({ id: pm.id, community_id: pm.communityId, sender_id: currentUserId, content: pm.content, reply_to: pm.replyToId, created_at: pm.createdAt, metadata: pm.metadata ?? null })
         if (!error) {
           await removePendingCommunityMessage(currentUserId, pm.id)
+          enrichCommunityLinkPreview(pm.id, pm.content).catch(() => {})
         }
       }
     }
@@ -280,18 +299,23 @@ export function CommunityChatScreen(props: CommunityChatScreenProps) {
     const replyingTo = (useUIStore.getState().componentState?.['communityReplyingTo'] ?? null) as any
     const newId = crypto.randomUUID()
     const createdAt = new Date().toISOString()
-    const optimistic = { id: newId, content: content.trim(), senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt, isMine: true, isDeleted: false, replyTo: replyingTo?.id || null }
+    const text = content.trim()
+    const previewUrl = firstPreviewableUrl(text)
+    const metadata = previewUrl ? { linkPreview: buildFallbackLinkPreview(previewUrl) } : null
+    const optimistic = { id: newId, content: text, messageType: 'text', metadata, senderId: currentUserId, senderName: profile?.display_name || profile?.username || 'Me', senderAvatar: profile?.avatar_url || null, senderInitials: (profile?.display_name || profile?.username || '?').charAt(0).toUpperCase(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), createdAt, isMine: true, isDeleted: false, replyTo: replyingTo?.id || null }
     // optimistic write → DB → emit → local-first re-read shows it
     await upsertCommunityMessage(communityId, optimistic)
     useUIStore.getState().setComponentState('communityReplyingTo', null)
     if (!networkIsOnline) {
-      await savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: content.trim(), replyToId: replyingTo?.id || null, createdAt })
+      await savePendingCommunityMessage(currentUserId, { id: newId, communityId, content: text, replyToId: replyingTo?.id || null, createdAt, metadata })
       return
     }
-    const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: content.trim(), reply_to: replyingTo?.id || null })
+    const { error } = await supabase.from('community_messages').insert({ id: newId, community_id: communityId, sender_id: currentUserId, content: text, reply_to: replyingTo?.id || null, metadata })
     if (error) {
       await deleteCachedCommunityMessage(communityId, newId)
       useUIStore.getState().setComponentState('communityError', 'Failed to send message. Please try again.')
+    } else {
+      enrichCommunityLinkPreview(newId, text).catch(() => {})
     }
   }
 

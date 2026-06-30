@@ -1544,7 +1544,7 @@ export const DEFAULT_BOTTOMNAV_SOURCE = `function Component() {
       onClick: function() { if (typeof onSelectTab === 'function') onSelectTab(tab.id); },
       style: { flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, WebkitTapHighlightColor: 'transparent', userSelect: 'none' }
     }, [
-      React.createElement('svg', { key: 'icon', width: 22, height: 22, viewBox: '0 0 24 24', fill: color }, React.createElement('path', { d: tab.path })),
+      React.createElement(Icon, { key: 'icon', name: tab.icon, size: 22, color: color }),
       React.createElement('span', { key: 'label', style: { fontSize: 10, fontWeight: isActive ? 700 : 500, color: color, letterSpacing: 0.1 } }, tab.label)
     ]);
   });

@@ -6,9 +6,14 @@ import { RenderifyHost } from '@/components/RenderifyHost'
 import { getCachedMediaUri, cacheRemoteMedia } from '@/lib/mediaCache'
 
 export interface ProfileImageProps {
-  avatarUrl: string | null
-  contactInitials: string
-  contactAvatarColor: string
+  // AI-facing prop names (what the system prompt teaches — url, initials, color)
+  url?: string | null
+  initials?: string
+  color?: string
+  // Internal/legacy prop names used by the app's own components
+  avatarUrl?: string | null
+  contactInitials?: string
+  contactAvatarColor?: string
   size?: number
 }
 
@@ -16,23 +21,27 @@ export function ProfileImage(props: ProfileImageProps) {
   const componentSources = useUIStore(state => state.componentSources)
   const source = componentSources?.profileImage ?? null
 
+  // Resolve effective values — accept either the AI-facing names or the legacy names
+  const effectiveAvatarUrl = props.url ?? props.avatarUrl ?? null
+  const effectiveInitials = props.initials ?? props.contactInitials ?? '?'
+  const effectiveColor = props.color ?? props.contactAvatarColor ?? '#2563EB'
+
   // Resolve the avatar to an on-device cached copy so it renders offline. Online,
   // we show the remote URL immediately and quietly cache it for next time; if a
   // cached file already exists we prefer it (and it survives with no network).
-  const [resolvedAvatar, setResolvedAvatar] = useState<string | null>(props.avatarUrl)
+  const [resolvedAvatar, setResolvedAvatar] = useState<string | null>(effectiveAvatarUrl)
   useEffect(() => {
     let cancelled = false
-    const url = props.avatarUrl
     const run = async () => {
-      setResolvedAvatar(url)
-      if (!url) return
-      const cached = await getCachedMediaUri(url)
+      setResolvedAvatar(effectiveAvatarUrl)
+      if (!effectiveAvatarUrl) return
+      const cached = await getCachedMediaUri(effectiveAvatarUrl)
       if (!cancelled && cached) setResolvedAvatar(cached)
-      cacheRemoteMedia(url, 'image').catch(() => {})
+      cacheRemoteMedia(effectiveAvatarUrl, 'image').catch(() => {})
     }
     run()
     return () => { cancelled = true }
-  }, [props.avatarUrl])
+  }, [effectiveAvatarUrl])
 
   function useComponentState(key: string, defaultValue: any) {
     const [value, setValue] = useState(
@@ -63,7 +72,16 @@ export function ProfileImage(props: ProfileImageProps) {
   return (
     <RenderifyHost
       code={source}
-      storeActions={{ ...props, avatarUrl: resolvedAvatar, useComponentState }}
+      storeActions={{
+        ...props,
+        // Always expose the canonical names the profileImage source reads —
+        // regardless of which prop names the caller used (url/initials/color or the legacy ones)
+        avatarUrl: resolvedAvatar,
+        contactInitials: effectiveInitials,
+        contactAvatarColor: effectiveColor,
+        size: props.size,
+        useComponentState,
+      }}
     />
   )
 }

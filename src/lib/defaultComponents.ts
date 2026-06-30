@@ -1490,7 +1490,9 @@ export const DEFAULT_HOMEHEADER_SOURCE = `function Component() {
   var activeTab = tabState[0];
   var searchState = useComponentState('showSearch', false);
   var showSearch = searchState[0];
-  var title = activeTab === 'chats' ? 'Chats' : (activeTab === 'communities' ? 'Communities' : 'Profile');
+  var allTabs = (typeof tabs !== 'undefined' && Array.isArray(tabs)) ? tabs : [];
+  var activeTabDef = allTabs.find(function(t) { return t.id === activeTab; });
+  var title = activeTabDef ? activeTabDef.label : (activeTab ? (activeTab.charAt(0).toUpperCase() + activeTab.slice(1)) : 'Chats');
   var children = [
     React.createElement('img', { key: 'logo', src: '/spigens_logo.png', alt: 'Spigens', style: { width: 34, height: 34, borderRadius: 10, objectFit: 'cover', flexShrink: 0 } }),
     React.createElement('div', { key: 'title', style: { flex: 1, fontSize: 20, fontWeight: 700, color: '#F3F4F6' } }, title)

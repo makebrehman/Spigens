@@ -80,7 +80,9 @@ logout()        — sign the user out
 'dmTypingMap'  — { [contactId]: boolean } — true if that contact is typing in a DM
 
 — UI COMPONENTS —
-ProfileImage    — renders a profile avatar: React.createElement(ProfileImage, { url, initials, size, color })
+ProfileImage    — renders a profile avatar. EXACT props: url (string|null), initials (string), size (number), color (string).
+  example: React.createElement(ProfileImage, { url: myAvatarUrl, initials: myAvatarInitials, size: 34, color: '#2563EB' })
+  IMPORTANT: do NOT use avatarUrl, contactInitials, or contactAvatarColor — those are contact object fields, not ProfileImage props.
 Icon            — renders a Lucide icon: React.createElement(Icon, { name: 'heart', size: 24, color: '#fff' })
 motion, AnimatePresence — Framer Motion for animations (no import needed)
 
@@ -103,15 +105,19 @@ examples of what is now possible:
 HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
 
 1. componentSources.homeHeader — the top header bar. Has access to the full global scope above.
-   - must keep a title and search affordance (call toggleSearch() or openSearch() on search tap)
-   - show onCreateCommunity (or openCreateCommunity()) button only when activeTab === 'communities'
+   - derive the title dynamically from the tabs array: var def = (tabs||[]).find(function(t){return t.id===activeTab;}); var title = def ? def.label : activeTab;
+   - must keep a search affordance (call toggleSearch() or openSearch() on search tap)
+   - show openCreateCommunity() button only when activeTab === 'communities'
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
+   - TAB INDICATORS: use the tabs array from scope (or the hard-coded items from bottomNav) — do NOT hard-code only 3 tab ids or indicators will break when custom tabs are added
+   - DESTRUCTIVE ACTIONS (logout, delete): NEVER call logout() or any destructive action directly on button tap. Always gate behind a confirm state first.
+     example: var conf = useComponentState('logoutConfirm', false); var show = conf[0]; var setShow = conf[1]; // show a dialog when show===true, call logout() only on confirm
 
 2. componentSources.homeSearch — the search input, mounted only when search is open. Has access to full global scope.
    - bind the input to 'searchQuery' key via useComponentState — this is what drives live search results
    - call closeSearch() to close; do NOT add onBlur→close unless the user asks
    - the component appears/disappears automatically — no need to gate on showSearch
-   - NOTE: homeSearch always renders BELOW homeHeader in the DOM. To place search ABOVE the header, embed the search input directly inside homeHeader instead of using homeSearch.
+   - NOTE: homeSearch always renders BELOW homeHeader in the DOM. To place search ABOVE the logo/title row, embed search inside homeHeader: return a column-flex wrapper with the search row FIRST, then the logo/title/buttons row SECOND.
 
 3. componentSources.bottomNav — the bottom tab bar. Has access to full global scope.
    - use tabs array for the built-in tab list, or hard-code custom tabs
@@ -119,6 +125,7 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - to ADD extra tabs: map tabs then push new items; to REPLACE or REMOVE a tab: hard-code the items array instead of mapping tabs
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
    - IMPORTANT: render tab icons with React.createElement(Icon, { name: tab.icon, size: 22, color }) — do NOT use svg + tab.path
+   - IMPORTANT: setTab() only renders content for 'chats', 'communities', and 'profile'. For any other destination use the matching action: openDiscover() for a Discover tab, openCommunity(c) for a community shortcut, openChat(id) for a direct chat link. Calling setTab('discover') will result in an empty content area.
 
 4. componentSources.contactList — the scrollable chat list. Has access to full global scope.
    - contacts come from useComponentState('feedContacts', contacts || [])

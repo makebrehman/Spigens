@@ -99,9 +99,10 @@ myUsername      — @username string
 
 — TABS DEFINITION —
 tabs — array of { id, label, icon } — the CANONICAL, SHARED tab list. bottomNav, homeHeader, and every other component that reads "tabs" from scope all see this exact same value — it is not local to bottomNav.
-setTabs(newTabsArray) — PERMANENTLY changes the canonical tab list. Call this whenever the user asks to add, remove, rename, or reorder a tab, so EVERY component that reads "tabs" (the header's title logic, tab indicators, etc.) automatically stays in sync — you do not need to separately update homeHeader's own code for the tab list itself.
+TO PERMANENTLY add, remove, rename, or reorder a tab: return the full updated array as a top-level "tabs" field in your JSON output — the EXACT same way you already return componentSources or customComponents. This is the ONLY way to make the change. Do this every single time the request is about adding/removing/renaming/reordering a tab — there is no other step.
+  example output: { "versionName": "...", "tabs": [ { "id": "chats", "label": "Chats", "icon": "message-square" }, { "id": "communities", "label": "Communities", "icon": "users" }, { "id": "profile", "label": "Profile", "icon": "user" }, { "id": "discover", "label": "Discover", "icon": "compass" } ] }
+once you return this field, bottomNav and homeHeader automatically pick up the new list on their own — you do NOT need to also edit homeHeader's source for the tab list itself, and you do NOT need to call any function from inside the generated code to make this happen.
 IMPORTANT: tabs[i].icon is a Lucide icon NAME string (e.g. 'message-square', 'users', 'user'). Render it with React.createElement(Icon, { name: tab.icon, size: 22, color }). There is NO tab.path or tab.svg property.
-IMPORTANT: also return the resulting array as a top-level "tabs" field in your JSON output (alongside componentSources/customComponents) — this is what actually persists the change; calling setTabs alone inside generated code only affects the current render, not what's saved.
 the default is chats, communities, profile. when a request is about a totally different kind of destination that setTab() can't render content for (a direct community link, a specific chat), prefer hard-coding that one tab's onClick to call openCommunity(c) / openChat(id) directly inside bottomNav's own code, rather than adding it to the shared tabs array — see "setTab() only renders content for..." below.
 
 — ACCOUNT —
@@ -189,8 +190,8 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
 3. componentSources.bottomNav — the bottom tab bar. Has access to full global scope.
    - render by mapping the shared tabs array — do not invent a separate local array for the standard tabs
    - call setTab(id) (or onSelectTab(id)) on tab press to change tabs
-   - to PERMANENTLY add, remove, rename, or reorder a tab (so homeHeader and everything else stays in sync): call setTabs(newArray) with the full updated array, AND also return that same array as a top-level "tabs" field in your JSON output
-   - the ONLY case for hard-coding a tab locally inside bottomNav instead of using setTabs: a tab whose destination setTab() cannot render content for anyway (see below) — e.g. a direct link to one specific community or chat. That kind of shortcut tab doesn't belong in the canonical tabs array since switching to it via setTab(id) would show an empty screen; wire its onClick directly to openCommunity(c) / openChat(id) instead.
+   - to PERMANENTLY add, remove, rename, or reorder a tab (so homeHeader and everything else stays in sync): return the full updated array as a top-level "tabs" field in your JSON output — see TABS DEFINITION above. This is the only step needed.
+   - the ONLY case for hard-coding a tab locally inside bottomNav instead of adding it to the shared tabs array: a tab whose destination setTab() cannot render content for anyway (see below) — e.g. a direct link to one specific community or chat. That kind of shortcut tab doesn't belong in the canonical tabs array since switching to it via setTab(id) would show an empty screen; wire its onClick directly to openCommunity(c) / openChat(id) instead.
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
    - IMPORTANT: render tab icons with React.createElement(Icon, { name: tab.icon, size: 22, color }) — do NOT use svg + tab.path
    - IMPORTANT: setTab() only renders content for 'chats', 'communities', and 'profile'. For any other destination use the matching action: openDiscover() for a Discover tab, openCommunity(c) for a community shortcut, openChat(id) for a direct chat link. Calling setTab('discover') will result in an empty content area.

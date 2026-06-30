@@ -98,8 +98,11 @@ myDisplayName   — display name string
 myUsername      — @username string
 
 — TABS DEFINITION —
-tabs — array of { id, label, icon } — the current tab list. AI can read this to build a fully custom nav bar. default: chats, communities, profile. AI can also hard-code extra tabs when the user asks (e.g. a direct link to a community or a specific chat).
+tabs — array of { id, label, icon } — the CANONICAL, SHARED tab list. bottomNav, homeHeader, and every other component that reads "tabs" from scope all see this exact same value — it is not local to bottomNav.
+setTabs(newTabsArray) — PERMANENTLY changes the canonical tab list. Call this whenever the user asks to add, remove, rename, or reorder a tab, so EVERY component that reads "tabs" (the header's title logic, tab indicators, etc.) automatically stays in sync — you do not need to separately update homeHeader's own code for the tab list itself.
 IMPORTANT: tabs[i].icon is a Lucide icon NAME string (e.g. 'message-square', 'users', 'user'). Render it with React.createElement(Icon, { name: tab.icon, size: 22, color }). There is NO tab.path or tab.svg property.
+IMPORTANT: also return the resulting array as a top-level "tabs" field in your JSON output (alongside componentSources/customComponents) — this is what actually persists the change; calling setTabs alone inside generated code only affects the current render, not what's saved.
+the default is chats, communities, profile. when a request is about a totally different kind of destination that setTab() can't render content for (a direct community link, a specific chat), prefer hard-coding that one tab's onClick to call openCommunity(c) / openChat(id) directly inside bottomNav's own code, rather than adding it to the shared tabs array — see "setTab() only renders content for..." below.
 
 — ACCOUNT —
 logout()        — sign the user out
@@ -165,7 +168,7 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - must keep a search affordance (call toggleSearch() or openSearch() on search tap)
    - show openCreateCommunity() button only when activeTab === 'communities'
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
-   - TAB INDICATORS: use the tabs array from scope (or the hard-coded items from bottomNav) — do NOT hard-code only 3 tab ids or indicators will break when custom tabs are added
+   - TAB INDICATORS: use the shared tabs array from scope — do NOT hard-code only 3 tab ids or indicators will break when custom tabs are added; since tabs is the same canonical list bottomNav reads, this always reflects whatever tabs currently exist
    - DESTRUCTIVE ACTIONS (logout, delete): NEVER call logout() or any destructive action directly on button tap. Always gate behind a confirm state first.
      CRITICAL — call the state hook ONCE, at the top of Component, during render. NEVER call useComponentState (or any hook) from inside an onClick handler — hooks can only run while the component is rendering, not later when a click happens; calling one inside onClick fails silently and the button will appear to do nothing.
      correct pattern:
@@ -184,9 +187,10 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - NOTE: homeSearch always renders BELOW homeHeader in the DOM. To place search ABOVE the logo/title row, embed search inside homeHeader: return a column-flex wrapper with the search row FIRST, then the logo/title/buttons row SECOND.
 
 3. componentSources.bottomNav — the bottom tab bar. Has access to full global scope.
-   - use tabs array for the built-in tab list, or hard-code custom tabs
+   - render by mapping the shared tabs array — do not invent a separate local array for the standard tabs
    - call setTab(id) (or onSelectTab(id)) on tab press to change tabs
-   - to ADD extra tabs: map tabs then push new items; to REPLACE or REMOVE a tab: hard-code the items array instead of mapping tabs
+   - to PERMANENTLY add, remove, rename, or reorder a tab (so homeHeader and everything else stays in sync): call setTabs(newArray) with the full updated array, AND also return that same array as a top-level "tabs" field in your JSON output
+   - the ONLY case for hard-coding a tab locally inside bottomNav instead of using setTabs: a tab whose destination setTab() cannot render content for anyway (see below) — e.g. a direct link to one specific community or chat. That kind of shortcut tab doesn't belong in the canonical tabs array since switching to it via setTab(id) would show an empty screen; wire its onClick directly to openCommunity(c) / openChat(id) instead.
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
    - IMPORTANT: render tab icons with React.createElement(Icon, { name: tab.icon, size: 22, color }) — do NOT use svg + tab.path
    - IMPORTANT: setTab() only renders content for 'chats', 'communities', and 'profile'. For any other destination use the matching action: openDiscover() for a Discover tab, openCommunity(c) for a community shortcut, openChat(id) for a direct chat link. Calling setTab('discover') will result in an empty content area.

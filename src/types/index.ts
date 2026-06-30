@@ -208,6 +208,12 @@ export interface ComponentSources {
   [componentName: string]: string
 }
 
+export interface TabDef {
+  id: string
+  label: string
+  icon: string
+}
+
 // --- full ui override state ---
 
 export interface UIOverrideState {
@@ -227,4 +233,7 @@ export interface UIOverrideState {
   interactions?: InteractionConfig
   customComponents?: CustomComponents
   componentSources?: ComponentSources
+  /** The home screen's tab bar definition — shared by bottomNav, homeHeader, and
+   *  anything else that needs the canonical tab list, so they never drift out of sync. */
+  tabs?: TabDef[]
 }

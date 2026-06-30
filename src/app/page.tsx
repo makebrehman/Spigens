@@ -258,6 +258,7 @@ export default function Home() {
   const [longPressedContact, setLongPressedContact] = useState<Contact | null>(null)
   const customComponents = useUIStore(state => state.customComponents)
   const componentSources = useUIStore(state => state.componentSources)
+  const homeTabs = useUIStore(state => state.tabs)
 
   // Warm GenUI icons into the offline cache while online, so the back/send/etc. icons
   // render with no network once offline (they're fetched from unpkg on first use).
@@ -556,6 +557,7 @@ export default function Home() {
       behaviorConfig: useUIStore.getState().behaviorConfig,
       componentSources: useUIStore.getState().componentSources,
       customComponents: useUIStore.getState().customComponents,
+      tabs: useUIStore.getState().tabs,
     } as any
 
     // determine current screen — activeChatUser is the real DM path; selectedContact
@@ -618,6 +620,12 @@ export default function Home() {
         Object.entries(mutation.customComponents).forEach(([zone, code]) => {
           uiStore.setCustomComponent(zone, code)
         })
+      }
+
+      // apply a permanent change to the canonical tab list (so homeHeader and every
+      // other consumer of "tabs" stays in sync with whatever bottomNav now shows)
+      if (mutation.tabs) {
+        uiStore.setTabs(mutation.tabs)
       }
 
       // apply AI-edited component source code
@@ -872,12 +880,12 @@ export default function Home() {
       myDisplayName: profile?.display_name || profile?.username || '',
       myUsername: profile?.username || '',
 
-      // tab definitions — AI can read/extend to build any navigation
-      tabs: [
-        { id: 'chats', label: 'Chats', icon: 'message-square' },
-        { id: 'communities', label: 'Communities', icon: 'users' },
-        { id: 'profile', label: 'Profile', icon: 'user' },
-      ],
+      // tab definitions — the canonical, shared list. bottomNav, homeHeader, and any
+      // other component all read the SAME live value, so changing it via setTabs (rather
+      // than hard-coding a different array locally inside one component) is what keeps
+      // every consumer in sync.
+      tabs: homeTabs,
+      setTabs: (newTabs: any) => useUIStore.getState().setTabs(newTabs),
 
       // aliases kept for backward compat with previously AI-generated code
       onSearchTap: () => setShowSearch(s => !s),
@@ -897,7 +905,7 @@ export default function Home() {
       ProfileImage,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, user?.id])
+  }, [profile, user?.id, homeTabs])
 
   // shared props for every GenUIPanel instance (server-synced undo/reset/restore)
   const uid = user?.id

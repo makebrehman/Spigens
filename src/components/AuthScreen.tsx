@@ -2,7 +2,6 @@
 
 import {
   useState, useRef, useEffect, useCallback,
-  forwardRef, useImperativeHandle,
 } from 'react'
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react'
 import { useAuthStore } from '@/stores/authStore'
@@ -11,137 +10,6 @@ import { supabase } from '@/lib/supabase'
 import { compressAvatar, stashPendingAvatar } from '@/lib/avatarUpload'
 
 type Mode = 'signin' | 'signup' | 'profile' | 'forgot' | 'verify'
-type CheckState = 'idle' | 'checking' | 'available' | 'taken' | 'authed'
-
-const S_GRID = [
-  [0,0,1,1,1,1,1,0,0],
-  [0,1,1,0,0,0,1,1,0],
-  [0,1,0,0,0,0,0,0,0],
-  [0,1,0,0,0,0,0,0,0],
-  [0,1,1,0,0,0,0,0,0],
-  [0,0,1,1,1,1,0,0,0],
-  [0,0,0,0,0,0,1,1,0],
-  [0,0,0,0,0,0,0,1,0],
-  [0,0,0,0,0,0,0,1,0],
-  [0,1,0,0,0,0,1,1,0],
-  [0,1,1,0,0,0,1,1,0],
-  [0,0,1,1,1,1,1,0,0],
-]
-
-type SHandle = { setCheckState: (s: CheckState) => void }
-
-const AnimatedS = forwardRef<SHandle, {}>((_, ref) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const stateRef = useRef<CheckState>('idle')
-  const resultTimeRef = useRef(0)
-
-  useImperativeHandle(ref, () => ({
-    setCheckState: (s) => {
-      stateRef.current = s
-      if (s === 'available' || s === 'taken') resultTimeRef.current = performance.now()
-    },
-  }))
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const W = canvas.width, H = canvas.height
-    const CELL = 13
-    const padX = (W - S_GRID[0].length * CELL) / 2
-    const padY = (H - S_GRID.length * CELL) / 2
-
-    type P = {
-      x: number; y: number; sx: number; sy: number
-      bx: number; by: number; phase: number
-      rot: number; rotSpd: number; sz: number
-    }
-
-    const ps: P[] = []
-    S_GRID.forEach((row, ri) => {
-      row.forEach((cell, ci) => {
-        if (!cell) return
-        const tx = padX + ci * CELL + CELL / 2
-        const ty = padY + ri * CELL + CELL / 2
-        const a = Math.random() * Math.PI * 2
-        ps.push({
-          x: W / 2 + Math.cos(a) * 60,
-          y: H / 2 + Math.sin(a) * 60,
-          sx: tx, sy: ty, bx: 0, by: 0,
-          phase: Math.random() * Math.PI * 2,
-          rot: Math.random() * Math.PI * 2,
-          rotSpd: (Math.random() - 0.5) * 0.05,
-          sz: 2 + Math.random() * 1.5,
-        })
-      })
-    })
-
-    // box targets — square border
-    const n = ps.length, cx = W / 2, cy = H / 2, bs = 56
-    ps.forEach((p, i) => {
-      const f = i / n, per = bs * 4, pos = f * per
-      if (pos < bs)        { p.bx = cx - bs / 2 + pos;        p.by = cy - bs / 2 }
-      else if (pos < bs*2) { p.bx = cx + bs / 2;              p.by = cy - bs / 2 + (pos - bs) }
-      else if (pos < bs*3) { p.bx = cx + bs / 2 - (pos-bs*2); p.by = cy + bs / 2 }
-      else                 { p.bx = cx - bs / 2;               p.by = cy + bs / 2 - (pos-bs*3) }
-    })
-
-    let t = 0, raf: number
-    const draw = () => {
-      ctx.clearRect(0, 0, W, H)
-      t += 0.018
-      const st = stateRef.current
-      const isBox = st === 'checking' || st === 'authed'
-      const resultAge = (performance.now() - resultTimeRef.current) / 1000
-      const showFlash = (st === 'available' || st === 'taken') && resultAge < 1.2
-      const boxAngle = isBox ? t * 0.9 : 0
-
-      ps.forEach(p => {
-        let tx2: number, ty2: number
-        if (isBox) {
-          const dx = p.bx - cx, dy = p.by - cy
-          const c = Math.cos(boxAngle), s = Math.sin(boxAngle)
-          tx2 = cx + dx * c - dy * s
-          ty2 = cy + dx * s + dy * c
-        } else {
-          tx2 = p.sx; ty2 = p.sy
-        }
-        const ease = isBox ? 0.07 : 0.04
-        p.x += (tx2 - p.x) * ease
-        p.y += (ty2 - p.y) * ease
-        p.rot += isBox ? 0.09 : p.rotSpd
-
-        const wave = Math.sin(t * (isBox ? 2.2 : 1) + p.phase)
-        const dX = isBox ? 0 : Math.sin(t * 0.7 + p.phase) * 1.3
-        const dY = isBox ? 0 : Math.cos(t * 0.5 + p.phase) * 1.3
-        const opacity = 0.38 + wave * (isBox ? 0.5 : 0.35)
-        const sz = p.sz + wave * 0.6
-
-        let r = 255, g = 255, b = 255
-        if (showFlash) {
-          const f2 = 1 - resultAge / 1.2
-          if (st === 'available') { g = 255; r = Math.round(255 * (1 - f2 * 0.7)); b = Math.round(255 * (1 - f2 * 0.5)) }
-          if (st === 'taken')     { r = 255; g = Math.round(255 * (1 - f2 * 0.8)); b = Math.round(255 * (1 - f2 * 0.8)) }
-        }
-
-        ctx.save()
-        ctx.translate(p.x + dX, p.y + dY)
-        ctx.rotate(p.rot)
-        ctx.fillStyle = `rgba(${r},${g},${b},${opacity})`
-        ctx.fillRect(-sz, -sz * 0.3, sz * 2, sz * 0.6)
-        ctx.restore()
-      })
-      raf = requestAnimationFrame(draw)
-    }
-    draw()
-    return () => cancelAnimationFrame(raf)
-  }, [])
-
-  return <canvas ref={canvasRef} width={200} height={200} style={{ display: 'block' }} />
-})
-AnimatedS.displayName = 'AnimatedS'
-
 const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)
 
 const baseInput: React.CSSProperties = {
@@ -318,15 +186,16 @@ function PrimaryBtn({ id, children, onClick, loading, success }: {
   id?: string; children: React.ReactNode; onClick: () => void; loading: boolean; success?: boolean
 }) {
   return (
-    <motion.button layoutId={id} onClick={onClick} disabled={loading || success}
+    <motion.button onClick={onClick} disabled={loading || success}
       style={{ width: '100%', padding: '12px',
-        background: success ? '#22c55e' : loading ? 'rgba(255,255,255,0.05)' : '#fff',
-        color: success ? '#fff' : loading ? '#444' : '#000',
+        background: success ? '#22c55e' : loading ? '#2563eb' : '#fff',
+        color: success ? '#fff' : loading ? '#fff' : '#000',
         border: 'none', borderRadius: '999px',
         fontSize: '12px', fontWeight: '700', letterSpacing: '0.5px',
         cursor: (loading || success) ? 'default' : 'pointer', fontFamily: 'inherit',
         transition: 'background 0.2s, color 0.2s',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '40px' }}>
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        minHeight: '40px', height: '40px' }}>
       <AnimatePresence mode="wait">
         {success ? (
           <motion.div key="success" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={{ type: 'spring' }} style={{ display: 'flex', alignItems: 'center' }}>
@@ -335,8 +204,16 @@ function PrimaryBtn({ id, children, onClick, loading, success }: {
             </svg>
           </motion.div>
         ) : loading ? (
-          <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ width: '14px', height: '14px', border: '2px solid rgba(128,128,128,0.3)', borderTopColor: 'currentColor', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+          <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <span aria-hidden="true" style={{
+              width: 14, height: 14, borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.34)',
+              borderTopColor: '#fff',
+              animation: 'spin 0.7s linear infinite',
+              flexShrink: 0,
+            }} />
+            <span>processing...</span>
           </motion.div>
         ) : (
           <motion.div key="default" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ display: 'flex', alignItems: 'center' }}>
@@ -393,7 +270,6 @@ const slides = {
 const sp = { type: 'spring' as const, stiffness: 360, damping: 34 }
 
 export function AuthScreen() {
-  const sRef = useRef<SHandle>(null)
   const [mode, setMode] = useState<Mode>('signin')
   const [dir, setDir] = useState(1)
   const [leaving, setLeaving] = useState(false)
@@ -437,13 +313,13 @@ export function AuthScreen() {
   // debounced username check
   useEffect(() => {
     if (mode !== 'profile' || !username || username.length < 3) {
-      setTimeout(() => setUStatus('idle'), 0); sRef.current?.setCheckState('idle'); return
+      setTimeout(() => setUStatus('idle'), 0); return
     }
-    setUStatus('checking'); sRef.current?.setCheckState('checking')
+    setUStatus('checking')
     const t = setTimeout(async () => {
       const { data } = await supabase.from('profiles').select('id').eq('username', username).maybeSingle()
       const s = data ? 'taken' : 'available'
-      setUStatus(s); sRef.current?.setCheckState(s)
+      setUStatus(s)
     }, 650)
     return () => clearTimeout(t)
   }, [username, mode])
@@ -469,7 +345,7 @@ export function AuthScreen() {
             setCodeSentAt(Date.now())
           }
         }
-        setInfo('please verify your email — we sent you a new code')
+        setInfo('please verify your email - we sent you a new code')
         return
       }
       if (error) { setError(error); setLoading(false); return }
@@ -487,7 +363,7 @@ export function AuthScreen() {
 
       setSuccess(true)
       setTimeout(() => {
-        setLeaving(true); sRef.current?.setCheckState('authed')
+        setLeaving(true)
         setTimeout(() => navigateTo('home'), 1200)
       }, 500)
     } catch { setLoading(false) }
@@ -527,7 +403,7 @@ export function AuthScreen() {
       setTimeout(() => {
         setLoading(false)
         setSuccess(false)
-        setLeaving(true); sRef.current?.setCheckState('authed')
+        setLeaving(true)
         setTimeout(() => navigateTo('home'), 1200)
       }, 1000)
     } catch { setLoading(false) }
@@ -596,7 +472,7 @@ export function AuthScreen() {
       setLoading(false)
       setSuccess(false)
       go('signin', -1)
-      setInfo('password updated — please sign in')
+      setInfo('password updated - please sign in')
     }, 1000)
   }
 
@@ -617,17 +493,21 @@ export function AuthScreen() {
         }
       `}</style>
 
+      {/* brand logo */}
+      <img
+        src="/spigens_logo.png"
+        alt="Spigens"
+        style={{ width: 96, height: 96, borderRadius: 24, objectFit: 'cover', marginBottom: '14px' }}
+      />
+
       {/* brand */}
-      <div style={{ fontSize: '10px', letterSpacing: '5px', color: 'rgba(255,255,255,0.16)', marginBottom: '4px' }}>
+      <div style={{ fontSize: '23px', letterSpacing: '0.8px', color: '#fff', marginBottom: '7px', fontWeight: 900 }}>
         spigens
       </div>
 
-      {/* animated S — never moves */}
-      <AnimatedS ref={sRef} />
-
       {/* tagline */}
-      <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.12)',
-        marginTop: '-4px', marginBottom: '24px' }}>
+      <div style={{ fontSize: '9px', letterSpacing: '0.7px', color: 'rgba(255,255,255,0.34)',
+        marginBottom: '24px', fontWeight: 500 }}>
         end-to-end encrypted
       </div>
 
@@ -640,14 +520,14 @@ export function AuthScreen() {
         <LayoutGroup>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
 
-            {/* shared email — stays in DOM, repositions with layout */}
+            {/* shared email */}
             {showEmail && (
               <motion.div layout layoutId="slot-email" transition={sp}>
                 <EmailField value={email} onChange={setEmail} onKeyDown={showPwd ? undefined : hk(doForgot)} />
               </motion.div>
             )}
 
-            {/* shared password — stays in signin + signup */}
+            {/* shared password */}
             {showPwd && (
               <motion.div layout layoutId="slot-pwd" transition={sp}>
                 <PwdField value={pwd} onChange={setPwd} />
@@ -682,7 +562,7 @@ export function AuthScreen() {
                   <>
                     <PwdField value={confirm} onChange={setConfirm} placeholder="confirm password" />
                     {error && <Err msg={error} />}
-                    <PrimaryBtn id="auth-btn" onClick={doSignUpCall} loading={loading} success={success}>create account →</PrimaryBtn>
+                    <PrimaryBtn id="auth-btn" onClick={doSignUpCall} loading={loading} success={success}>create account -&gt;</PrimaryBtn>
                     <div style={{ display: 'flex', justifyContent: 'center' }}>
                       <LinkBtn onClick={() => go('signin', -1)}>already have an account</LinkBtn>
                     </div>
@@ -697,7 +577,7 @@ export function AuthScreen() {
                     {error && <Err msg={error} />}
                     <PrimaryBtn id="auth-btn" onClick={doCreate} loading={loading} success={success}>create account</PrimaryBtn>
                     <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <LinkBtn onClick={() => go('signup', -1)}>← back</LinkBtn>
+                      <LinkBtn onClick={() => go('signup', -1)}>&lt;- back</LinkBtn>
                     </div>
                   </>
                 )}
@@ -714,7 +594,7 @@ export function AuthScreen() {
                         {info && <Info msg={info} />}
                         <PrimaryBtn id="auth-btn" onClick={doForgot} loading={loading} success={success}>send reset code</PrimaryBtn>
                         <div style={{ display: 'flex', justifyContent: 'center' }}>
-                          <LinkBtn onClick={() => go('signin', -1)}>← back to sign in</LinkBtn>
+                          <LinkBtn onClick={() => go('signin', -1)}>&lt;- back to sign in</LinkBtn>
                         </div>
                       </>
                     ) : (
@@ -733,7 +613,7 @@ export function AuthScreen() {
                         <PrimaryBtn id="auth-btn" onClick={doResetPassword} loading={loading} success={success}>reset password</PrimaryBtn>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                           <LinkBtn onClick={doResendReset}>resend code</LinkBtn>
-                          <LinkBtn onClick={() => go('signin', -1)}>← back to sign in</LinkBtn>
+                          <LinkBtn onClick={() => go('signin', -1)}>&lt;- back to sign in</LinkBtn>
                         </div>
                       </>
                     )}
@@ -755,7 +635,7 @@ export function AuthScreen() {
                     <PrimaryBtn id="auth-btn" onClick={doVerifyEmail} loading={loading} success={success}>verify</PrimaryBtn>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                       <LinkBtn onClick={doResendVerify}>resend code</LinkBtn>
-                      <LinkBtn onClick={() => go('signin', -1)}>← back to sign in</LinkBtn>
+                      <LinkBtn onClick={() => go('signin', -1)}>&lt;- back to sign in</LinkBtn>
                     </div>
                   </>
                 )}

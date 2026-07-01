@@ -51,10 +51,10 @@ export function LaunchSplash({ dbStatus = 'initializing', dbStep = '', dbDiag = 
         alt="Spigens"
         style={{ width: 72, height: 72, borderRadius: 20, objectFit: 'cover', marginBottom: '18px' }}
       />
-      <div style={{ fontSize: '10px', letterSpacing: '5px', color: 'rgba(255,255,255,0.16)', marginBottom: '5px' }}>
+      <div style={{ fontSize: '23px', letterSpacing: '0.8px', color: '#fff', marginBottom: '7px', fontWeight: 900 }}>
         spigens
       </div>
-      <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.10)', marginBottom: '40px' }}>
+      <div style={{ fontSize: '9px', letterSpacing: '0.7px', color: 'rgba(255,255,255,0.34)', marginBottom: '40px', fontWeight: 500 }}>
         end-to-end encrypted
       </div>
 

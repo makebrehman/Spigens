@@ -245,33 +245,38 @@ export function DataSyncScreen({ userId, privateKey, isOnline, onDone }: Props) 
         style={{ width: 72, height: 72, borderRadius: 20, objectFit: 'cover', marginBottom: '18px' }}
       />
 
-      <div style={{ fontSize: '10px', letterSpacing: '5px', color: 'rgba(255,255,255,0.16)', marginBottom: '5px' }}>
+      <div style={{ fontSize: '23px', letterSpacing: '0.8px', color: '#fff', marginBottom: '7px', fontWeight: 900 }}>
         spigens
       </div>
 
-      <div style={{ fontSize: '9px', letterSpacing: '3px', color: 'rgba(255,255,255,0.10)', marginBottom: '44px' }}>
+      <div style={{ fontSize: '9px', letterSpacing: '0.7px', color: 'rgba(255,255,255,0.34)', marginBottom: '44px', fontWeight: 500 }}>
         end-to-end encrypted
       </div>
 
-      <div style={{ width: '200px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '13px' }}>
-        <div style={{
-          width: '100%', height: '3px',
-          background: 'rgba(255,255,255,0.06)',
-          borderRadius: '999px', overflow: 'hidden',
-        }}>
-          <motion.div
-            style={{ height: '100%', background: 'rgba(255,255,255,0.52)', borderRadius: '999px' }}
-            animate={{ width: `${progress}%` }}
-            transition={{ duration: 0.38, ease: 'easeOut' }}
-          />
-        </div>
+      <div style={{ width: '100%', maxWidth: '288px', padding: '0 4px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '13px' }}>
+          <div style={{
+            width: '100%', height: '40px',
+            background: 'rgba(255,255,255,0.055)',
+            border: '1px solid rgba(255,255,255,0.13)',
+            borderRadius: '999px', overflow: 'hidden', position: 'relative',
+            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.025), 0 14px 34px rgba(0,0,0,0.26)',
+          }}>
+            <motion.div
+              style={{ height: '100%',
+                background: '#2563eb',
+                borderRadius: '999px',
+                boxShadow: '0 0 22px rgba(37,99,235,0.28)' }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.38, ease: 'easeOut' }}
+            />
+          </div>
 
-        <div style={{
-          fontSize: '10px', letterSpacing: '1.5px',
-          color: 'rgba(255,255,255,0.20)', textAlign: 'center',
-        }}>
-          {label}
-        </div>
+          <div style={{
+            fontSize: '10px', letterSpacing: '0.5px',
+            color: 'rgba(255,255,255,0.34)', textAlign: 'center',
+          }}>
+            {label}
+          </div>
       </div>
     </div>
   )

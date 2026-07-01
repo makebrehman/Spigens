@@ -29,6 +29,7 @@ function buildSystemPrompt(
     'home-bottom': 'Custom zone rendered below the contact list. Edit via customComponents["home-bottom"].',
     'floating': 'Custom fixed overlay on the home screen. Edit via customComponents["floating"].',
     'chat-header': 'Custom zone below the chat screen header. Edit via customComponents["chat-header"].',
+    'tab-content': 'The ENTIRE screen content for a custom tab (any tab id besides chats/communities/profile). Always keyed by tab id — edit via customComponents["tab-content"]["<tabId>"].',
   }
 
   // A zone's stored value is either a plain string (one component, same on every
@@ -78,7 +79,7 @@ closeSearch()   — hide the search bar and clear the query
 toggleSearch()  — toggle search bar visibility
 
 — TAB NAVIGATION —
-setTab(id)      — switch the active home tab. id is 'chats', 'communities', or 'profile', OR any custom id you add to tabs
+setTab(id)      — switch the active home tab. id is 'chats', 'communities', 'profile' (built-in screens), or any custom id from the tabs array that has a matching customComponents["tab-content"] entry (see TABS DEFINITION below)
 
 — DATA ACCESS —
 getContacts()    — returns the full contacts array: [{ id, name, avatarInitials, avatarColor, avatarUrl, lastMessage, lastMessageTime, unreadCount, isOnline, isPinned, isMuted }, ...]
@@ -106,16 +107,23 @@ ALWAYS identify which tab a request refers to by its "id", not by whatever its "
   example — removing a tab: return the array without that entry, e.g. drop the discover entry from the array above to remove it.
 once you return this field, bottomNav and homeHeader automatically pick up the new list on their own — you do NOT need to also edit homeHeader's source for the tab list itself, and you do NOT need to call any function from inside the generated code to make this happen.
 IMPORTANT: tabs[i].icon is a Lucide icon NAME string (e.g. 'message-square', 'users', 'user'). Render it with React.createElement(Icon, { name: tab.icon, size: 22, color }). There is NO tab.path or tab.svg property.
-the default tabs are chats, communities, profile, discover — discover is pre-wired to open as an overlay (see bottomNav rules below), the other three render inline. when a request is about a totally different kind of destination that setTab() can't render content for (a direct community link, a specific chat), prefer hard-coding that one tab's onClick to call openCommunity(c) / openChat(id) directly inside bottomNav's own code, rather than adding it to the shared tabs array — see the bottomNav rules below.
 
-defaultTab — the tab id shown when the app is launched. defaultTab is COMPLETELY INDEPENDENT of tab order — reordering the tabs array (see above) never changes which one opens by default, and changing defaultTab never changes tab order. They are two separate settings for two separate questions ("what order do tabs appear in" vs "which one shows first"). To change which tab opens by default, return a top-level "defaultTab" field with the tab's id (e.g. "communities") — the exact same way you return "tabs". Only use one of the three inline-content ids ('chats', 'communities', 'profile') as defaultTab — 'discover' opens as an overlay, not a screen, so it can't be what's shown underneath on launch.
+A BRAND-NEW TAB NEEDS ITS OWN CONTENT — 'chats', 'communities', and 'profile' each already have a built-in screen. Any tab you add with a DIFFERENT id has no built-in screen at all, so in the SAME response where you add it to the tabs array, you must ALSO give it content: customComponents["tab-content"]["<the new tab's id>"] = the JSX for that tab's whole screen (see CUSTOM COMPONENT ZONES below for the exact rules). Skip this and the tab opens to an empty placeholder instead of a crash — but always provide it when you're the one creating the tab.
+  example — adding a "Gallery" tab with its own screen, in one response: { "versionName": "Add Gallery Tab", "tabs": [ { "id": "chats", "label": "Chats", "icon": "message-square" }, { "id": "communities", "label": "Communities", "icon": "users" }, { "id": "profile", "label": "Profile", "icon": "user" }, { "id": "discover", "label": "Discover", "icon": "compass" }, { "id": "gallery", "label": "Gallery", "icon": "image" } ], "customComponents": { "tab-content": { "gallery": "function Component() { var photos = [1,2,3,4,5,6]; return React.createElement('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:4, padding:8, height:'100%', overflowY:'auto' } }, photos.map(function(i){ return React.createElement('div', { key:i, style:{ aspectRatio:'1', background:'#1a1a1a', borderRadius:8 } }); })); }" } } }
+  editing a custom tab's content later works exactly like home-top/home-bottom: send only the tab id you're changing, other tabs' entries are left untouched by the host's merge.
+  if you remove a tab from the tabs array later, you do NOT also need to null out its old tab-content entry — an entry for a tab id that no longer exists is simply never looked up again.
+
+the default tabs are chats, communities, profile, discover. chats/communities/profile render inline using their built-in screens; discover is pre-wired to open as an overlay (see bottomNav rules below) — it is not something setTab() shows inline. Use a shortcut instead of a new tab ONLY when the destination is a jump straight to ONE SPECIFIC existing community or chat that already exists (e.g. "put a shortcut to the Alpha community in the nav bar") — that isn't a reusable screen, so hard-code that one tab's onClick to call openCommunity(c) / openChat(id) directly inside bottomNav's own code, rather than adding it to the shared tabs array — see the bottomNav rules below.
+
+defaultTab — the tab id shown when the app is launched. defaultTab is COMPLETELY INDEPENDENT of tab order — reordering the tabs array (see above) never changes which one opens by default, and changing defaultTab never changes tab order. They are two separate settings for two separate questions ("what order do tabs appear in" vs "which one shows first"). To change which tab opens by default, return a top-level "defaultTab" field with the tab's id (e.g. "communities") — the exact same way you return "tabs". Use ANY tab id that renders inline content as defaultTab — 'chats', 'communities', 'profile', or a custom tab id that already has (or is given in this same response) a customComponents["tab-content"] entry. NEVER use 'discover' (or any other overlay-only destination) as defaultTab — it opens as a popup on top of a tab, not a screen of its own, so it can't be what's shown underneath on launch.
   example: { "versionName": "Communities Opens By Default", "defaultTab": "communities" }
+  example — new tab set as default in one shot: { "versionName": "Gallery Tab, Opens By Default", "tabs": [ ...existing tabs..., { "id": "gallery", "label": "Gallery", "icon": "image" } ], "customComponents": { "tab-content": { "gallery": "function Component() { ... }" } }, "defaultTab": "gallery" }
 
 — ACCOUNT —
 logout()        — sign the user out
 
 — SHARED STATE KEYS (read via useComponentState) —
-'activeTab'    — current tab id ('chats' | 'communities' | 'profile')
+'activeTab'    — current tab id — 'chats', 'communities', 'profile', 'discover', or any custom id from the tabs array
 'showSearch'   — boolean, whether search is open
 'searchQuery'  — the current search input string — MUST remain 'searchQuery' for the results filter to work
 'feedContacts' — the live contacts array as rendered (same as getContacts(), available as reactive state)
@@ -132,7 +140,7 @@ motion, AnimatePresence — Framer Motion for animations (no import needed)
 TAB-SCOPED ZONES — the user is currently on the "${activeTab ?? 'chats'}" tab.
 home-top, home-bottom, and floating live on the tabbed home screen. The HOST APP decides which tab(s) each one is visible on — you do NOT write any tab-checking code inside Component. You only decide WHICH tab(s) a zone's code belongs to by the JSON SHAPE you return for customComponents.
 
-THIS APPLIES ONLY TO home-top, home-bottom, and floating. chat-header has no tab concept (it lives inside a single open conversation) — always return a plain code string for it.
+THIS APPLIES ONLY TO home-top, home-bottom, and floating (both forms are valid for these three). chat-header has no tab concept (it lives inside a single open conversation) — always return a plain code string for it. tab-content is different again — it is ALWAYS the object form keyed by tab id, never a plain string, since a custom tab's content only ever makes sense for that one tab (see TABS DEFINITION above).
 
 SHAPE — customComponents[zone] is EITHER:
 (a) a plain code string — this exact component shows identically on every tab, OR
@@ -200,7 +208,7 @@ HOME SCREEN CHROME — four FULLY CODE-EDITABLE sources:
    - the ONLY case for hard-coding a tab locally inside bottomNav instead of adding it to the shared tabs array: a tab whose destination setTab() cannot render content for anyway (see below) — e.g. a direct link to one specific community or chat. That kind of shortcut tab doesn't belong in the canonical tabs array since switching to it via setTab(id) would show an empty screen; wire its onClick directly to openCommunity(c) / openChat(id) instead.
    - read active tab: var activeTab = useComponentState('activeTab','chats')[0]
    - IMPORTANT: render tab icons with React.createElement(Icon, { name: tab.icon, size: 22, color }) — do NOT use svg + tab.path
-   - IMPORTANT: setTab() only renders inline content for 'chats', 'communities', and 'profile'. The default tabs array already includes a 'discover' entry — it is PRE-WIRED so its onClick calls openDiscover() instead of onSelectTab(tab.id) (check tab.id === 'discover' before deciding which action to call). Keep that special case if you rewrite bottomNav's source. For any OTHER new destination that setTab() can't render (a community shortcut, a specific chat), use the matching action instead: openCommunity(c), openChat(id).
+   - IMPORTANT: setTab() renders inline content for 'chats', 'communities', 'profile' (built-in screens) and for any custom tab id that has a customComponents["tab-content"] entry (see CUSTOM COMPONENT ZONES below). The default tabs array already includes a 'discover' entry — it is PRE-WIRED so its onClick calls openDiscover() instead of onSelectTab(tab.id) (check tab.id === 'discover' before deciding which action to call). Keep that special case if you rewrite bottomNav's source. For a shortcut to ONE SPECIFIC existing community or chat (not a reusable tab), use the matching action instead — openCommunity(c), openChat(id) — directly in that one tab's onClick, without adding it to the shared tabs array.
 
 4. componentSources.contactList — the scrollable chat list. Has access to full global scope.
    - contacts come from useComponentState('feedContacts', contacts || [])
@@ -230,6 +238,7 @@ CUSTOM COMPONENT ZONES (customComponents) — for entirely new widgets that don'
 - "home-bottom": rendered below the contact list
 - "floating": a fixed overlay on the home screen
 - "chat-header": below the chat screen header
+- "tab-content": the ENTIRE screen for a custom tab (any tab id besides chats/communities/profile) — ALWAYS the per-tab object form, keyed by tab id, never a bare string. See "A BRAND-NEW TAB NEEDS ITS OWN CONTENT" under TABS DEFINITION above for the exact shape and a worked example.
 
 all global scope actions (openChat, getCommunities, myAvatarUrl, etc.) are available in custom zones.
 

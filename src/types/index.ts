@@ -236,4 +236,8 @@ export interface UIOverrideState {
   /** The home screen's tab bar definition — shared by bottomNav, homeHeader, and
    *  anything else that needs the canonical tab list, so they never drift out of sync. */
   tabs?: TabDef[]
+  /** The tab id shown when the app opens, independent of tab order — reordering
+   *  tabs never changes this on its own. Typically one of the ids in "tabs" that
+   *  renders inline content ('chats', 'communities', 'profile' by default). */
+  defaultTab?: string
 }

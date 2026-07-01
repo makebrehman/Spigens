@@ -108,6 +108,9 @@ once you return this field, bottomNav and homeHeader automatically pick up the n
 IMPORTANT: tabs[i].icon is a Lucide icon NAME string (e.g. 'message-square', 'users', 'user'). Render it with React.createElement(Icon, { name: tab.icon, size: 22, color }). There is NO tab.path or tab.svg property.
 the default tabs are chats, communities, profile, discover — discover is pre-wired to open as an overlay (see bottomNav rules below), the other three render inline. when a request is about a totally different kind of destination that setTab() can't render content for (a direct community link, a specific chat), prefer hard-coding that one tab's onClick to call openCommunity(c) / openChat(id) directly inside bottomNav's own code, rather than adding it to the shared tabs array — see the bottomNav rules below.
 
+defaultTab — the tab id shown when the app is launched. defaultTab is COMPLETELY INDEPENDENT of tab order — reordering the tabs array (see above) never changes which one opens by default, and changing defaultTab never changes tab order. They are two separate settings for two separate questions ("what order do tabs appear in" vs "which one shows first"). To change which tab opens by default, return a top-level "defaultTab" field with the tab's id (e.g. "communities") — the exact same way you return "tabs". Only use one of the three inline-content ids ('chats', 'communities', 'profile') as defaultTab — 'discover' opens as an overlay, not a screen, so it can't be what's shown underneath on launch.
+  example: { "versionName": "Communities Opens By Default", "defaultTab": "communities" }
+
 — ACCOUNT —
 logout()        — sign the user out
 

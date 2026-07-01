@@ -11,6 +11,7 @@ import { NativeMediaBubble } from './NativeMediaBubble'
 import { buildFallbackLinkPreview, firstPreviewableUrl, normalizeLinkPreview, type LinkPreviewData } from '@/lib/linkPreview'
 import { LinkPreviewCard } from './LinkPreviewCard'
 import { queuePreviewFetch } from '@/lib/previewQueue'
+import { perfCount } from '@/lib/perfHud'
 
 export interface MessageBubbleProps {
   id: string
@@ -36,6 +37,7 @@ export interface MessageBubbleProps {
 }
 
 export function MessageBubble(props: MessageBubbleProps) {
+  perfCount('bubble render')
   const { id, content, messageType, metadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, onOpenContactCard, isDeleted } = props
 
   // Heal chat-screen sources that don't forward messageType/content/metadata. Saved

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { perfCount, perfMark } from '@/lib/perfHud'
 
 type MessageLike = {
   id: string
@@ -87,6 +88,7 @@ export function ChatMessageViewport({
   loadOlderMessages,
   hasOlderMessages = false,
 }: ChatMessageViewportProps) {
+  perfCount('viewport render')
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const pinnedToBottomRef = useRef(true)
   const didInitialAnchorRef = useRef(false)
@@ -111,6 +113,7 @@ export function ChatMessageViewport({
   })
 
   const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    perfCount('scrollToBottom')
     virtualizer.scrollToEnd({ behavior })
     pinnedToBottomRef.current = true
     setShowJumpToBottom(false)
@@ -145,6 +148,7 @@ export function ChatMessageViewport({
       didInitialAnchorRef.current = true
       scrollToBottom('auto')
       setInitiallyAnchored(true)
+      perfMark('list anchored/visible')
       return
     }
     if (pinnedToBottomRef.current) scrollToBottom('auto')
@@ -155,6 +159,7 @@ export function ChatMessageViewport({
   // measured height actually changes.
   const totalSize = virtualizer.getTotalSize()
   useEffect(() => {
+    perfCount('totalSize change')
     if (pinnedToBottomRef.current) scrollToBottom('auto')
   }, [totalSize, scrollToBottom])
 

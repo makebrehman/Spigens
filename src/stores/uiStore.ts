@@ -12,11 +12,15 @@ import { DEFAULT_HOMEHEADER_SOURCE, DEFAULT_HOMESEARCH_SOURCE, DEFAULT_BOTTOMNAV
 export const PERSISTENCE_ENABLED = true
 
 // the canonical default tab bar — the single source of truth shared by bottomNav,
-// homeHeader, and any other component that reads "tabs" from scope.
+// homeHeader, and any other component that reads "tabs" from scope. "discover" is a
+// real tab entry (reorderable, renameable, restylable, deletable like any other) —
+// its id is special-cased in DEFAULT_BOTTOMNAV_SOURCE to open the Discover overlay
+// instead of switching activeTab, since it isn't a screen setTab() can render inline.
 export const DEFAULT_TABS: TabDef[] = [
   { id: 'chats', label: 'Chats', icon: 'message-square' },
   { id: 'communities', label: 'Communities', icon: 'users' },
   { id: 'profile', label: 'Profile', icon: 'user' },
+  { id: 'discover', label: 'Discover', icon: 'compass' },
 ]
 
 // noop storage: reads return null (defaults always used), writes are silent no-ops
@@ -208,7 +212,7 @@ function mergeWithDefaultSources(componentSources: any): Record<string, string> 
 // over the fix in mergeWithDefaultSources, so the bug never goes away on real devices.
 // Real, user-made customizations to OTHER components are left untouched, and once a
 // device is migrated it can be customized again normally.
-const SOURCES_SCHEMA_VERSION = 11
+const SOURCES_SCHEMA_VERSION = 12
 const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[] = [
   // v1: the DM composer (send button) and chat screen were rebuilt in code — replace
   // any stale cached/saved copy so the send button actually works.
@@ -241,6 +245,11 @@ const SOURCES_MIGRATIONS: { version: number; reset: string[]; force?: boolean }[
   // v11: homeHeader title now derives from the tabs array dynamically, so custom tab ids
   // (e.g. 'discover', 'saved') show their real label instead of falling back to 'Profile'.
   { version: 11, reset: ['homeHeader'] },
+  // v12: "discover" is now a real entry in the shared tabs array instead of a separate
+  // hardcoded (+) button bottomNav pushed on unconditionally — it can be reordered,
+  // renamed, and restyled like any other tab. bottomNav special-cases its onClick to
+  // open the Discover overlay instead of switching activeTab.
+  { version: 12, reset: ['bottomNav'] },
 ]
 
 function migrateComponentSources(

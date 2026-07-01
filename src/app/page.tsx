@@ -166,6 +166,7 @@ export default function Home() {
   if (showDiscover && !cachedDiscover) setCachedDiscover(true)
 
   const searchQuery = useUIStore(state => state.componentState?.['searchQuery'] as string | undefined) || ''
+  const defaultTab = useUIStore(state => state.defaultTab)
 
   useEffect(() => {
     // persist middleware finished rehydrating from storage
@@ -178,6 +179,14 @@ export default function Home() {
       unsubFinish()
     }
   }, [])
+
+  // activeTab's initial value is set before local storage finishes rehydrating (the
+  // splash screen covers this, so it's never visible), so apply the real persisted
+  // default exactly once, right as hydration completes.
+  useEffect(() => {
+    if (hydrated && defaultTab) setActiveTab(defaultTab as any)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated])
 
   const [dbStatus, setDbStatus] = useState<'initializing' | 'ready' | 'failed'>('initializing')
   const [dbStep, setDbStep] = useState('Starting...')
@@ -564,6 +573,7 @@ export default function Home() {
       componentSources: useUIStore.getState().componentSources,
       customComponents: useUIStore.getState().customComponents,
       tabs: useUIStore.getState().tabs,
+      defaultTab: useUIStore.getState().defaultTab,
     } as any
 
     // determine current screen — activeChatUser is the real DM path; selectedContact
@@ -632,6 +642,14 @@ export default function Home() {
       // other consumer of "tabs" stays in sync with whatever bottomNav now shows)
       if (mutation.tabs) {
         uiStore.setTabs(mutation.tabs)
+      }
+
+      // apply a change to which tab opens on launch — persists for next time, and
+      // also switches to it now so the change is visible immediately, like every
+      // other GenUI change.
+      if (mutation.defaultTab) {
+        uiStore.setDefaultTab(mutation.defaultTab)
+        setActiveTab(mutation.defaultTab as any)
       }
 
       // apply AI-edited component source code

@@ -76,6 +76,7 @@ type Snapshot = {
   /** Component-source keys the user (or AI) has edited; migrations skip these. */
   editedSources?: string[]
   tabs: TabDef[]
+  defaultTab: string
 }
 
 // a named, restorable point in the customization timeline
@@ -106,6 +107,7 @@ function captureSnapshot(state: any): Snapshot {
     sourcesVersion: SOURCES_SCHEMA_VERSION,
     editedSources: state.editedSources ?? [],
     tabs: state.tabs ?? DEFAULT_TABS,
+    defaultTab: state.defaultTab ?? 'chats',
   }
 }
 
@@ -130,6 +132,7 @@ interface UIStoreState extends UIOverrideState {
   setCustomComponent: (zone: string, code: string | Record<string, string | null> | null) => void
   clearCustomComponent: (zone: string) => void
   setTabs: (tabs: TabDef[]) => void
+  setDefaultTab: (id: string) => void
   setComponentSource: (name: string, source: string) => void
   resetComponentSource: (name: string) => void
   resetAll: () => void
@@ -302,6 +305,7 @@ function normalizeSnapshot(snapshot: any): any {
     sourcesVersion: SOURCES_SCHEMA_VERSION,
     editedSources: edited,
     tabs: Array.isArray(snapshot.tabs) && snapshot.tabs.length > 0 ? snapshot.tabs : DEFAULT_TABS,
+    defaultTab: (typeof snapshot.defaultTab === 'string' && snapshot.defaultTab) ? snapshot.defaultTab : 'chats',
   }
 }
 
@@ -339,6 +343,7 @@ const defaultState = {
   ownerUserId: null as string | null,
   editedSources: [] as string[],
   tabs: DEFAULT_TABS,
+  defaultTab: 'chats',
 }
 
 export const useUIStore = create<UIStoreState>()(
@@ -494,6 +499,10 @@ export const useUIStore = create<UIStoreState>()(
       // to make a permanent change that every consumer stays in sync with.
       setTabs: (tabs) => set(() => ({ tabs: Array.isArray(tabs) && tabs.length > 0 ? tabs : DEFAULT_TABS })),
 
+      // the tab shown on launch — independent of tab order, so reordering tabs
+      // never silently changes this on its own.
+      setDefaultTab: (id) => set(() => ({ defaultTab: (typeof id === 'string' && id.trim()) ? id.trim() : 'chats' })),
+
       setComponentSource: (name, source) =>
         set((state) => ({
           componentSources: { ...state.componentSources, [name]: source },
@@ -564,6 +573,7 @@ export const useUIStore = create<UIStoreState>()(
           componentSources: state.componentSources,
           sourcesVersion: SOURCES_SCHEMA_VERSION,
           tabs: state.tabs ?? DEFAULT_TABS,
+          defaultTab: state.defaultTab ?? 'chats',
         }
         // cap at 30, drop oldest
         const newHistory = [...state.history, snapshot].slice(-30)
@@ -606,6 +616,7 @@ export const useUIStore = create<UIStoreState>()(
         componentState: {},
         activeVersionId: null,
         tabs: DEFAULT_TABS,
+        defaultTab: 'chats',
       })),
 
       // helper for UI to know if undo is available
@@ -693,6 +704,7 @@ export const useUIStore = create<UIStoreState>()(
         activeVersionId: state.activeVersionId,
         ownerUserId: state.ownerUserId,
         tabs: state.tabs,
+        defaultTab: state.defaultTab,
       }),
     }
   )

@@ -43,9 +43,16 @@ class RenderErrorBoundary extends React.Component<BoundaryProps, BoundaryState> 
 // actually changed, which would force a needless recompile on every single render;
 // values that need to stay fresh at that level should go through useComponentState,
 // or the caller can pass an explicit scopeKey (see ChatScreen's per-conversation use).
-function primitiveScopeFingerprint(storeActions: Record<string, any>): string {
+// `stableKeys` lets a caller mark specific scope fields as "known to update via
+// useComponentState already" (or otherwise not worth an auto-refresh) so a change to
+// just that field doesn't force a full recompile/remount of the generated component.
+// The raw value still stays in storeActions — this only affects whether it counts
+// toward the auto-refresh fingerprint below — so anything (default or custom-saved
+// source) that reads it directly out of scope keeps working exactly as before.
+function primitiveScopeFingerprint(storeActions: Record<string, any>, stableKeys?: Set<string>): string {
   const parts: string[] = []
   for (const key of Object.keys(storeActions).sort()) {
+    if (stableKeys?.has(key)) continue
     const value = storeActions[key]
     const t = typeof value
     if (t === 'string' || t === 'number' || t === 'boolean' || value === null || value === undefined) {
@@ -60,9 +67,10 @@ interface RenderifyHostProps {
   code: string | null
   storeActions?: Record<string, any>
   scopeKey?: string | number | null
+  stableKeys?: string[]
 }
 
-export function RenderifyHost({ code, storeActions = {}, scopeKey = null }: RenderifyHostProps) {
+export function RenderifyHost({ code, storeActions = {}, scopeKey = null, stableKeys }: RenderifyHostProps) {
   const [renderError, setRenderError] = React.useState<string | null>(null)
 
   // reset error when code changes
@@ -70,7 +78,7 @@ export function RenderifyHost({ code, storeActions = {}, scopeKey = null }: Rend
     setTimeout(() => setRenderError(null), 0)
   }, [code])
 
-  const autoRefreshKey = primitiveScopeFingerprint(storeActions)
+  const autoRefreshKey = primitiveScopeFingerprint(storeActions, stableKeys ? new Set(stableKeys) : undefined)
 
   // Rebind when scopeKey changes (e.g. a different chat conversation), or when a
   // primitive scope value changes (e.g. isOnline flips) — while keeping the

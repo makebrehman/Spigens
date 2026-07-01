@@ -64,6 +64,7 @@ const CHAT_SCOPED_COMPONENT_KEYS = new Set([
   'chatContactAvatarColor',
   'chatIsOnline',
   'chatLastSeen',
+  'hasOlderMessages',
   'chatRecordingDuration',
   'chatAttachToastText',
   'activeMessageActions',
@@ -197,6 +198,13 @@ export function ChatScreen(props: ChatScreenProps) {
   useEffect(() => { setChatComponentState('chatIsOnline', isOnline) }, [isOnline, setChatComponentState])
   useEffect(() => { setChatComponentState('chatLastSeen', lastSeen ?? null) }, [lastSeen, setChatComponentState])
   useEffect(() => { setChatComponentState('currentUserId', currentUserId ?? null) }, [currentUserId, setChatComponentState])
+  // hasOlderMessages flips from false -> true shortly after the initial cached-page
+  // read resolves. Mirrored into componentState (like the fields above) so that
+  // transition updates the rendered UI in place instead of forcing RenderifyHost to
+  // recompile — a raw primitive on chatScreenScope would otherwise change the
+  // auto-refresh fingerprint and remount the whole chat screen (message list +
+  // composer) right as it finishes loading.
+  useEffect(() => { setChatComponentState('hasOlderMessages', hasOlderMessages) }, [hasOlderMessages, setChatComponentState])
   useEffect(() => {
     if (contactId) setChatComponentState('chatMessages', storeMessages)
   }, [contactId, storeMessages, setChatComponentState])
@@ -1052,12 +1060,11 @@ export function ChatScreen(props: ChatScreenProps) {
     contactId,
     otherUserId,
     otherUserPublicKey,
-    avatarUrl,
-    contactName,
-    contactInitials,
-    contactAvatarColor,
-    isOnline,
-    lastSeen,
+    // avatarUrl/contactName/contactInitials/contactAvatarColor/isOnline/lastSeen are
+    // intentionally NOT passed here as raw values — the generated chat screen reads
+    // them live via useComponentState('chat...', ...) (mirrored above), so keeping a
+    // raw copy here would only feed RenderifyHost's auto-refresh fingerprint and force
+    // a full recompile/remount every time one of them changed after mount.
     messages: otherUserId ? (realMessages.length ? realMessages : (msgCache.get(otherUserId) ?? EMPTY_MESSAGES)) : storeMessages,
     isOffline: !networkIsOnline,
     MessageBubble: ScopedMessageBubble,
@@ -1091,8 +1098,9 @@ export function ChatScreen(props: ChatScreenProps) {
       setTimeout(() => setChatComponentState('highlightedMessageId', null), 1500)
     },
     loadOlderMessages,
-    hasOlderMessages,
-    currentUserId,
+    // hasOlderMessages/currentUserId are likewise read live via useComponentState in
+    // the generated screen (mirrored above) rather than passed raw here, for the same
+    // recompile-avoidance reason as the fields removed above.
     onToggleReaction: (messageId: string, emoji: string) => {
       const liveUserId = currentUserId
       const liveConversationId = conversationIdRef.current

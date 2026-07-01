@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { useUIStore } from '@/stores/uiStore'
 import { RenderifyHost } from '@/components/RenderifyHost'
 import { MessageStatus } from './MessageStatus'
@@ -36,7 +36,7 @@ export interface MessageBubbleProps {
   scopeKey?: string
 }
 
-export function MessageBubble(props: MessageBubbleProps) {
+function MessageBubbleImpl(props: MessageBubbleProps) {
   perfCount('bubble render')
   const { id, content, messageType, metadata, timestamp, isSent, isRead, status, replyTo, onReplyTo, onJumpToReply, currentUserId, onToggleReaction, onShowReactors, onOpenContactCard, isDeleted } = props
 
@@ -155,3 +155,11 @@ export function MessageBubble(props: MessageBubbleProps) {
     </>
   )
 }
+
+// Memoized so a re-render of the list (or the chat screen) does NOT re-render every
+// visible bubble — only bubbles whose own props actually changed. Default shallow
+// compare is correct here: message rows are replaced by identity when their data
+// changes, and all callbacks/scoped wrappers passed in are stable. Live updates a
+// bubble owns (its reactions, highlight, long-press tray) come through the internal
+// useComponentState subscriptions, which memo does not block.
+export const MessageBubble = memo(MessageBubbleImpl)

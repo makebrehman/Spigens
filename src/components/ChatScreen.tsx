@@ -1065,17 +1065,25 @@ export function ChatScreen(props: ChatScreenProps) {
     }
   }
 
-  const ScopedMessageBubble = (bubbleProps: any) => (
+  // Stable component identity across ChatScreen re-renders. If these wrappers were
+  // reallocated each render, every message bubble (and the composer) would REMOUNT on
+  // any ChatScreen state change, defeating MessageBubble's memo and re-running all its
+  // effects. scopeId, useComponentState and getChatComponentState are constant for the
+  // life of this screen (ChatScreen is keyed per conversation and remounts on switch),
+  // so an empty-ish dep list is correct here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const ScopedMessageBubble = useCallback((bubbleProps: any) => (
     <MessageBubble
       {...bubbleProps}
       useComponentState={useComponentState}
       getComponentState={getChatComponentState}
       scopeKey={scopeId}
     />
-  )
-  const ScopedComposerBar = (composerProps: any) => (
+  ), [scopeId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const ScopedComposerBar = useCallback((composerProps: any) => (
     <ComposerBar {...composerProps} useComponentState={useComponentState} scopeKey={scopeId} />
-  )
+  ), [scopeId])
 
   const chatScreenScope = {
     contactId,

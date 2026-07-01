@@ -50,6 +50,8 @@ import { subscribeDb, topics } from '@/lib/dbEvents'
 import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import { dmMirror as msgCache, reactionMirror } from '@/lib/messageMirror'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
+import { PerfHud } from '@/components/PerfHud'
+import { perfStart, perfMark, perfCount } from '@/lib/perfHud'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
@@ -109,6 +111,11 @@ export function ChatScreen(props: ChatScreenProps) {
     contactName, contactInitials, contactAvatarColor,
     isOnline, lastSeen, onBack, onViewContactProfile, onOpenUserProfile, onOpenCommunityInvite,
   } = props
+
+  // ── perf: start a fresh profiling session on each open (key=otherUserId remounts this) ──
+  const perfStartedRef = useRef(false)
+  if (!perfStartedRef.current) { perfStartedRef.current = true; perfStart(); perfMark('mount') }
+  perfCount('ChatScreen render')
 
   const storeMessages = useMessageStore(state => (contactId ? state.messagesByContact[contactId] : undefined)) ?? EMPTY_MESSAGES
 
@@ -238,7 +245,7 @@ export function ChatScreen(props: ChatScreenProps) {
     // under the real conversation id, so this is what makes them load offline (and load
     // instantly online, without waiting on the server lookup below).
     const cachedCid = useContactStore.getState().contacts.find(c => c.id === otherUserId)?.conversationId
-    if (cachedCid) { conversationIdRef.current = cachedCid; setConversationId(cachedCid) }
+    if (cachedCid) { conversationIdRef.current = cachedCid; setConversationId(cachedCid); perfMark('conversationId resolved') }
 
     // Offline: keep current conversationId (don't null it — Effect 2 reads cache by it)
     if (!networkIsOnline) { setLoaded(true); return }
@@ -262,6 +269,7 @@ export function ChatScreen(props: ChatScreenProps) {
       const cid = !sharedErr && shared?.length ? shared[0].conversation_id : null
       conversationIdRef.current = cid
       setConversationId(cid)
+      perfMark('conversationId resolved')
       // No existing conversation → brand-new empty chat; nothing to load, reveal now.
       if (!cid) setLoaded(true)
     }
@@ -365,6 +373,7 @@ export function ChatScreen(props: ChatScreenProps) {
         messagesRef.current = merged
         setRealMessages(merged)
         setChatComponentState('chatMessages', merged)
+        perfMark(`local messages shown (${merged.length})`)
         if (primary.length < limit) setHasOlderMessages(false)
         else if (primary.length >= MESSAGE_PAGE_SIZE) setHasOlderMessages(true)
         setLoaded(true)
@@ -421,6 +430,7 @@ export function ChatScreen(props: ChatScreenProps) {
       Object.keys(cached).forEach(msgId =>
         useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
       )
+      if (Object.keys(cached).length) perfMark('reactions applied')
     }
 
     renderFromCache()
@@ -506,6 +516,7 @@ export function ChatScreen(props: ChatScreenProps) {
       setChatComponentState('conversationId', conversationId)
       setChatComponentState('currentUserId', currentUserId)
       setLoaded(true) // network settled → reveal (the emit above already rendered messages)
+      perfMark(`network messages settled (${allMsgs.length})`)
     }
 
     loadMessages()
@@ -1321,6 +1332,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
   return (
     <>
+      <PerfHud />
       <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} scopeKey={scopeId} stableKeys={CHAT_SCREEN_STABLE_KEYS} />
 
       {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}

@@ -138,7 +138,7 @@ export default function Home() {
   const [activeCommunityProfile, setActiveCommunityProfile] = useState<any>(null)
   const [returnToProfile, setReturnToProfile] = useState<any | null>(null)
   const [returnToCommunity, setReturnToCommunity] = useState<any | null>(null)
-  const [activeTab, setActiveTab] = useState<'chats' | 'communities' | 'profile'>('chats')
+  const [activeTab, setActiveTab] = useState<string>('chats')
   const [showSettings, setShowSettings] = useState(false)
   const [loadingContacts, setLoadingContacts] = useState(true)
   const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set())
@@ -184,7 +184,7 @@ export default function Home() {
   // splash screen covers this, so it's never visible), so apply the real persisted
   // default exactly once, right as hydration completes.
   useEffect(() => {
-    if (hydrated && defaultTab) setActiveTab(defaultTab as any)
+    if (hydrated && defaultTab) setActiveTab(defaultTab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated])
 
@@ -649,7 +649,7 @@ export default function Home() {
       // other GenUI change.
       if (mutation.defaultTab) {
         uiStore.setDefaultTab(mutation.defaultTab)
-        setActiveTab(mutation.defaultTab as any)
+        setActiveTab(mutation.defaultTab)
       }
 
       // apply AI-edited component source code
@@ -879,7 +879,7 @@ export default function Home() {
 
       // tab navigation
       setTab: (id: string) => {
-        setActiveTab(id as 'chats' | 'communities' | 'profile')
+        setActiveTab(id)
         setShowSearch(false)
         useUIStore.getState().setComponentState('searchQuery', '')
       },
@@ -916,7 +916,7 @@ export default function Home() {
       onCreateCommunity: () => setShowCreateCommunity(true),
       onClose: () => { setShowSearch(false); useUIStore.getState().setComponentState('searchQuery', '') },
       onSelectTab: (id: string) => {
-        setActiveTab(id as 'chats' | 'communities' | 'profile')
+        setActiveTab(id)
         setShowSearch(false)
         useUIStore.getState().setComponentState('searchQuery', '')
       },
@@ -1170,6 +1170,21 @@ export default function Home() {
         {activeTab === 'profile' && (
           <ProfileScreen onBack={() => setActiveTab('chats')} isTab={true} onOpenSettings={() => setShowSettings(true)} />
         )}
+
+        {/* Any tab beyond the 3 built-ins has no built-in screen of its own — its whole
+            content comes from customComponents['tab-content'], looked up by the tab's id,
+            the same way home-top/home-bottom/floating are resolved. */}
+        {activeTab !== 'chats' && activeTab !== 'communities' && activeTab !== 'profile' && (() => {
+          const tabContentCode = resolveZoneCode(customComponents?.['tab-content'], activeTab)
+          if (!tabContentCode) {
+            return (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: 14, padding: 24, textAlign: 'center' }}>
+                This tab doesn't have any content yet.
+              </div>
+            )
+          }
+          return <RenderifyHost code={tabContentCode} storeActions={homeGlobalScope} />
+        })()}
       </div>
 
       {/* GenUI home-bottom zone — e.g. content below the list, above the nav bar */}

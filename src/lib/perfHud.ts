@@ -12,6 +12,7 @@ interface Session {
   t0: number
   marks: Mark[]
   counts: Record<string, number>
+  timings: Record<string, number>  // summed elapsed ms per named span
   longestStall: number   // longest single main-thread freeze (ms)
   totalStall: number     // sum of all freezes > STALL_MS (ms)
   lastMarkAt: number
@@ -26,11 +27,22 @@ let lastFrame = 0
 
 function blank(): Session {
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  return { t0: now, marks: [], counts: {}, longestStall: 0, totalStall: 0, lastMarkAt: now }
+  return { t0: now, marks: [], counts: {}, timings: {}, longestStall: 0, totalStall: 0, lastMarkAt: now }
 }
 
 function now(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+/** High-res clock for measuring a span; pair with perfTime. */
+export function perfNow(): number {
+  return PERF_HUD ? now() : 0
+}
+
+/** Add elapsed ms to a named span (summed across calls in the session). */
+export function perfTime(label: string, ms: number) {
+  if (!PERF_HUD) return
+  session.timings[label] = (session.timings[label] ?? 0) + ms
 }
 
 // Detects main-thread freezes: requestAnimationFrame cannot fire while JS is

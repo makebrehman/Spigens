@@ -51,7 +51,7 @@ import { toLocalMessage, type LocalMessage } from '@/lib/messageShape'
 import { dmMirror as msgCache, reactionMirror } from '@/lib/messageMirror'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 import { PerfHud } from '@/components/PerfHud'
-import { perfStart, perfMark, perfCount } from '@/lib/perfHud'
+import { perfStart, perfMark, perfCount, perfNow, perfTime } from '@/lib/perfHud'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
@@ -340,7 +340,9 @@ export function ChatScreen(props: ChatScreenProps) {
 
     const reload = async () => {
       const limit = Math.max(MESSAGE_PAGE_SIZE, loadedMessageLimitRef.current)
+      const _tRead = perfNow()
       const primary = (await getCachedMessagesPage(convKey, { limit })) ?? []
+      perfTime('DB getCachedMessagesPage', perfNow() - _tRead)
       let merged = primary
       if (primary.length && messagesRef.current.length) {
         const firstCreated = primary[0]?.createdAt ?? ''
@@ -424,13 +426,19 @@ export function ChatScreen(props: ChatScreenProps) {
     let active = true
 
     const renderFromCache = async () => {
+      const _tRead = perfNow()
       const cached = await getCachedReactions(conversationId)
+      perfTime('DB getCachedReactions', perfNow() - _tRead)
       if (conversationId) reactionMirror.set(conversationId, cached)
       if (!active) return
-      Object.keys(cached).forEach(msgId =>
+      const keys = Object.keys(cached)
+      const _tLoop = perfNow()
+      keys.forEach(msgId => {
         useUIStore.getState().setComponentState('reactions:' + msgId, cached[msgId])
-      )
-      if (Object.keys(cached).length) perfMark('reactions applied')
+        perfCount('reaction key writes')
+      })
+      perfTime('reactions apply loop', perfNow() - _tLoop)
+      if (keys.length) perfMark('reactions applied')
     }
 
     renderFromCache()

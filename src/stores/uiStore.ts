@@ -2,6 +2,7 @@ import React from 'react'
 import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { capacitorStorage } from '@/lib/persistStorage'
+import { perfNow, perfTime, perfCount } from '@/lib/perfHud'
 import type { UIOverrideState, ContactStyleOverride, MessageConditionRule, SearchBarLayoutConfig, BehaviorConfig, SearchBarStyleOverride, TopAppBarStyleOverride, ChatScreenStyleOverride, BottomSheetStyleOverride, ContactListStyleOverride, AppAction, InteractionConfig, CustomComponents, ComponentSources, TabDef } from '@/types'
 import { DEFAULT_HOMEHEADER_SOURCE, DEFAULT_HOMESEARCH_SOURCE, DEFAULT_BOTTOMNAV_SOURCE, DEFAULT_BOTTOMSHEET_SOURCE, DEFAULT_CHATSCREEN_SOURCE, DEFAULT_MESSAGEBUBBLE_SOURCE, DEFAULT_CONTACTLIST_SOURCE, DEFAULT_DATESEPARATOR_SOURCE, DEFAULT_COMPOSERBAR_SOURCE, DEFAULT_BACKBUTTON_SOURCE, DEFAULT_PROFILEIMAGE_SOURCE, DEFAULT_CHATNAME_SOURCE, DEFAULT_ONLINESTATUS_SOURCE, DEFAULT_ATTACHBUTTON_SOURCE, DEFAULT_SENDBUTTON_SOURCE, DEFAULT_EMPTYSTATE_SOURCE, DEFAULT_MESSAGESTATUS_SOURCE, DEFAULT_TYPINGINDICATOR_SOURCE, DEFAULT_REPLYPREVIEW_SOURCE, DEFAULT_REPLYQUOTE_SOURCE, DEFAULT_MESSAGEREACTIONS_SOURCE, DEFAULT_REACTIONPICKER_SOURCE, DEFAULT_PROFILESCREEN_SOURCE, DEFAULT_CONTACTPROFILESCREEN_SOURCE, DEFAULT_COMMUNITYMESSAGEBUBBLE_SOURCE, DEFAULT_COMMUNITYLISTSCREEN_SOURCE, DEFAULT_CREATECOMMUNITYSCREEN_SOURCE, DEFAULT_COMMUNITYCHATSCREEN_SOURCE, DEFAULT_COMMUNITYPROFILESCREEN_SOURCE, DEFAULT_SETTINGSSCREEN_SOURCE, DEFAULT_CHATRECORDINGOVERLAY_SOURCE, DEFAULT_CHATFORWARDPICKER_SOURCE, DEFAULT_CHATCONTACTPICKER_SOURCE, DEFAULT_CHATENCRYPTIONTOAST_SOURCE, DEFAULT_CHATATTACHTOAST_SOURCE } from '@/lib/defaultComponents'
 
@@ -658,10 +659,14 @@ export const useUIStore = create<UIStoreState>()(
         return next
       }),
 
-      setComponentState: (key, value) =>
+      setComponentState: (key, value) => {
+        const _t = perfNow()
         set((state) => ({
           componentState: { ...state.componentState, [key]: value }
-        })),
+        }))
+        perfTime('setComponentState total', perfNow() - _t)
+        perfCount('setComponentState calls')
+      },
     }),
     {
       name: 'genui-customizations',

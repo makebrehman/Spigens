@@ -756,9 +756,10 @@ export default function Home() {
   // Hardware back button (Android / Capacitor)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return
+    let cancelled = false
     let handle: { remove: () => void } | null = null
     const register = async () => {
-      handle = await CapApp.addListener('backButton', () => {
+      const h = await CapApp.addListener('backButton', () => {
         if (activeChatUser) {
           setActiveChatUser(null)
           if (returnToProfile) { setActiveCommunityProfile(returnToProfile); setReturnToProfile(null) }
@@ -773,9 +774,17 @@ export default function Home() {
         if (activeTab !== 'chats') { setActiveTab('chats'); return }
         CapApp.exitApp()
       })
+      // If deps changed again (cleanup already ran) before this async registration
+      // finished, remove it immediately instead of leaving a stale listener — with an
+      // outdated closure — registered forever alongside the current one.
+      if (cancelled) h.remove()
+      else handle = h
     }
     register()
-    return () => { handle?.remove() }
+    return () => {
+      cancelled = true
+      handle?.remove()
+    }
   }, [activeChatUser, returnToProfile, returnToCommunity, contactProfileUser, activeCommunity, activeCommunityProfile, showCreateCommunity, showSettings, activeTab])
 
   useEffect(() => {

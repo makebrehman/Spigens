@@ -259,6 +259,12 @@ export default function Home() {
   const customComponents = useUIStore(state => state.customComponents)
   const componentSources = useUIStore(state => state.componentSources)
   const homeTabs = useUIStore(state => state.tabs)
+  // AI-generated component code closes over scope values (like "tabs") at compile
+  // time — changing the underlying array alone doesn't make an already-compiled
+  // homeHeader/bottomNav re-read it. Forcing a scopeKey change when the tab list
+  // itself changes makes RenderifyHost recompile them so the new list actually
+  // shows up immediately, without requiring a full app restart.
+  const tabsScopeKey = (homeTabs ?? []).map(t => `${t.id}:${t.label}:${t.icon}`).join('|')
 
   // Warm GenUI icons into the offline cache while online, so the back/send/etc. icons
   // render with no network once offline (they're fetched from unpkg on first use).
@@ -1015,7 +1021,7 @@ export default function Home() {
       {/* Home Feed Base (Kept mounted to preserve state/scroll, hidden if overlay is active to save rendering) */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 0, display: isOverlayActive ? 'none' : 'flex', flexDirection: 'column', background: '#0A0A0A', overflow: 'hidden' }}>
       {/* Top header — editable via GenUI (componentSources.homeHeader) */}
-      <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeGlobalScope} />
+      <RenderifyHost code={componentSources?.homeHeader ?? null} storeActions={homeGlobalScope} scopeKey={tabsScopeKey} />
 
       {/* Search bar — editable via GenUI (componentSources.homeSearch) */}
       {showSearch && (
@@ -1152,7 +1158,7 @@ export default function Home() {
       <RenderifyHost code={resolveZoneCode(customComponents?.['home-bottom'], activeTab)} storeActions={homeGlobalScope} />
 
       {/* Bottom navbar — editable via GenUI (componentSources.bottomNav) */}
-      <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={homeGlobalScope} />
+      <RenderifyHost code={componentSources?.bottomNav ?? null} storeActions={homeGlobalScope} scopeKey={tabsScopeKey} />
 
       {/* GenUI floating zone — fixed overlays e.g. compose FAB, banners */}
       <RenderifyHost code={resolveZoneCode(customComponents?.['floating'], activeTab)} storeActions={homeGlobalScope} />

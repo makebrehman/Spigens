@@ -54,6 +54,16 @@ import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-reac
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
 const MESSAGE_PAGE_SIZE = 50
+// These chatScreenScope fields already have a live-updating componentState mirror
+// (see the setChatComponentState effects below and CHAT_SCOPED_COMPONENT_KEYS), so a
+// change to any of them alone doesn't need to force RenderifyHost to recompile/remount
+// the whole chat screen — e.g. hasOlderMessages reliably flips false -> true moments
+// after the initial cached-message read resolves, right after the chat opens, and
+// without this list that flip alone tore down and rebuilt the message list + composer.
+const CHAT_SCREEN_STABLE_KEYS = [
+  'avatarUrl', 'contactName', 'contactInitials', 'contactAvatarColor',
+  'isOnline', 'lastSeen', 'hasOlderMessages', 'currentUserId',
+]
 const CHAT_SCOPED_COMPONENT_KEYS = new Set([
   'chatMessages',
   'conversationId',
@@ -1060,11 +1070,12 @@ export function ChatScreen(props: ChatScreenProps) {
     contactId,
     otherUserId,
     otherUserPublicKey,
-    // avatarUrl/contactName/contactInitials/contactAvatarColor/isOnline/lastSeen are
-    // intentionally NOT passed here as raw values — the generated chat screen reads
-    // them live via useComponentState('chat...', ...) (mirrored above), so keeping a
-    // raw copy here would only feed RenderifyHost's auto-refresh fingerprint and force
-    // a full recompile/remount every time one of them changed after mount.
+    avatarUrl,
+    contactName,
+    contactInitials,
+    contactAvatarColor,
+    isOnline,
+    lastSeen,
     messages: otherUserId ? (realMessages.length ? realMessages : (msgCache.get(otherUserId) ?? EMPTY_MESSAGES)) : storeMessages,
     isOffline: !networkIsOnline,
     MessageBubble: ScopedMessageBubble,
@@ -1098,9 +1109,8 @@ export function ChatScreen(props: ChatScreenProps) {
       setTimeout(() => setChatComponentState('highlightedMessageId', null), 1500)
     },
     loadOlderMessages,
-    // hasOlderMessages/currentUserId are likewise read live via useComponentState in
-    // the generated screen (mirrored above) rather than passed raw here, for the same
-    // recompile-avoidance reason as the fields removed above.
+    hasOlderMessages,
+    currentUserId,
     onToggleReaction: (messageId: string, emoji: string) => {
       const liveUserId = currentUserId
       const liveConversationId = conversationIdRef.current
@@ -1311,7 +1321,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
   return (
     <>
-      <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} scopeKey={scopeId} />
+      <RenderifyHost code={chatScreenSource} storeActions={chatScreenScope} scopeKey={scopeId} stableKeys={CHAT_SCREEN_STABLE_KEYS} />
 
       {encWarning && <RenderifyHost code={componentSources?.chatEncryptionToast ?? null} storeActions={{}} />}
 

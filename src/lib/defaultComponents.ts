@@ -257,14 +257,12 @@ export const DEFAULT_BOTTOMSHEET_SOURCE = `function Component() {
 }`;
 
 export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
-  var _cName = useComponentState('chatContactName', '')[0];
-  var _cAvatar = useComponentState('chatAvatarUrl', null)[0];
-  var _cInitials = useComponentState('chatContactInitials', '')[0];
-  var _cAvatarColor = useComponentState('chatContactAvatarColor', null)[0];
-  var _cOnline = useComponentState('chatIsOnline', false)[0];
-  var _cLastSeen = useComponentState('chatLastSeen', null)[0];
-  var _currentUserId = useComponentState('currentUserId', null)[0];
-  var _hasOlderMessages = useComponentState('hasOlderMessages', false)[0];
+  var _cName = useComponentState('chatContactName', contactName || '')[0];
+  var _cAvatar = useComponentState('chatAvatarUrl', avatarUrl || null)[0];
+  var _cInitials = useComponentState('chatContactInitials', contactInitials || '')[0];
+  var _cAvatarColor = useComponentState('chatContactAvatarColor', contactAvatarColor || null)[0];
+  var _cOnline = useComponentState('chatIsOnline', !!isOnline)[0];
+  var _cLastSeen = useComponentState('chatLastSeen', lastSeen || null)[0];
   var messagesState = useComponentState('chatMessages', messages || []);
   var renderedMessages = messagesState[0];
   var actionsState = useComponentState('activeMessageActions', null);
@@ -297,7 +295,7 @@ export const DEFAULT_CHATSCREEN_SOURCE = `function Component() {
       ),
       React.createElement('div', { onClick: function(e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); if (typeof onViewContactProfile === 'function') onViewContactProfile(); }, style: { cursor: 'pointer', WebkitTapHighlightColor: 'transparent', userSelect: 'none', flexShrink: 0 } }, React.createElement(ProfileImage, { avatarUrl: _cAvatar, contactInitials: _cInitials, contactAvatarColor: _cAvatarColor }))
     ),
-    React.createElement(ChatMessageViewport, { messages: renderedMessages || [], MessageBubble: MessageBubble, DateSeparator: DateSeparator, currentUserId: _currentUserId, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined, onOpenCommunityInvite: typeof onOpenCommunityInvite !== 'undefined' ? onOpenCommunityInvite : undefined, loadOlderMessages: loadOlderMessages, hasOlderMessages: !!_hasOlderMessages }),
+    React.createElement(ChatMessageViewport, { messages: renderedMessages || [], MessageBubble: MessageBubble, DateSeparator: DateSeparator, currentUserId: currentUserId, onReplyTo: onReplyTo, onJumpToReply: onJumpToReply, onToggleReaction: onToggleReaction, onShowReactors: onShowReactors, onOpenContactCard: typeof onOpenContactCard !== 'undefined' ? onOpenContactCard : undefined, onOpenCommunityInvite: typeof onOpenCommunityInvite !== 'undefined' ? onOpenCommunityInvite : undefined, loadOlderMessages: loadOlderMessages, hasOlderMessages: !!hasOlderMessages }),
     React.createElement(ComposerBar, { sendMessage: sendMessage, onAttach: onAttach, onTyping: onTyping, replyingTo: replyingTo, onCancelReply: onCancelReply }),
   React.createElement('div', { onClick: function() { setActions(null); setOpenTrayAct(null); }, style: { position: 'fixed', inset: 0, zIndex: 100, display: actions ? 'block' : 'none', background: 'transparent' } }),
   React.createElement('div', {

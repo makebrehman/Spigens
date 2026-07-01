@@ -1543,26 +1543,16 @@ export const DEFAULT_BOTTOMNAV_SOURCE = `function Component() {
     var color = isActive ? '#2563EB' : 'rgba(255,255,255,0.4)';
     return React.createElement('button', {
       key: tab.id,
-      onClick: function() { if (typeof onSelectTab === 'function') onSelectTab(tab.id); },
+      onClick: function() {
+        if (tab.id === 'discover') { if (typeof openDiscover === 'function') openDiscover(); }
+        else if (typeof onSelectTab === 'function') onSelectTab(tab.id);
+      },
       style: { flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, WebkitTapHighlightColor: 'transparent', userSelect: 'none' }
     }, [
       React.createElement(Icon, { key: 'icon', name: tab.icon, size: 22, color: color }),
       React.createElement('span', { key: 'label', style: { fontSize: 10, fontWeight: isActive ? 700 : 500, color: color, letterSpacing: 0.1 } }, tab.label)
     ]);
   });
-  children.push(React.createElement('button', {
-    key: '__discover',
-    onClick: function() { if (typeof onPlus === 'function') onPlus(); },
-    style: { flex: 1, padding: '10px 0 6px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, WebkitTapHighlightColor: 'transparent', userSelect: 'none' }
-  }, [
-    React.createElement('div', { key: 'pc', style: { width: 26, height: 26, borderRadius: '50%', background: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-      React.createElement('svg', { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: '#fff', strokeWidth: 2.5, strokeLinecap: 'round' }, [
-        React.createElement('line', { key: 'h', x1: 12, y1: 5, x2: 12, y2: 19 }),
-        React.createElement('line', { key: 'v', x1: 5, y1: 12, x2: 19, y2: 12 })
-      ])
-    ),
-    React.createElement('span', { key: 'label', style: { fontSize: 10, fontWeight: 500, color: 'rgba(255,255,255,0.4)', letterSpacing: 0.1 } }, 'Discover')
-  ]));
   return React.createElement('div', {
     style: { flexShrink: 0, background: '#141414', borderTop: '1px solid #1F1F1F', display: 'flex', flexDirection: 'row', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)' }
   }, children);

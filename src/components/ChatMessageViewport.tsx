@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 type MessageLike = {
   id: string
@@ -35,12 +36,13 @@ interface ChatMessageViewportProps {
   hasOlderMessages?: boolean
 }
 
-const BOTTOM_THRESHOLD = 80
 const TOP_THRESHOLD = 96
-
-function isNearBottom(el: HTMLDivElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD
-}
+const BOTTOM_THRESHOLD = 80
+// A rough middle-ground guess for an unmeasured bubble's height — corrected
+// per-row by measureElement the moment it actually renders. Only affects the
+// very first paint of items that haven't been measured yet.
+const ESTIMATED_ROW_HEIGHT = 72
+const ROW_GAP = 6
 
 function dayLabel(iso?: string): string | null {
   if (!iso) return null
@@ -86,81 +88,82 @@ export function ChatMessageViewport({
   hasOlderMessages = false,
 }: ChatMessageViewportProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
-  const contentRef = useRef<HTMLDivElement | null>(null)
   const pinnedToBottomRef = useRef(true)
   const didInitialAnchorRef = useRef(false)
-  const preservePrependRef = useRef<{ height: number; top: number } | null>(null)
   const loadingOlderRef = useRef(false)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const [initiallyAnchored, setInitiallyAnchored] = useState(false)
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const el = scrollerRef.current
-    if (!el) return
-    if (behavior === 'auto') el.scrollTop = el.scrollHeight
-    else el.scrollTo({ top: el.scrollHeight, behavior })
+  // index 0 is the oldest message, the last index is the newest — anchorTo:'end'
+  // keeps that last index pinned near the bottom (chat/log semantics), keeps the
+  // view visually stable when older messages get prepended, and only actually
+  // renders (plus a small overscan buffer) the rows near the current scroll
+  // position instead of every message ever loaded into this conversation.
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: messages.length,
+    getScrollElement: () => scrollerRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 8,
+    gap: ROW_GAP,
+    anchorTo: 'end',
+    followOnAppend: 'auto',
+    getItemKey: (index) => messages[index]?.id ?? index,
+  })
+
+  const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
+    virtualizer.scrollToEnd({ behavior })
     pinnedToBottomRef.current = true
     setShowJumpToBottom(false)
-  }, [])
+  }, [virtualizer])
 
   const onScroll = useCallback(async () => {
     const el = scrollerRef.current
     if (!el) return
-    const nearBottom = isNearBottom(el)
+    const nearBottom = virtualizer.isAtEnd(BOTTOM_THRESHOLD)
     pinnedToBottomRef.current = nearBottom
     setShowJumpToBottom(!nearBottom)
 
     if (!hasOlderMessages || !loadOlderMessages || loadingOlderRef.current || el.scrollTop > TOP_THRESHOLD) return
     loadingOlderRef.current = true
-    preservePrependRef.current = { height: el.scrollHeight, top: el.scrollTop }
     try {
-      const loaded = await loadOlderMessages()
-      if (!loaded) preservePrependRef.current = null
+      await loadOlderMessages()
     } finally {
       loadingOlderRef.current = false
     }
-  }, [hasOlderMessages, loadOlderMessages])
+  }, [hasOlderMessages, loadOlderMessages, virtualizer])
 
   const firstId = messages[0]?.id ?? ''
   const lastId = messages[messages.length - 1]?.id ?? ''
 
+  // First paint: jump straight to the bottom before revealing the viewport, so
+  // there's no visible scroll-from-top flash. After that, only follow new
+  // messages if the user was already pinned to the bottom — anchorTo/
+  // followOnAppend do the actual positioning math; this just decides whether
+  // to move at all (e.g. never yank the view while someone's reading history).
   useLayoutEffect(() => {
-    const el = scrollerRef.current
-    if (!el) return
-
-    const preserve = preservePrependRef.current
-    if (preserve) {
-      el.scrollTop = el.scrollHeight - preserve.height + preserve.top
-      preservePrependRef.current = null
-      return
-    }
-
     if (!didInitialAnchorRef.current) {
       didInitialAnchorRef.current = true
       scrollToBottom('auto')
       setInitiallyAnchored(true)
       return
     }
-
     if (pinnedToBottomRef.current) scrollToBottom('auto')
   }, [firstId, lastId, messages.length, scrollToBottom])
 
+  // Catches a bubble growing in place (e.g. an image finishing its load) rather
+  // than a new message arriving — total size only changes when some row's
+  // measured height actually changes.
+  const totalSize = virtualizer.getTotalSize()
   useEffect(() => {
-    const target = contentRef.current
-    if (!target || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => {
-      if (pinnedToBottomRef.current) scrollToBottom('auto')
-    })
-    ro.observe(target)
-    return () => ro.disconnect()
-  }, [scrollToBottom])
+    if (pinnedToBottomRef.current) scrollToBottom('auto')
+  }, [totalSize, scrollToBottom])
 
   const renderInvite = (msg: MessageLike) => {
     const meta = msg.metadata || {}
     const isUsed = !!meta.usedAt
     const invTypeLabel = meta.communityType === 'protected' ? 'Protected' : meta.communityType === 'private' ? 'Private' : 'Public'
     return (
-      <div key={msg.id} style={{ display: 'flex', justifyContent: msg.isSent ? 'flex-end' : 'flex-start', padding: '4px 16px' }}>
+      <div style={{ display: 'flex', justifyContent: msg.isSent ? 'flex-end' : 'flex-start', padding: '4px 16px' }}>
         <div
           onClick={() => onOpenCommunityInvite?.(meta, msg.id)}
           style={{ maxWidth: '72%', minWidth: 210, background: '#161B2E', borderRadius: 16, overflow: 'hidden', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)', WebkitTapHighlightColor: 'transparent' }}
@@ -194,43 +197,51 @@ export function ChatMessageViewport({
         className="chat-scrollbar-hide"
         style={{ flex: 1, overflowY: 'auto', padding: '8px 0 12px', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', visibility: initiallyAnchored ? 'visible' : 'hidden' }}
       >
-        <div ref={contentRef} style={{ minHeight: '100%', display: 'flex', flexDirection: 'column', justifyContent: messages.length ? 'flex-start' : 'center', gap: 6 }}>
-          {messages.length === 0 ? (
-            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A8A8A' }}>no messages yet</div>
-          ) : messages.map((msg, index) => {
-            const label = shouldShowSeparator(messages, index) ? dayLabel(msg.createdAt) : null
-            const bubble = msg.messageType === 'invite' && msg.metadata?.communityId
-              ? renderInvite(msg)
-              : (
-                <MessageBubble
-                  key={msg.id + '-' + (msg.status || '') + (msg.isDeleted ? '-deleted' : '')}
-                  id={msg.id}
-                  contactId={msg.contactId}
-                  content={msg.content}
-                  messageType={msg.messageType}
-                  metadata={msg.metadata}
-                  timestamp={msg.timestamp}
-                  isSent={msg.isSent}
-                  isRead={msg.isRead}
-                  status={msg.status}
-                  replyTo={msg.replyTo}
-                  isDeleted={!!msg.isDeleted}
-                  onReplyTo={onReplyTo}
-                  onJumpToReply={onJumpToReply}
-                  currentUserId={currentUserId ?? undefined}
-                  onToggleReaction={onToggleReaction}
-                  onShowReactors={onShowReactors}
-                  onOpenContactCard={onOpenContactCard}
-                />
+        {messages.length === 0 ? (
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A8A8A' }}>no messages yet</div>
+        ) : (
+          <div style={{ position: 'relative', width: '100%', height: totalSize }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const msg = messages[virtualRow.index]
+              if (!msg) return null
+              const label = shouldShowSeparator(messages, virtualRow.index) ? dayLabel(msg.createdAt) : null
+              const bubble = msg.messageType === 'invite' && msg.metadata?.communityId
+                ? renderInvite(msg)
+                : (
+                  <MessageBubble
+                    key={msg.id + '-' + (msg.status || '') + (msg.isDeleted ? '-deleted' : '')}
+                    id={msg.id}
+                    contactId={msg.contactId}
+                    content={msg.content}
+                    messageType={msg.messageType}
+                    metadata={msg.metadata}
+                    timestamp={msg.timestamp}
+                    isSent={msg.isSent}
+                    isRead={msg.isRead}
+                    status={msg.status}
+                    replyTo={msg.replyTo}
+                    isDeleted={!!msg.isDeleted}
+                    onReplyTo={onReplyTo}
+                    onJumpToReply={onJumpToReply}
+                    currentUserId={currentUserId ?? undefined}
+                    onToggleReaction={onToggleReaction}
+                    onShowReactors={onShowReactors}
+                    onOpenContactCard={onOpenContactCard}
+                  />
+                )
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {label ? (<><DateSeparator label={label} />{bubble}</>) : bubble}
+                </div>
               )
-            return label ? (
-              <div key={'frag-' + msg.id}>
-                <DateSeparator label={label} />
-                {bubble}
-              </div>
-            ) : bubble
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </div>
 
       {showJumpToBottom && messages.length > 0 ? (

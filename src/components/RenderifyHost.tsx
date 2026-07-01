@@ -32,6 +32,29 @@ class RenderErrorBoundary extends React.Component<BoundaryProps, BoundaryState> 
   }
 }
 
+// Compiled component code closes over scope values at the moment it's built — a plain
+// value (isOnline, a status string, a display name) baked in at compile time stays
+// frozen even after the real value changes, unless something forces a recompile.
+// This builds a cheap fingerprint of storeActions' primitive values so RenderifyHost
+// can detect "something actually changed" and recompile automatically, without every
+// call site having to manually manage a scopeKey. Functions are skipped (they already
+// read live data at call time). Objects/arrays are skipped too — callers commonly
+// rebuild a fresh wrapper object every render regardless of whether the content
+// actually changed, which would force a needless recompile on every single render;
+// values that need to stay fresh at that level should go through useComponentState,
+// or the caller can pass an explicit scopeKey (see ChatScreen's per-conversation use).
+function primitiveScopeFingerprint(storeActions: Record<string, any>): string {
+  const parts: string[] = []
+  for (const key of Object.keys(storeActions).sort()) {
+    const value = storeActions[key]
+    const t = typeof value
+    if (t === 'string' || t === 'number' || t === 'boolean' || value === null || value === undefined) {
+      parts.push(`${key}:${String(value)}`)
+    }
+  }
+  return parts.join('|')
+}
+
 // --- the host ---
 interface RenderifyHostProps {
   code: string | null
@@ -47,12 +70,15 @@ export function RenderifyHost({ code, storeActions = {}, scopeKey = null }: Rend
     setTimeout(() => setRenderError(null), 0)
   }, [code])
 
-  // Rebind when scopeKey changes (e.g. a different chat conversation) while keeping
-  // the transformed source cached in renderify.tsx.
+  const autoRefreshKey = primitiveScopeFingerprint(storeActions)
+
+  // Rebind when scopeKey changes (e.g. a different chat conversation), or when a
+  // primitive scope value changes (e.g. isOnline flips) — while keeping the
+  // transformed source cached in renderify.tsx.
   const compiled = React.useMemo(
     () => code ? compileJSX(code, storeActions) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [code, scopeKey]
+    [code, scopeKey, autoRefreshKey]
   )
 
   if (!code) return null

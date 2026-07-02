@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase'
 import { loadConversations } from '@/lib/loadConversations'
 import { cacheContacts, getCachedContacts, getCachedMessagesPage, getCachedCommunityList, getCachedReactions } from '@/lib/offlineCache'
 import { dmMirror, reactionMirror } from '@/lib/messageMirror'
+import { CHAT_PREWARM } from '@/lib/chatSync'
 import { warmMediaMirror, withMirroredAvatar } from '@/lib/mediaCache'
 import { subscribeDb, topics } from '@/lib/dbEvents'
 import { initLocalDb, isNativeSqliteActive, isUsingFallback, onInitProgress, getInitDiagnostics } from '@/lib/localDb'
@@ -401,10 +402,14 @@ export default function Home() {
       useUIStore.getState().setComponentState('feedContacts', withPresence)
       // Pre-warm the DM message mirror so opening any chat is instant — even the
       // first open after a cold start (the mirror is empty until this runs).
-      for (const c of cached) {
-        if (c.conversationId) {
+      // TEMP: disabled (CHAT_PREWARM) — the per-conversation reads were clogging the
+      // single SQLite connection and delaying the read for the chat being opened.
+      if (CHAT_PREWARM) {
+        for (const c of cached) {
+          if (c.conversationId) {
             getCachedMessagesPage(c.conversationId, { limit: 50 }).then(m => { if (m) dmMirror.set(c.id, m) }).catch(() => {})
-          getCachedReactions(c.conversationId).then(r => { if (r) reactionMirror.set(c.conversationId, r) }).catch(() => {})
+            getCachedReactions(c.conversationId).then(r => { if (r) reactionMirror.set(c.conversationId, r) }).catch(() => {})
+          }
         }
       }
       // Pre-warm community avatars into the media mirror so community photos resolve

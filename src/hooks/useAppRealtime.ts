@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { upsertMessage, upsertCachedReaction, deleteCachedReaction } from '@/lib/offlineCache'
 import { toLocalMessage } from '@/lib/messageShape'
 import { flushPendingPreviews } from '@/lib/previewQueue'
+import { CHAT_SERVER_SYNC } from '@/lib/chatSync'
 
 /**
  * App-level Supabase Realtime subscription (one per signed-in user).
@@ -26,6 +27,7 @@ export function useAppRealtime() {
   const currentUserId = useAuthStore(state => state.user?.id)
 
   useEffect(() => {
+    if (!CHAT_SERVER_SYNC) return // temp: live-receive paused; chat renders from local SQLite only
     if (!currentUserId) return
 
     const channel = supabase.channel('app-realtime-' + currentUserId)

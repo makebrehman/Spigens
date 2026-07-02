@@ -52,6 +52,7 @@ import { dmMirror as msgCache, reactionMirror } from '@/lib/messageMirror'
 import { CornerUpLeft, Copy, Trash2, Mic, Square, X, Forward } from 'lucide-react'
 import { PerfHud } from '@/components/PerfHud'
 import { perfStart, perfMark, perfCount, perfNow, perfTime } from '@/lib/perfHud'
+import { CHAT_SERVER_SYNC } from '@/lib/chatSync'
 
 const EMPTY_MESSAGES: any[] = []
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024 // 100 MB
@@ -132,7 +133,11 @@ export function ChatScreen(props: ChatScreenProps) {
 
   const [showAttachSheet, setShowAttachSheet] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId)
-  const [realMessages, setRealMessages] = useState<any[]>([])
+  // Seed from the in-memory mirror so re-opening a chat paints instantly with zero
+  // DB wait on the visual path (the local-first SQLite read below still refreshes it).
+  const [realMessages, setRealMessages] = useState<any[]>(
+    () => (otherUserId ? (msgCache.get(otherUserId) ?? []) : [])
+  )
   // Always-current mirror of the rendered messages, for read-side logic inside async
   // realtime/send handlers (they must not depend on a stale render closure).
   const messagesRef = useRef<LocalMessage[]>([])
@@ -225,6 +230,19 @@ export function ChatScreen(props: ChatScreenProps) {
   useEffect(() => {
     if (contactId) setChatComponentState('chatMessages', storeMessages)
   }, [contactId, storeMessages, setChatComponentState])
+
+  // Mirror-first paint: on open, push whatever is already in the in-memory cache
+  // straight into the rendered state so a re-opened chat shows instantly, before the
+  // (async) SQLite read returns. Nothing to show on a first-ever open — that fills in
+  // when the local-first read below resolves.
+  useEffect(() => {
+    if (!otherUserId) return
+    const cached = msgCache.get(otherUserId)
+    if (cached && cached.length) {
+      messagesRef.current = cached
+      setChatComponentState('chatMessages', cached)
+    }
+  }, [otherUserId, setChatComponentState])
 
   useEffect(() => {
     if (!otherUserId || !currentUserId) return
@@ -452,6 +470,7 @@ export function ChatScreen(props: ChatScreenProps) {
   // the local-first effect picks up automatically — no direct componentState
   // manipulation here, SQLite is the single source of truth.
   useEffect(() => {
+    if (!CHAT_SERVER_SYNC) return // temp: no server reaction fetch on open
     if (!conversationId || !currentUserId || !networkIsOnline) return
 
     ;(async () => {
@@ -476,6 +495,7 @@ export function ChatScreen(props: ChatScreenProps) {
 
   useEffect(() => {
     if (!otherUserId) return
+    if (!CHAT_SERVER_SYNC) return // temp: no on-open message fetch / realtime; render from local SQLite only
     // Messages are read by the local-first effect above; this effect only pulls
     // fresh data from the network into the DB and wires realtime.
     if (!conversationId || !currentUserId || !myPublicKey) return

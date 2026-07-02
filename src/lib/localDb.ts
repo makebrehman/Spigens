@@ -229,6 +229,15 @@ async function openSQLite(): Promise<void> {
   _setStep('open')
   await db.open()
 
+  // WAL + relaxed sync. Without this the single connection uses the default rollback
+  // journal, which fsyncs on every statement and makes readers block behind writers —
+  // so on open, the ~dozen concurrent reads/writes serialize at ~1s each and stack into
+  // a multi-second freeze. WAL lets reads proceed without waiting on writes and cuts the
+  // per-statement disk cost dramatically. Best-effort: swallow if the build rejects it.
+  _setStep('pragma wal')
+  try { await db.execute('PRAGMA journal_mode=WAL;') } catch { /* best-effort */ }
+  try { await db.execute('PRAGMA synchronous=NORMAL;') } catch { /* best-effort */ }
+
   _setStep('execute schema')
   const ddl = SCHEMA.split('\n').filter(l => !l.trim().startsWith('--')).join('\n')
   await db.execute(ddl)

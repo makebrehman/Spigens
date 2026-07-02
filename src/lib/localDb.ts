@@ -2,6 +2,7 @@
 
 import { Capacitor } from '@capacitor/core'
 import type { SQLiteDBConnection } from '@capacitor-community/sqlite'
+import { perfCount, perfNow, perfTime } from '@/lib/perfHud'
 
 const DB_NAME = 'spigens_local'
 const DB_VERSION = 1
@@ -354,14 +355,20 @@ export async function getTableCounts(): Promise<Record<string, number>> {
 export async function dbRun(sql: string, params: any[] = []): Promise<void> {
   if (_usingFallback) return
   if (!_db) { console.warn('[localDb] dbRun called before init'); return }
+  perfCount('dbRun calls')
+  const _t = perfNow()
   await _db.run(sql, params)
+  perfTime('DB bridge wait (sum)', perfNow() - _t)
 }
 
 /** Run a read statement and return rows. */
 export async function dbQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   if (_usingFallback) return []
   if (!_db) { console.warn('[localDb] dbQuery called before init'); return [] }
+  perfCount('dbQuery calls')
+  const _t = perfNow()
   const { values } = await _db.query(sql, params)
+  perfTime('DB bridge wait (sum)', perfNow() - _t)
   return (values ?? []) as T[]
 }
 

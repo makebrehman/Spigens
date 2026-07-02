@@ -38,6 +38,15 @@ export function PerfHud() {
           <div key={k}><span style={{ color: '#93c5fd' }}>{v}</span>{'  '}{k}</div>
         ))}
       </div>
+      {Object.keys(s.timings).length > 0 && (
+        <div style={{ marginTop: 5, borderTop: '1px solid #374151', paddingTop: 4 }}>
+          {Object.entries(s.timings)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => (
+              <div key={k}><span style={{ color: '#fbbf24' }}>{v.toFixed(0)}ms</span>{'  '}{k}</div>
+            ))}
+        </div>
+      )}
       <div style={{ marginTop: 5, borderTop: '1px solid #374151', paddingTop: 4, color: '#fde68a' }}>
         <div>longest freeze: <b style={{ color: '#f87171' }}>{s.longestStall.toFixed(0)}ms</b></div>
         <div>total frozen: <b style={{ color: '#f87171' }}>{s.totalStall.toFixed(0)}ms</b></div>
